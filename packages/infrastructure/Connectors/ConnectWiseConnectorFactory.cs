@@ -49,7 +49,9 @@ public sealed class ConnectWiseConnectorFactory(
             // Field names only — never values — so the log carries no customer data. Once per
             // process, and the one place a silently-missing provider field becomes visible.
             (fields, infoFields) => logger.LogInformation(
-                "ConnectWise ticket fields: {Fields} | _info: {InfoFields}", fields, infoFields));
+                "ConnectWise ticket fields: {Fields} | _info: {InfoFields}", fields, infoFields),
+            // Status names and counts only — configuration, never customer content.
+            closure => logger.LogInformation("ConnectWise status closure: {Closure}", closure));
     }
 
     private static string EnsureTrailingSlash(string url) => url.EndsWith('/') ? url : url + "/";
