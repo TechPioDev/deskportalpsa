@@ -23,7 +23,10 @@ public sealed class ConnectWiseConnector(
     HttpClient http, ConnectWiseConnectorConfig config, TimeProvider clock,
     // A callback rather than an ILogger: this project is a provider-neutral library and has no
     // logging dependency. The caller decides where the observation goes.
-    Action<string, string>? observeTicketShape = null)
+    Action<string, string>? observeTicketShape = null,
+    // Which board statuses actually carry closedFlag. Separate from the shape callback because it
+    // answers a different question: not "what fields exist" but "which statuses close a ticket".
+    Action<string>? observeTicketClosure = null)
     : IServiceManagementConnector
 {
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
@@ -655,6 +658,27 @@ public sealed class ConnectWiseConnector(
                     && info.ValueKind == System.Text.Json.JsonValueKind.Object)
                     foreach (var p in info.EnumerateObject()) infoFields.Add(p.Name);
             }
+
+            // ConnectWise sets closedFlag on a ticket only when its BOARD STATUS is configured as a
+            // closing status, so this answers a question about board configuration using data the
+            // sync already has: a status that never appears with closedFlag=true is not a closing
+            // status, which is why its tickets carry no closure date however finished they look.
+            // Status names and a count — no customer data.
+            var closure = new SortedDictionary<string, (int Closed, int Open)>(StringComparer.Ordinal);
+            foreach (var t in raw.EnumerateArray())
+            {
+                if (t.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                var name = t.TryGetProperty("status", out var st)
+                    && st.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && st.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
+                var closed = t.TryGetProperty("closedFlag", out var cf)
+                    && cf.ValueKind == System.Text.Json.JsonValueKind.True;
+                var cur = closure.GetValueOrDefault(name);
+                closure[name] = closed ? (cur.Closed + 1, cur.Open) : (cur.Closed, cur.Open + 1);
+            }
+
+            observeTicketClosure?.Invoke(string.Join(", ",
+                closure.Select(kv => $"{kv.Key}: closedFlag true={kv.Value.Closed} false={kv.Value.Open}")));
 
             observeTicketShape(
                 $"[{raw.GetArrayLength()} tickets] {string.Join(", ", fields)}",
