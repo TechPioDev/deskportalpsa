@@ -30,6 +30,12 @@ const csp = [
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
+  // Where violations go. Without it a violation exists only in whichever visitor's console
+  // happened to be open - no use while the policy is still being proven, and worse once it is
+  // enforcing, when a violation means a feature silently stopped working for someone.
+  // report-uri is deprecated in favour of the Reporting API, but it is what current browsers
+  // actually send and, unlike report-to, it needs no second header to work.
+  'report-uri /api/csp-report',
   // No upgrade-insecure-requests: HSTS already forces https for these hosts for a year, and a
   // report-only policy cannot honour it anyway — the browser logs an error about it on every
   // page load, which is exactly the noise that would bury a real violation while the policy is
