@@ -30,7 +30,10 @@ const csp = [
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  'upgrade-insecure-requests',
+  // No upgrade-insecure-requests: HSTS already forces https for these hosts for a year, and a
+  // report-only policy cannot honour it anyway — the browser logs an error about it on every
+  // page load, which is exactly the noise that would bury a real violation while the policy is
+  // still being proven.
 ].join('; ');
 
 const cspHeaderName =
