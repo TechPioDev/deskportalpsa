@@ -22,6 +22,7 @@ import qa_plan_part3  # noqa: F401
 import qa_plan_part4  # noqa: F401
 from qa_plan_part1 import MODULES, E
 from qa_plan_sql import LOG_LINES, SQL_COOKBOOK
+from qa_results import RESULTS, RUN, status_of, tally
 
 INK = colors.HexColor("#14532D")
 ACCENT = colors.HexColor("#EA580C")
@@ -71,15 +72,34 @@ def header_footer(canvas, doc):
     canvas.restoreState()
 
 
+RESULT_COLOR = {
+    "Pass": colors.HexColor("#1B7F3B"),
+    "Partial": colors.HexColor("#B26A00"),
+    "Blocked": colors.HexColor("#8A6D3B"),
+    "N/A": MUTED,
+    "Fail": colors.HexColor("#B3261E"),
+}
+
+
+def result_cell(cid):
+    """The recorded outcome, or a blank line to write one on."""
+    status, evidence = status_of(cid)
+    if status == "Not run":
+        return Paragraph("Pass / Fail / Blocked ................  Tester ................  "
+                         "Date ................", VAL)
+    colour = RESULT_COLOR.get(status, MUTED)
+    return Paragraph(
+        '<font color="#%s"><b>%s</b></font>  %s' % (colour.hexval()[2:], E(status), E(evidence)),
+        VAL)
+
+
 def case_block(cid, title, steps, expected, verify):
     rows = [
         [Paragraph(E(cid), CASEID), Paragraph(E(title), CASET)],
         [Paragraph("How to test", LBL), Paragraph(E(steps), VAL)],
         [Paragraph("Expected", LBL), Paragraph(E(expected), VAL)],
         [Paragraph("Verify with", LBL), Paragraph(E(verify), VAL)],
-        [Paragraph("Result", LBL),
-         Paragraph("Pass / Fail / Blocked ................  Tester ................  "
-                   "Date ................", VAL)],
+        [Paragraph("Result", LBL), result_cell(cid)],
     ]
     t = Table(rows, colWidths=[26 * mm, 148 * mm])
     t.setStyle(TableStyle([
@@ -191,6 +211,61 @@ t.setStyle(TableStyle([
     ("BACKGROUND", (0, 0), (0, -1), BG),
 ]))
 story.append(t)
+story.append(PageBreak())
+
+# ---------- run results ----------
+story.append(Paragraph("Results of the recorded run", H1))
+story.append(Paragraph(
+    "Outcomes are stamped on each case below. This page is the summary; the detail is in the "
+    "Result row of every case.", INTRO))
+
+runrows = [[Paragraph("<b>%s</b>" % E(k.title()), VAL), Paragraph(E(v), VAL)]
+           for k, v in RUN.items()]
+t = Table(runrows, colWidths=[30 * mm, 144 * mm])
+t.setStyle(TableStyle([
+    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ("TOPPADDING", (0, 0), (-1, -1), 3),
+    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+    ("BOX", (0, 0), (-1, -1), 0.5, RULE),
+    ("INNERGRID", (0, 0), (-1, -1), 0.4, RULE),
+    ("BACKGROUND", (0, 0), (0, -1), BG),
+]))
+story.append(t)
+story.append(Spacer(1, 10))
+
+counts = tally()
+total_cases = sum(len(c) for _, _, c in MODULES)
+recorded = sum(counts.values())
+head = ["Pass", "Partial", "Blocked", "N/A", "Fail", "Not run"]
+row = [str(counts.get(h, 0)) for h in head[:-1]] + [str(total_cases - recorded)]
+t = Table([head, row], colWidths=[29 * mm] * 6)
+t.setStyle(TableStyle([
+    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+    ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+    ("FONTSIZE", (0, 0), (-1, -1), 10),
+    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+    ("BACKGROUND", (0, 0), (-1, 0), BG),
+    ("TEXTCOLOR", (0, 1), (0, 1), colors.HexColor("#1B7F3B")),
+    ("BOX", (0, 0), (-1, -1), 0.5, RULE),
+    ("INNERGRID", (0, 0), (-1, -1), 0.4, RULE),
+    ("TOPPADDING", (0, 0), (-1, -1), 5),
+    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+]))
+story.append(t)
+story.append(Spacer(1, 8))
+story.append(Paragraph(
+    "Zero failures, and that is worth reading precisely: it means no case that COULD be executed "
+    "failed. Blocked and N/A are not quiet passes. Blocked needs something this run did not have - "
+    "a login, a write into the PSA, a second tenant. N/A means the case cannot arise here at all, "
+    "which is itself a finding: the cross-tenant cases have no second tenant to cross into, and "
+    "the retention case has nothing old enough to expire.", BODY))
+story.append(Spacer(1, 6))
+story.append(Paragraph(
+    "Several defects were found and fixed while running this - pagination stopping at 100 tickets, "
+    "two fields missing from the update hash, mapping that had never worked on either provider, "
+    "Autotask client companies named after their id, and a secret-scanning gate that had silently "
+    "stopped scanning. Those are recorded in the modules they belong to rather than here.", BODY))
 story.append(PageBreak())
 
 # ---------- modules ----------

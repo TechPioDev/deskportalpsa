@@ -21,6 +21,7 @@ import qa_plan_part3  # noqa: F401
 import qa_plan_part4  # noqa: F401
 from qa_plan_part1 import MODULES
 from qa_plan_sql import ACCESS, LOG_LINES, SQL_COOKBOOK
+from qa_results import RUN, status_of
 
 FONT = "Arial"
 INK = "14532D"
@@ -33,7 +34,7 @@ BLOCK_FILL = PatternFill("solid", fgColor="FDECD2")
 THIN = Side(style="thin", color="CBD8CE")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
-RESULTS = ["Not run", "Pass", "Fail", "Blocked", "N/A"]
+RESULTS = ["Not run", "Pass", "Partial", "Fail", "Blocked", "N/A"]
 
 wb = Workbook()
 
@@ -57,7 +58,10 @@ ws.row_dimensions[1].height = 26
 row = 2
 for mod_name, _intro, cases in MODULES:
     for cid, title, steps, expected, verify in cases:
-        values = [mod_name, cid, title, steps, expected, verify, "Not run", "", "", ""]
+        status, evidence = status_of(cid)
+        values = [mod_name, cid, title, steps, expected, verify, status,
+                  RUN['tester'] if status != 'Not run' else '',
+                  RUN['when'] if status != 'Not run' else '', evidence]
         for i, v in enumerate(values, start=1):
             c = ws.cell(row=row, column=i, value=v)
             c.font = Font(name=FONT, size=9)
@@ -77,7 +81,8 @@ dv.promptTitle = "Result"
 ws.add_data_validation(dv)
 dv.add("G2:G%d" % last)
 
-for op, fill in (("Pass", PASS_FILL), ("Fail", FAIL_FILL), ("Blocked", BLOCK_FILL)):
+for op, fill in (("Pass", PASS_FILL), ("Fail", FAIL_FILL), ("Blocked", BLOCK_FILL),
+                 ("Partial", BLOCK_FILL)):
     ws.conditional_formatting.add(
         "G2:G%d" % last,
         CellIsRule(operator="equal", formula=['"%s"' % op], fill=fill))
