@@ -247,6 +247,9 @@ t.setStyle(TableStyle([
     ("ALIGN", (0, 0), (-1, -1), "CENTER"),
     ("BACKGROUND", (0, 0), (-1, 0), BG),
     ("TEXTCOLOR", (0, 1), (0, 1), colors.HexColor("#1B7F3B")),
+    # Fail is the fifth column. Leaving it the same ink as the rest is how a one in that box gets
+    # read as just another number on the way to the pass count.
+    ("TEXTCOLOR", (4, 1), (4, 1), colors.HexColor("#B3261E")),
     ("BOX", (0, 0), (-1, -1), 0.5, RULE),
     ("INNERGRID", (0, 0), (-1, -1), 0.4, RULE),
     ("TOPPADDING", (0, 0), (-1, -1), 5),
@@ -255,17 +258,28 @@ t.setStyle(TableStyle([
 story.append(t)
 story.append(Spacer(1, 8))
 story.append(Paragraph(
-    "Zero failures, and that is worth reading precisely: it means no case that COULD be executed "
-    "failed. Blocked and N/A are not quiet passes. Blocked needs something this run did not have - "
-    "a login, a write into the PSA, a second tenant. N/A means the case cannot arise here at all, "
-    "which is itself a finding: the cross-tenant cases have no second tenant to cross into, and "
-    "the retention case has nothing old enough to expire.", BODY))
+    "One failure, and it is the one to read first. PUB-07 found twelve unfilled placeholders live "
+    "on the privacy policy and terms - retention periods, the liability cap and governing law all "
+    "still reading \"e.g. 24 months\" or \"your jurisdiction\" to anyone who visits. It survived an "
+    "earlier scan because the slots hold ordinary English rather than TBD or TODO, which is worth "
+    "remembering: a check that looks for placeholder MARKERS cannot find a placeholder written as "
+    "prose. It needs the owner's real values and no amount of testing will supply them.", BODY))
+story.append(Spacer(1, 6))
+story.append(Paragraph(
+    "Everything else that could be executed passed. Blocked and N/A are not quiet passes. Blocked "
+    "needs something this run did not have - a login, a write into the PSA, a second tenant - and "
+    "two blocked cases are blocked because running them would disturb production rather than "
+    "because they were out of reach. N/A means the case cannot arise here at all, which is itself "
+    "a finding: the cross-tenant cases have no second tenant to cross into, and the retention case "
+    "has nothing old enough to expire.", BODY))
 story.append(Spacer(1, 6))
 story.append(Paragraph(
     "Several defects were found and fixed while running this - pagination stopping at 100 tickets, "
     "two fields missing from the update hash, mapping that had never worked on either provider, "
-    "Autotask client companies named after their id, and a secret-scanning gate that had silently "
-    "stopped scanning. Those are recorded in the modules they belong to rather than here.", BODY))
+    "Autotask client companies named after their id, a secret-scanning gate that had silently "
+    "stopped scanning, and a public contact form that accepted a 60,000-character message, stored "
+    "the first 4,000 and thanked the sender. Those are recorded in the modules they belong to "
+    "rather than here.", BODY))
 story.append(PageBreak())
 
 # ---------- modules ----------
