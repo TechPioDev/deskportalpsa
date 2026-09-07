@@ -82,6 +82,13 @@ public sealed class AppUserConfig : IEntityTypeConfiguration<AppUser>
         b.Property(x => x.PhotoStorageKey).HasMaxLength(200);
         b.Property(x => x.PhotoUrl).HasMaxLength(500);
         b.HasIndex(x => x.IdpSubject).IsUnique();
+        // Lookup index only. The UNIQUENESS of a staff email within an organization is enforced by
+        // a case-insensitive index over lower("Email"), created in the StaffEmailUniquePerOrg
+        // migration — EF cannot express a functional index, and a plain unique index here would be
+        // WEAKER than the rule the application already applies: creation and update both compare
+        // emails case-insensitively, so a plain index would happily accept "A@b.test" beside
+        // "a@b.test" while the app refused it. Email is how a Keycloak identity binds to a portal
+        // user, so an ambiguous match there is an authentication problem, not a tidiness one.
         b.HasIndex(x => new { x.MspOrganizationId, x.Email });
         b.HasMany(x => x.Roles).WithOne(r => r.AppUser!).HasForeignKey(r => r.AppUserId);
         // Restrict, not cascade: deleting a manager must not silently delete or orphan-cascade
