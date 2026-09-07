@@ -43,9 +43,11 @@ public sealed class PublicEnquiriesController(IEnquiryService enquiries) : Contr
 
     private async Task<IActionResult> SubmitAsync(EnquiryKind kind, PublicEnquiryRequest body, CancellationToken ct)
     {
-        var ok = await enquiries.SubmitAsync(new SubmitEnquiryInput(
+        var result = await enquiries.SubmitAsync(new SubmitEnquiryInput(
             kind, body.Name, body.Email, body.Company, body.Phone,
             body.Message, body.PreferredTime, body.SourcePage, body.Website), ct);
+
+        if (result.Accepted) return Accepted(new { received = true });
 
         // Enough to correct the form, and no more — an anonymous caller should not be able to probe
         // what is stored. The list is per-kind because a meeting needs details a question does not,
@@ -54,8 +56,15 @@ public sealed class PublicEnquiriesController(IEnquiryService enquiries) : Contr
             ? "your name, email address, company, phone number, preferred time and message"
             : "your name, email address and message";
 
-        return ok ? Accepted(new { received = true })
-                  : BadRequest(new { error = $"Please check {required}." });
+        // An over-long field names itself and its limit. The alternative was what this endpoint did
+        // before: accept it, store as much as fits, and let the visitor believe all of it arrived.
+        // A number they can act on is the whole point — "too long" without one is a puzzle.
+        var error = result.Refusal == EnquiryRefusal.TooLong
+            ? $"Your {result.Field} is too long — please shorten it to {result.Limit:N0} characters "
+              + "or fewer and send it again. Nothing has been saved yet."
+            : $"Please check {required}.";
+
+        return BadRequest(new { error });
     }
 }
 

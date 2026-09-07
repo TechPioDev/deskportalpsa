@@ -31,12 +31,15 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
     throw new ApiError(401, 'Your session expired — signing you back in.');
   }
   if (!res.ok) {
-    // Surface the API's problem-details message when present so users see the real reason
-    // (e.g. which statuses the PSA's board actually allows), not just a status code.
+    // Surface the API's message when present so users see the real reason (e.g. which statuses the
+    // PSA's board actually allows), not just a status code. Three shapes, because the API has
+    // three: problem-details `detail`/`title` from the framework, and `error` from the handful of
+    // endpoints that word their own refusal. Omitting `error` meant those carefully written
+    // sentences were built, sent, and then thrown away in favour of "POST /path → 400".
     let detail: string | null = null;
     try {
       const body = await res.json();
-      detail = body?.detail ?? body?.title ?? null;
+      detail = body?.detail ?? body?.title ?? body?.error ?? null;
     } catch { /* non-JSON body */ }
     throw new ApiError(res.status, detail ?? `${init?.method ?? 'GET'} ${path} → ${res.status}`);
   }

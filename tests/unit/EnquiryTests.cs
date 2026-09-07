@@ -33,7 +33,7 @@ public class EnquiryTests
         var (svc, db) = Build();
         await using var _ = db;
 
-        (await svc.SubmitAsync(Input())).Should().BeTrue();
+        (await svc.SubmitAsync(Input())).Accepted.Should().BeTrue();
 
         var row = await db.Enquiries.SingleAsync();
         row.Name.Should().Be("Dana Reed");
@@ -52,7 +52,7 @@ public class EnquiryTests
         var (svc, db) = Build();
         await using var _ = db;
 
-        (await svc.SubmitAsync(Input(name, email, message))).Should().BeFalse();
+        (await svc.SubmitAsync(Input(name, email, message))).Accepted.Should().BeFalse();
         (await db.Enquiries.CountAsync()).Should().Be(0);
     }
 
@@ -66,7 +66,7 @@ public class EnquiryTests
         var (svc, db) = Build();
         await using var _ = db;
 
-        (await svc.SubmitAsync(Meeting())).Should().BeTrue();
+        (await svc.SubmitAsync(Meeting())).Accepted.Should().BeTrue();
 
         var row = await db.Enquiries.SingleAsync();
         row.Kind.Should().Be(EnquiryKind.Meeting);
@@ -87,7 +87,7 @@ public class EnquiryTests
         var (svc, db) = Build();
         await using var _ = db;
 
-        (await svc.SubmitAsync(Meeting(company, phone, preferred))).Should().BeFalse();
+        (await svc.SubmitAsync(Meeting(company, phone, preferred))).Accepted.Should().BeFalse();
         (await db.Enquiries.CountAsync()).Should().Be(0);
     }
 
@@ -102,7 +102,7 @@ public class EnquiryTests
         var bare = new SubmitEnquiryInput(
             EnquiryKind.Contact, "Dana Reed", "dana@acme.test", null, null, "Do you support HaloPSA?", null, "/contact", null);
 
-        (await svc.SubmitAsync(bare)).Should().BeTrue();
+        (await svc.SubmitAsync(bare)).Accepted.Should().BeTrue();
         (await db.Enquiries.SingleAsync()).Company.Should().BeNull();
     }
 
@@ -113,19 +113,117 @@ public class EnquiryTests
         await using var _ = db;
 
         // Reporting the block would tell a bot exactly which field to stop filling in.
-        (await svc.SubmitAsync(Input(website: "http://spam.example"))).Should().BeTrue();
+        (await svc.SubmitAsync(Input(website: "http://spam.example"))).Accepted.Should().BeTrue();
         (await db.Enquiries.CountAsync()).Should().Be(0);
     }
 
     [Fact]
-    public async Task Oversized_fields_are_clipped_rather_than_bursting_the_column()
+    public async Task An_oversized_message_is_refused_and_names_its_limit()
     {
+        // This used to store the first 4,000 characters and answer 202. The sender was thanked,
+        // the rest of what they wrote was gone, and the message staff read ended mid-sentence
+        // with nothing to mark the cut - so the reply answered a question nobody had finished.
         var (svc, db) = Build();
         await using var _ = db;
 
-        await svc.SubmitAsync(Input(message: new string('x', 9_000)));
+        var result = await svc.SubmitAsync(Input(message: new string('x', 9_000)));
 
-        (await db.Enquiries.SingleAsync()).Message.Length.Should().Be(4_000);
+        result.Accepted.Should().BeFalse();
+        result.Refusal.Should().Be(EnquiryRefusal.TooLong);
+        result.Field.Should().Be("message");
+        result.Limit.Should().Be(Enquiry.MessageMax);
+        (await db.Enquiries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_message_exactly_at_the_limit_is_still_accepted()
+    {
+        // The boundary in the other direction: a rule that rejects one character early is a rule
+        // that turns away real enquiries, and nobody would ever be told why.
+        var (svc, db) = Build();
+        await using var _ = db;
+
+        (await svc.SubmitAsync(Input(message: new string('x', Enquiry.MessageMax))))
+            .Accepted.Should().BeTrue();
+
+        (await db.Enquiries.SingleAsync()).Message.Length.Should().Be(Enquiry.MessageMax);
+    }
+
+    [Fact]
+    public async Task Whitespace_past_the_limit_is_trimmed_rather_than_counted()
+    {
+        // A textarea that ends in a newline should not cost someone their enquiry over a character
+        // they cannot see. Trim happens before the length check, so this is the full limit plus
+        // padding and it belongs.
+        var (svc, db) = Build();
+        await using var _ = db;
+
+        (await svc.SubmitAsync(Input(message: new string('x', Enquiry.MessageMax) + "\n   \t")))
+            .Accepted.Should().BeTrue();
+
+        (await db.Enquiries.SingleAsync()).Message.Length.Should().Be(Enquiry.MessageMax);
+    }
+
+    [Theory]
+    [InlineData("name", 120)]
+    [InlineData("email address", 200)]
+    [InlineData("company", 160)]
+    [InlineData("phone number", 60)]
+    [InlineData("preferred time", 200)]
+    public async Task Every_visitor_supplied_field_is_refused_when_oversized_not_shortened(string field, int limit)
+    {
+        // Not only the message. A clipped phone number reaches nobody and a clipped email address
+        // can still parse as valid - a truncated address is the one that silently routes a reply
+        // to the wrong person, or to no one.
+        var (svc, db) = Build();
+        await using var _ = db;
+
+        var big = new string('x', limit + 1);
+        var input = new SubmitEnquiryInput(
+            EnquiryKind.Meeting,
+            field == "name" ? big : "Dana Reed",
+            field == "email address" ? big + "@acme.test" : "dana@acme.test",
+            field == "company" ? big : "Acme",
+            field == "phone number" ? big : "+44 7700 900123",
+            "Can we see it?",
+            field == "preferred time" ? big : "Tuesday 10:00",
+            "/book", null);
+
+        var result = await svc.SubmitAsync(input);
+
+        result.Refusal.Should().Be(EnquiryRefusal.TooLong);
+        result.Field.Should().Be(field);
+        result.Limit.Should().Be(limit);
+        (await db.Enquiries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task The_page_the_form_sat_on_is_still_clipped_because_no_visitor_typed_it()
+    {
+        // The one field the site fills in itself. Refusing a genuine enquiry over the length of
+        // our own URL would discard the lead to protect a piece of context.
+        var (svc, db) = Build();
+        await using var _ = db;
+
+        var input = new SubmitEnquiryInput(
+            EnquiryKind.Contact, "Dana Reed", "dana@acme.test", null, null,
+            "Do you support HaloPSA?", null, "/contact?" + new string('q', 400), null);
+
+        (await svc.SubmitAsync(input)).Accepted.Should().BeTrue();
+        (await db.Enquiries.SingleAsync()).SourcePage!.Length.Should().Be(Enquiry.SourcePageMax);
+    }
+
+    [Fact]
+    public async Task A_refusal_reports_a_missing_field_differently_from_an_oversized_one()
+    {
+        // Two refusals that both used to be "false". The form says something different for each,
+        // so collapsing them again would send a visitor to check a field that was never wrong.
+        var (svc, db) = Build();
+        await using var _ = db;
+
+        (await svc.SubmitAsync(Input(name: ""))).Refusal.Should().Be(EnquiryRefusal.Incomplete);
+        (await svc.SubmitAsync(Input(name: new string('n', 200)))).Refusal.Should().Be(EnquiryRefusal.TooLong);
+        (await db.Enquiries.CountAsync()).Should().Be(0);
     }
 
     [Fact]

@@ -28,6 +28,18 @@ public enum EnquiryStatus
 /// </summary>
 public sealed class Enquiry : BaseEntity
 {
+    // Field limits live here because three places have to agree on them: the storage column, the
+    // check that refuses an oversized submission, and the message that tells the visitor the
+    // number. When those drifted apart the result was silent truncation — the column was the only
+    // real limit, so a long message was accepted, cut to fit, and nobody was told.
+    public const int NameMax = 120;
+    public const int EmailMax = 200;
+    public const int CompanyMax = 160;
+    public const int PhoneMax = 60;
+    public const int MessageMax = 4000;
+    public const int PreferredTimeMax = 200;
+    public const int SourcePageMax = 200;
+
     public EnquiryKind Kind { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;

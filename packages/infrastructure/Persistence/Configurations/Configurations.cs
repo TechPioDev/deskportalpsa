@@ -2,6 +2,7 @@ using Desk.Domain.Audit;
 using Desk.Domain.ControlPanel;
 using Desk.Domain.Identity;
 using Desk.Domain.Mapping;
+using Desk.Domain.Marketing;
 using Desk.Domain.Sync;
 using Desk.Domain.Tenancy;
 using Desk.Domain.Tickets;
@@ -520,14 +521,16 @@ public sealed class EnquiryConfig : IEntityTypeConfiguration<Desk.Domain.Marketi
     {
         b.ToTable("enquiries");
         b.HasKey(x => x.Id);
-        // Caps match the API's validation, so an oversized field is refused rather than truncated.
-        b.Property(x => x.Name).HasMaxLength(120).IsRequired();
-        b.Property(x => x.Email).HasMaxLength(200).IsRequired();
-        b.Property(x => x.Company).HasMaxLength(160);
-        b.Property(x => x.Phone).HasMaxLength(60);
-        b.Property(x => x.Message).HasMaxLength(4000).IsRequired();
-        b.Property(x => x.PreferredTime).HasMaxLength(200);
-        b.Property(x => x.SourcePage).HasMaxLength(200);
+        // The same constants the submission check uses, so the column and the rule cannot drift.
+        // This comment used to claim an oversized field was refused rather than truncated; it was
+        // the validator that clipped, and the column simply never saw the part it had removed.
+        b.Property(x => x.Name).HasMaxLength(Enquiry.NameMax).IsRequired();
+        b.Property(x => x.Email).HasMaxLength(Enquiry.EmailMax).IsRequired();
+        b.Property(x => x.Company).HasMaxLength(Enquiry.CompanyMax);
+        b.Property(x => x.Phone).HasMaxLength(Enquiry.PhoneMax);
+        b.Property(x => x.Message).HasMaxLength(Enquiry.MessageMax).IsRequired();
+        b.Property(x => x.PreferredTime).HasMaxLength(Enquiry.PreferredTimeMax);
+        b.Property(x => x.SourcePage).HasMaxLength(Enquiry.SourcePageMax);
         // The list is read newest-first and filtered by status; this is that query.
         b.HasIndex(x => new { x.Status, x.CreatedAt });
     }
