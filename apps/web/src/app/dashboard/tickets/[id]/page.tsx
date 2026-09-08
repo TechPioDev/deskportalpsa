@@ -11,7 +11,7 @@ import {
 import { useTimer } from '@/components/TimerProvider';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
-import { AttachmentPreview } from '@/components/AttachmentPreview';
+import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
 import { api, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail } from '@/lib/types';
 
@@ -168,12 +168,20 @@ function AttachmentChip({ a, provider, ticketId, onDownload }: {
   a: TicketAttachment; provider: number; ticketId: string; onDownload: (id: string) => void;
 }) {
   const clean = String(a.scanStatus) === '1' || String(a.scanStatus) === 'Clean';
+
+  // An image that renders in the thread needs no chip under it. The chip exists to stand in for a
+  // file you cannot see; once the picture is there, repeating its name and size is furniture. The
+  // download it used to carry moves onto the image itself.
+  if (clean && isPreviewableImage(a.contentType)) {
+    return (
+      <AttachmentPreview
+        ticketId={ticketId} attachmentId={a.id} fileName={a.fileName}
+        contentType={a.contentType} clean={clean} onDownload={() => onDownload(a.id)}
+      />
+    );
+  }
+
   return (
-    <>
-    <AttachmentPreview
-      ticketId={ticketId} attachmentId={a.id} fileName={a.fileName}
-      contentType={a.contentType} clean={clean}
-    />
     <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-xs">
       <Paperclip size={12} className="shrink-0 text-[var(--muted)]" />
       <span className="truncate">{a.fileName}</span>
@@ -188,7 +196,6 @@ function AttachmentChip({ a, provider, ticketId, onDownload }: {
             className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-brand"><Download size={13} /></button>
         : <span className="shrink-0 rounded bg-red-100 px-1 py-0.5 font-medium text-red-700 dark:bg-red-950 dark:text-red-300">Quarantined</span>}
     </span>
-    </>
   );
 }
 
