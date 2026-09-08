@@ -28,6 +28,7 @@ builder.Services.AddHostedService<BackgroundJobPollingService>();
 builder.Services.AddHostedService<PollingSyncService>();
 builder.Services.AddHostedService<ScheduledReportService>();
 builder.Services.AddHostedService<ActivityRollupBackgroundService>();
+builder.Services.AddHostedService<EnquiryRetentionBackgroundService>();
 
 var host = builder.Build();
 

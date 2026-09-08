@@ -15,7 +15,8 @@ namespace Desk.Infrastructure.Marketing;
 /// message ending mid-sentence with nothing to say it had been shortened — so the reply answered a
 /// question the visitor never finished asking, and neither side could tell why.
 /// </summary>
-public sealed class EnquiryService(DeskDbContext db, TimeProvider clock) : IEnquiryService
+public sealed class EnquiryService(DeskDbContext db, TimeProvider clock, EnquiryRetentionPolicy retention)
+    : IEnquiryService
 {
     /// <summary>Trimmed, or null when nothing is left. No limit is applied here — length is
     /// something to check and report, not something to impose silently.</summary>
@@ -111,6 +112,26 @@ public sealed class EnquiryService(DeskDbContext db, TimeProvider clock) : IEnqu
             .ToListAsync(ct);
 
         return new EnquiryListResult(total, newCount, items);
+    }
+
+    public async Task<int> PurgeExpiredAsync(CancellationToken ct = default)
+    {
+        // Turned off means keep everything. Not "delete nothing this pass" - the row set is simply
+        // not computed, so a misconfigured zero cannot be read as an age of zero and take the lot.
+        if (!retention.Enabled) return 0;
+
+        // Counted from arrival, which is what the policy says and what a visitor can reason about.
+        // UpdatedAt would have been wrong in a way nobody would notice for two years: a member of
+        // staff opening an enquiry and setting its status touches that column, so the clock would
+        // restart every time someone read it, and the busiest enquiries would be the last to go.
+        var cutoff = clock.GetUtcNow().AddMonths(-retention.Months);
+
+        var expired = await db.Enquiries.Where(e => e.CreatedAt < cutoff).ToListAsync(ct);
+        if (expired.Count == 0) return 0;
+
+        db.Enquiries.RemoveRange(expired);
+        await db.SaveChangesAsync(ct);
+        return expired.Count;
     }
 
     public async Task<bool> SetStatusAsync(Guid id, EnquiryStatus status, CancellationToken ct = default)

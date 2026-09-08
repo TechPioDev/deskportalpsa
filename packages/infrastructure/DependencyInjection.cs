@@ -157,6 +157,12 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Analytics.IPortalCoverageService, Desk.Infrastructure.Analytics.PortalCoverageService>();
         services.AddScoped<Desk.Application.Analytics.IActivityRollupService, Desk.Infrastructure.Analytics.ActivityRollupService>();
         services.AddScoped<IRoleAdminService, RoleAdminService>();
+        // Retention for public enquiries. The default matches what the privacy policy publishes;
+        // setting it to 0 keeps them forever, and then the policy has to say so.
+        services.AddSingleton(new Application.Marketing.EnquiryRetentionPolicy
+        {
+            Months = config.GetValue("Enquiries:RetentionMonths", 24),
+        });
         services.AddScoped<Application.Marketing.IEnquiryService, Marketing.EnquiryService>();
 
         return services;
