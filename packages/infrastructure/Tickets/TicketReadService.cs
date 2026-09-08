@@ -142,7 +142,22 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                         te?.Hours, te?.Billable);
                 })
                 .ToList(),
+            // Filtered the same way the conversation above is, and for the same reason. A file
+            // posted with an internal note is internal: the note is withheld from clients, so the
+            // screenshot of the workaround attached to it must be withheld too.
+            //
+            // The UI happened to hide these already — an attachment whose note was filtered out
+            // matches no rendered message, and the loose-files list takes only attachments with no
+            // note at all, so it fell through both. That is not protection. The file name, size,
+            // uploader and ATTACHMENT ID still travelled to the client's browser, and the download
+            // endpoint asked only whether the attachment belonged to the ticket.
+            //
+            // Attachments with no note are ticket-level and stay visible; those are the files a
+            // client uploaded or that arrived with the ticket itself.
             Attachments: ticket.Attachments
+                .Where(a => includeInternal
+                    || a.TicketNoteId is null
+                    || ticket.Notes.Any(n => n.Id == a.TicketNoteId && n.IsPublic))
                 .OrderBy(a => a.UploadedAt)
                 .Select(a => new AttachmentDto(a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes, a.ScanStatus, a.UploadedAt)
                     { AuthorName = a.AuthorName, FromProvider = a.ImportedFromProvider, TicketNoteId = a.TicketNoteId })

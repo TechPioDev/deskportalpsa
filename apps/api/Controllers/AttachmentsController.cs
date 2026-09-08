@@ -32,7 +32,7 @@ public sealed class AttachmentsController(
     public async Task<IActionResult> Upload(Guid ticketId, IFormFile file, [FromQuery] Guid? noteId, CancellationToken ct)
     {
         if (file is null || file.Length == 0) return BadRequest("No file provided.");
-        var orgId = await AuthorizeTicketAsync(ticketId, ct);
+        var (orgId, _) = await AuthorizeTicketAsync(ticketId, ct);
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms, ct);
@@ -47,14 +47,31 @@ public sealed class AttachmentsController(
     [HttpGet("tickets/{ticketId:guid}/attachments/{attachmentId:guid}/download")]
     public async Task<IActionResult> DownloadUrl(Guid ticketId, Guid attachmentId, CancellationToken ct)
     {
-        await AuthorizeTicketAsync(ticketId, ct);
+        var (_, asClient) = await AuthorizeTicketAsync(ticketId, ct);
 
         // The access check above proves the caller may read THIS ticket; it says nothing about the
         // attachment. Without binding the two, a caller could pass a ticket they can see together
         // with an attachment id from a ticket they cannot — including another company's — and the
         // download would be issued for it.
-        var belongs = await db.TicketAttachments.AnyAsync(a => a.Id == attachmentId && a.TicketId == ticketId, ct);
-        if (!belongs) throw new NotFoundException("Attachment");
+        var attachment = await db.TicketAttachments.AsNoTracking()
+            .Where(a => a.Id == attachmentId && a.TicketId == ticketId)
+            .Select(a => new { a.TicketNoteId })
+            .FirstOrDefaultAsync(ct);
+        if (attachment is null) throw new NotFoundException("Attachment");
+
+        // Belonging to the ticket is not enough for a client. A file posted with an internal note
+        // is internal, and the ticket detail now withholds it — but an id, once seen, does not
+        // expire, and this endpoint is what actually hands over the bytes. Filtering the list
+        // without checking here would leave the door shut and unlocked.
+        //
+        // Not found rather than forbidden: to a client that attachment does not exist, and saying
+        // "you may not have this one" confirms there is something to have.
+        if (asClient && attachment.TicketNoteId is { } noteId)
+        {
+            var notePublic = await db.TicketNotes.AsNoTracking()
+                .AnyAsync(n => n.Id == noteId && n.IsPublic, ct);
+            if (!notePublic) throw new NotFoundException("Attachment");
+        }
 
         var url = await attachments.GetDownloadUrlAsync(attachmentId, ct);
         return url is null ? NotFound() : Ok(new { url });
@@ -99,9 +116,15 @@ public sealed class AttachmentsController(
     /// is part of replying. (This controller used to be client-only, which made every attachment
     /// upload and download from the staff dashboard fail 403 while the reply itself succeeded.)
     /// Client-scoped resolution is tried FIRST so the dual dev identity still acts as the client on
-    /// its own company's tickets. Returns the organization that owns the ticket.
+    /// its own company's tickets.
     /// </summary>
-    private async Task<Guid> AuthorizeTicketAsync(Guid ticketId, CancellationToken ct)
+    /// <returns>
+    /// The organization that owns the ticket, and whether the caller got in through the CLIENT
+    /// path. That second value is not bookkeeping: it decides whether internal material is
+    /// withheld, and the dual dev identity satisfies both paths — so "is this a client" cannot be
+    /// re-derived afterwards from permissions without getting it wrong for exactly that account.
+    /// </returns>
+    private async Task<(Guid OrgId, bool AsClient)> AuthorizeTicketAsync(Guid ticketId, CancellationToken ct)
     {
         var access = await accessResolver.ResolveAsync(user.Subject ?? "", ct);
         if (access is not null)
@@ -110,7 +133,7 @@ public sealed class AttachmentsController(
                 t.Id == ticketId
                 && t.ClientCompanyId == access.ClientCompanyId
                 && (access.IsCompanyAdministrator || t.RequesterUserId == access.ClientUserId), ct);
-            if (ok) return access.MspOrganizationId;
+            if (ok) return (access.MspOrganizationId, true);
             // Not their company's ticket — fall through to the staff path if they can hold one.
         }
 
@@ -123,6 +146,6 @@ public sealed class AttachmentsController(
         var orgId = await db.Tickets.Where(t => t.Id == ticketId)
             .Select(t => (Guid?)t.MspOrganizationId).FirstOrDefaultAsync(ct)
             ?? throw new NotFoundException("Ticket");
-        return orgId;
+        return (orgId, false);
     }
 }

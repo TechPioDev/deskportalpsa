@@ -101,6 +101,91 @@ public class ClientPortalTests
     }
 
     [Fact]
+    public async Task Detail_never_returns_a_file_posted_with_an_internal_note()
+    {
+        // The note was filtered and its attachment was not, so the file name, size, uploader AND
+        // attachment id reached the client. The UI hid it by accident - the file matched no
+        // rendered message and the loose-files list takes only attachments with no note at all -
+        // which is not the same as it being withheld.
+        var dbName = Guid.NewGuid().ToString();
+        await using var db = await SeedAsync(dbName);
+        var t = Ticket(CompanyA, RegularUser, "t");
+        db.Tickets.Add(t);
+
+        var publicNote = new TicketNote { MspOrganizationId = Org, TicketId = t.Id, AuthorName = "Tech", Body = "public reply", IsPublic = true };
+        var internalNote = new TicketNote { MspOrganizationId = Org, TicketId = t.Id, AuthorName = "Tech", Body = "INTERNAL", IsPublic = false };
+        db.TicketNotes.AddRange(publicNote, internalNote);
+        db.TicketAttachments.AddRange(
+            Attachment(t.Id, publicNote.Id, "reply-screenshot.png"),
+            Attachment(t.Id, internalNote.Id, "internal-workaround.png"),
+            Attachment(t.Id, null, "raised-with-the-ticket.png"));
+        await db.SaveChangesAsync();
+
+        var reads = new TicketReadService(db, new NoopTicketScopeQuery(), new TestCurrentUser(Org));
+        var detail = await reads.GetDetailAsync(Access(CompanyA, RegularUser, false), t.Id);
+
+        detail!.Attachments.Select(a => a.FileName).Should()
+            .BeEquivalentTo(["reply-screenshot.png", "raised-with-the-ticket.png"]);
+
+        // A file with no note is ticket-level - raised with the ticket or uploaded by the client -
+        // and withholding it would break the case this whole panel exists for.
+        detail.Attachments.Should().Contain(a => a.FileName == "raised-with-the-ticket.png");
+    }
+
+    [Fact]
+    public async Task Staff_still_see_the_file_on_an_internal_note()
+    {
+        // The mirror of the case above, and the one that catches a filter written too broadly:
+        // internal material is the technician view's whole point.
+        var dbName = Guid.NewGuid().ToString();
+        await using var db = await SeedAsync(dbName);
+        var t = Ticket(CompanyA, RegularUser, "t");
+        db.Tickets.Add(t);
+        var internalNote = new TicketNote { MspOrganizationId = Org, TicketId = t.Id, AuthorName = "Tech", Body = "INTERNAL", IsPublic = false };
+        db.TicketNotes.Add(internalNote);
+        db.TicketAttachments.Add(Attachment(t.Id, internalNote.Id, "internal-workaround.png"));
+        await db.SaveChangesAsync();
+
+        // Staff resolution needs a linked AppUser id — without one the scope query matches nothing
+        // and the assertion below would pass for the wrong reason.
+        var detail = await new TicketReadService(db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: Guid.NewGuid()))
+            .GetDetailForStaffAsync(t.Id);
+
+        detail!.Attachments.Should().ContainSingle().Which.FileName.Should().Be("internal-workaround.png");
+    }
+
+    [Fact]
+    public async Task An_attachment_whose_note_is_gone_is_withheld_from_the_client()
+    {
+        // Fail closed. A dangling note id cannot be shown to be public, and "cannot prove it is
+        // public" must not resolve to "show it" - that is the reading that turns a tidy-up of old
+        // notes into a disclosure.
+        var dbName = Guid.NewGuid().ToString();
+        await using var db = await SeedAsync(dbName);
+        var t = Ticket(CompanyA, RegularUser, "t");
+        db.Tickets.Add(t);
+        db.TicketAttachments.Add(Attachment(t.Id, Guid.NewGuid(), "orphaned.png"));
+        await db.SaveChangesAsync();
+
+        var detail = await new TicketReadService(db, new NoopTicketScopeQuery(), new TestCurrentUser(Org))
+            .GetDetailAsync(Access(CompanyA, RegularUser, false), t.Id);
+
+        detail!.Attachments.Should().BeEmpty();
+    }
+
+    private static TicketAttachment Attachment(Guid ticketId, Guid? noteId, string fileName) => new()
+    {
+        MspOrganizationId = Org,
+        TicketId = ticketId,
+        TicketNoteId = noteId,
+        OriginalFileName = fileName,
+        ContentType = "image/png",
+        SizeBytes = 1024,
+        StorageObjectKey = $"att/{Guid.NewGuid()}/{Guid.NewGuid():N}.png",
+        ScanStatus = AttachmentScanStatus.Clean,
+    };
+
+    [Fact]
     public async Task Create_writes_to_psa_then_persists_and_records_portal_event()
     {
         var dbName = Guid.NewGuid().ToString();
