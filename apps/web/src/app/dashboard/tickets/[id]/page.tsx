@@ -11,6 +11,7 @@ import {
 import { useTimer } from '@/components/TimerProvider';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
+import { AttachmentPreview } from '@/components/AttachmentPreview';
 import { api, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail } from '@/lib/types';
 
@@ -163,11 +164,16 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, pending, er
 }
 
 /** One file, rendered the same way under a reply and in the loose-files list. */
-function AttachmentChip({ a, provider, onDownload }: {
-  a: TicketAttachment; provider: number; onDownload: (id: string) => void;
+function AttachmentChip({ a, provider, ticketId, onDownload }: {
+  a: TicketAttachment; provider: number; ticketId: string; onDownload: (id: string) => void;
 }) {
   const clean = String(a.scanStatus) === '1' || String(a.scanStatus) === 'Clean';
   return (
+    <>
+    <AttachmentPreview
+      ticketId={ticketId} attachmentId={a.id} fileName={a.fileName}
+      contentType={a.contentType} clean={clean}
+    />
     <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-xs">
       <Paperclip size={12} className="shrink-0 text-[var(--muted)]" />
       <span className="truncate">{a.fileName}</span>
@@ -182,6 +188,7 @@ function AttachmentChip({ a, provider, onDownload }: {
             className="shrink-0 rounded p-0.5 text-[var(--muted)] hover:text-brand"><Download size={13} /></button>
         : <span className="shrink-0 rounded bg-red-100 px-1 py-0.5 font-medium text-red-700 dark:bg-red-950 dark:text-red-300">Quarantined</span>}
     </span>
+    </>
   );
 }
 
@@ -854,7 +861,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                         <ul className="mt-2 flex flex-wrap gap-2">
                           {filesByNote.get(n.id)!.map((a) => (
                             <li key={a.id}>
-                              <AttachmentChip a={a} provider={Number(ticket.provider)} onDownload={download} />
+                              <AttachmentChip a={a} provider={Number(ticket.provider)} ticketId={id} onDownload={download} />
                             </li>
                           ))}
                         </ul>
@@ -894,7 +901,12 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     const clean = String(a.scanStatus) === '1' || String(a.scanStatus) === 'Clean';
                     const sourceLabel = providerLabel(Number(ticket.provider));
                     return (
-                      <li key={a.id} className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm">
+                      <li key={a.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm">
+                      <AttachmentPreview
+                        ticketId={id} attachmentId={a.id} fileName={a.fileName}
+                        contentType={a.contentType} clean={clean}
+                      />
+                      <div className="flex items-center gap-2">
                         <Paperclip size={15} className="text-[var(--muted)]" />
                         <span className="truncate">{a.fileName}</span>
                         {a.fromProvider && (
@@ -906,6 +918,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                         {!clean && <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-300">Quarantined</span>}
                         <span className="ml-auto text-xs text-[var(--muted)]">{fmtSize(a.sizeBytes)}</span>
                         {clean && <button onClick={() => download(a.id)} className="rounded p-1 text-[var(--muted)] hover:text-brand"><Download size={15} /></button>}
+                        </div>
                       </li>
                     );
                   })}
