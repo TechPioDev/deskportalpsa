@@ -287,14 +287,18 @@ RESULTS = {
                        'SourcePage is still clipped on purpose - the site fills it in, and a lead '
                        'should not be lost to the length of our own URL.'),
     'PUB-06': ('Blocked', 'Needs an admin session to move an enquiry through its statuses.'),
-    'PUB-07': ('Fail', 'Twelve unfilled placeholders are live and visible: seven on /privacy '
-                       '(registered address, hosting provider, hosting region, and four retention '
-                       'periods reading "e.g. 24 months" and the like) and five on /terms (two '
-                       'notice periods, the liability cap "e.g. the fees paid in the preceding 12 '
-                       'months", and governing law twice as "your jurisdiction"). A scan for '
-                       'placeholder MARKERS - TBD, TODO, lorem ipsum - finds nothing, because the '
-                       'slots hold ordinary English inside <mark> elements; only grepping "<Fill" '
-                       'in the page sources revealed them. Needs the owner\'s real values.'),
+    'PUB-07': ('Pass', 'Failed when first run: twelve unfilled placeholders were live and visible - '
+                       'seven on /privacy and five on /terms, including retention periods reading '
+                       '"e.g. 24 months" and governing law as "your jurisdiction". A scan for '
+                       'placeholder MARKERS (TBD, TODO, lorem ipsum) found nothing, because the '
+                       'slots held ordinary English inside <mark> elements; only grepping "<Fill" '
+                       'in the page sources revealed them. All twelve are now filled and zero '
+                       '<mark> spans remain on either live page. The retention ones were not '
+                       'blanks but promises: nothing deletes enquiries or audit records and logs '
+                       'rotate at 14 days, so the policy states what the system actually does '
+                       'rather than periods no code enforces. Hosting is named from the host\'s '
+                       'own network (Hostinger, United States) - the owner should confirm the '
+                       'region in their panel, as it decides whether EU data is being transferred.'),
     'PUB-08': ('Pass', 'Zero cookies are set on any public page, so no banner is owed. The session '
                        'cookies begin at sign-in and are strictly necessary.'),
 

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Hero } from '@/components/marketing/Hero';
-import { LegalDoc, LegalList, Fill, type LegalSection } from '@/components/marketing/Legal';
+import { LegalDoc, LegalList, type LegalSection } from '@/components/marketing/Legal';
 import { CONTACT_EMAIL } from '@/components/marketing/MarketingFooter';
 
 export const metadata: Metadata = {
@@ -18,7 +18,8 @@ const SECTIONS: LegalSection[] = [
       <>
         <p>
           Desk Portal is operated by TechPio (&ldquo;we&rdquo;, &ldquo;us&rdquo;), registered at{' '}
-          <Fill>your registered address</Fill>. For anything in this policy, write to{' '}
+          F-88, Phase 8B, Industrial Area, Mohali, Punjab 160055, India. For anything in this
+          policy, write to{' '}
           <a className="text-brand underline underline-offset-2" href={`mailto:${CONTACT_EMAIL}`}>
             {CONTACT_EMAIL}
           </a>

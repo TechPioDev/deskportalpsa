@@ -258,12 +258,20 @@ t.setStyle(TableStyle([
 story.append(t)
 story.append(Spacer(1, 8))
 story.append(Paragraph(
-    "One failure, and it is the one to read first. PUB-07 found twelve unfilled placeholders live "
-    "on the privacy policy and terms - retention periods, the liability cap and governing law all "
-    "still reading \"e.g. 24 months\" or \"your jurisdiction\" to anyone who visits. It survived an "
-    "earlier scan because the slots hold ordinary English rather than TBD or TODO, which is worth "
+    "One case failed and has since been closed. PUB-07 found twelve unfilled placeholders live on "
+    "the privacy policy and terms - retention periods, the liability cap and governing law all "
+    "still reading \"e.g. 24 months\" or \"your jurisdiction\" to anyone who visited. It survived an "
+    "earlier scan because the slots held ordinary English rather than TBD or TODO, which is worth "
     "remembering: a check that looks for placeholder MARKERS cannot find a placeholder written as "
-    "prose. It needs the owner's real values and no amount of testing will supply them.", BODY))
+    "prose.", BODY))
+story.append(Spacer(1, 6))
+story.append(Paragraph(
+    "Filling them turned up something the blanks were hiding. The retention slots were not missing "
+    "numbers, they were promises the software has to keep - and nothing deletes enquiries or audit "
+    "records, while web logs rotate at fourteen days rather than the thirty the draft suggested. "
+    "Writing the suggested figures would have published a deletion that never happens, which is a "
+    "worse position than the blank was. The policy now states what the system actually does, so it "
+    "is true on the day it publishes and owes no future code.", BODY))
 story.append(Spacer(1, 6))
 story.append(Paragraph(
     "Everything else that could be executed passed. Blocked and N/A are not quiet passes. Blocked "
