@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Hero } from '@/components/marketing/Hero';
-import { LegalDoc, LegalList, Fill, type LegalSection } from '@/components/marketing/Legal';
+import { LegalDoc, LegalList, type LegalSection } from '@/components/marketing/Legal';
 import { CONTACT_EMAIL } from '@/components/marketing/MarketingFooter';
 
 export const metadata: Metadata = {
