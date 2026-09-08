@@ -907,12 +907,24 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   {looseFiles.map((a) => {
                     const clean = String(a.scanStatus) === '1' || String(a.scanStatus) === 'Clean';
                     const sourceLabel = providerLabel(Number(ticket.provider));
+
+                    // Same rule as the thread: an image shows itself, and carries its own download.
+                    // The row's name, size and source go with it - a picture you can see does not
+                    // need to be described, and the two lists reading differently was the oddity.
+                    if (clean && isPreviewableImage(a.contentType)) {
+                      return (
+                        <li key={a.id}>
+                          <AttachmentPreview
+                            ticketId={id} attachmentId={a.id} fileName={a.fileName}
+                            contentType={a.contentType} clean={clean}
+                            onDownload={() => download(a.id)}
+                          />
+                        </li>
+                      );
+                    }
+
                     return (
                       <li key={a.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm">
-                      <AttachmentPreview
-                        ticketId={id} attachmentId={a.id} fileName={a.fileName}
-                        contentType={a.contentType} clean={clean}
-                      />
                       <div className="flex items-center gap-2">
                         <Paperclip size={15} className="text-[var(--muted)]" />
                         <span className="truncate">{a.fileName}</span>
