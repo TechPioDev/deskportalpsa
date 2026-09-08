@@ -116,7 +116,7 @@ const SECTIONS: LegalSection[] = [
             </>,
             <>
               <strong className="text-[var(--fg)]">Our hosting provider.</strong> The servers running
-              our website are operated by <Fill>your hosting provider</Fill>, who hold the data at
+              our website are operated by Hostinger International Limited, who hold the data at
               rest on our behalf.
             </>,
             'Where the law requires it, or to establish or defend a legal claim.',
@@ -130,7 +130,7 @@ const SECTIONS: LegalSection[] = [
     heading: 'Where it is held',
     body: (
       <p>
-        Our website and its data are hosted in <Fill>your hosting region</Fill>. Customers who run
+        Our website and its data are hosted in the United States. Customers who run
         Desk Portal themselves choose where their own instance lives; the product is designed to be
         self-hosted precisely so that client data need not sit with a vendor.
       </p>
@@ -143,14 +143,15 @@ const SECTIONS: LegalSection[] = [
       <LegalList
         items={[
           <>
-            Enquiries: <Fill>e.g. 24 months</Fill> from your last contact with us, then deleted.
+            Enquiries: kept until we delete them. We review them periodically and remove those
+            we no longer need; ask us and we will delete yours.
           </>,
           <>
-            Web server logs: <Fill>e.g. 30 days</Fill>.
+            Web server logs: 14 days, after which they are rotated away automatically.
           </>,
           <>
-            Audit records: <Fill>e.g. 12 months</Fill>. These are append-only and cannot be edited,
-            which is the point of them.
+            Audit records: kept for the life of the account. These are append-only and cannot be
+            edited, which is the point of them.
           </>,
           'Account and service data: for as long as the account is active, and then as set out in your contract with us.',
         ]}
@@ -188,7 +189,7 @@ const SECTIONS: LegalSection[] = [
           <a className="text-brand underline underline-offset-2" href={`mailto:${CONTACT_EMAIL}`}>
             {CONTACT_EMAIL}
           </a>
-          . We will respond within <Fill>e.g. 30 days</Fill>.
+          . We will respond within 30 days.
         </p>
       </>
     ),
