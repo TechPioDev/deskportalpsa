@@ -277,9 +277,19 @@ story.append(Paragraph(
     "Several defects were found and fixed while running this - pagination stopping at 100 tickets, "
     "two fields missing from the update hash, mapping that had never worked on either provider, "
     "Autotask client companies named after their id, a secret-scanning gate that had silently "
-    "stopped scanning, and a public contact form that accepted a 60,000-character message, stored "
-    "the first 4,000 and thanked the sender. Those are recorded in the modules they belong to "
-    "rather than here.", BODY))
+    "stopped scanning, a public contact form that accepted a 60,000-character message, stored the "
+    "first 4,000 and thanked the sender, and every attachment download on production returning a "
+    "404 page because the link pointed at a path the web app owns and the API was never given. "
+    "Those are recorded in the modules they belong to rather than here.", BODY))
+story.append(Spacer(1, 6))
+story.append(Paragraph(
+    "SEC-13 is new, added because this run found the hole it describes. Files posted with internal "
+    "notes were being sent to clients: the conversation was filtered and the attachment list beside "
+    "it was not. The screen looked correct throughout - such an attachment matches no rendered "
+    "message, and the loose-files list takes only attachments with no note, so it fell through both "
+    "and appeared nowhere. Nothing was exposed in production, which held no attachments on internal "
+    "notes, but the case exists now so the next tester reads the payload rather than the page. It "
+    "is the lesson of this run in one line: hidden by accident is not withheld.", BODY))
 story.append(PageBreak())
 
 # ---------- modules ----------

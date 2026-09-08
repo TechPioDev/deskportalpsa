@@ -18,9 +18,12 @@ RUN = {
     'environment': 'https://piomanage.com (production) + prod database and worker logs',
     'tester': 'Claude (agent), unattended - no interactive session available',
     'scope': 'Every case reachable without a login: modules 1-10, 16, 21, 22, 23. Modules 11-20 '
-             'are session-bound throughout and were not attempted. Module 21 is the exception '
-             'among the high-numbered modules - the public site is anonymous by design, so most '
-             'of it could be exercised for real.',
+             'are session-bound throughout and were largely not attempted. Module 21 is the '
+             'exception among the high-numbered modules - the public site is anonymous by design, '
+             'so most of it could be exercised for real. Three further cases (SEC-05, SEC-13, '
+             'ATT-03) were run on a LOCAL instance of the production code under a real client '
+             'identity, because the client-side behaviour they cover could not be reached any '
+             'other way; each says so in its own result.',
 }
 
 # case id -> (status, evidence)
@@ -60,8 +63,12 @@ RESULTS = {
                           'tickets, notes, companies, mappings and events; zero tickets whose '
                           'company belongs to another org. The endpoint itself needs a session.'),
     'SEC-04': ('N/A', 'As SEC-01.'),
-    'SEC-05': ('Blocked', 'Needs a client session. The server-side filter is unit-tested in both '
-                          'directions.'),
+    'SEC-05': ('Pass', 'Exercised on a LOCAL instance running production code, under a real client '
+                       'identity (the dev subject linked to a client company with tickets.view.all '
+                       'removed, so the client branch actually ran - confirmed by the composer '
+                       'offering only "Add a reply"). An internal note was absent from the client '
+                       'payload while the public one was present. Not production, which has no '
+                       'internal notes on a client-visible ticket to test with.'),
     'SEC-06': ('Blocked', 'Needs a client session.'),
     'SEC-07': ('Blocked', 'Needs an admin session to read the endpoint.'),
     'SEC-08': ('Blocked', 'Needs Connectors:BlockPrivateEgress enabled and a connection pointed at '
@@ -75,6 +82,19 @@ RESULTS = {
     'SEC-11': ('Blocked', 'Needs a session to upload. EICAR handling is unit-tested.'),
     'SEC-12': ('Pass', 'Exactly five 202s then 429. Driven through the honeypot field so nothing '
                        'was stored - confirmed zero new enquiry rows.'),
+    'SEC-13': ('Pass', 'A defect this run, found while checking that images render for clients, '
+                       'and now closed. The conversation was filtered for clients and the '
+                       'attachment list beside it was not, so every attachment on a ticket - name, '
+                       'size, uploader and ID - reached the client whatever note it belonged to, '
+                       'and the download endpoint asked only whether it belonged to the ticket. '
+                       'The UI hid them by accident, which is not protection. Both halves were '
+                       'fixed and then exercised on a running instance as a real client identity: '
+                       'an internal note carrying INTERNAL-credentials.png was absent from the '
+                       'payload, its id returned 404 on download, and the public-note and '
+                       'no-note files stayed visible and downloadable at 200. Production held '
+                       'zero attachments on internal notes before and after, so nothing was ever '
+                       'exposed. Held by 4 tests; removing the read filter fails 2 and disabling '
+                       'the endpoint check fails 1.'),
 
     # --- 4. Roles and permissions ----------------------------------------------------------
     'ROLE-01': ('Pass', 'All seven built-ins present, IsSystemRole, cross-tenant; zero custom roles.'),
@@ -230,6 +250,15 @@ RESULTS = {
                         'deliberately on production.'),
     'SYNC-16': ('Pass', 'LastSuccessfulSyncAt advancing is the reliable signal; the summary log '
                         'line is written only when something changed.'),
+
+    # --- 14. Attachments --------------------------------------------------------------------
+    'ATT-03': ('Pass', 'End to end on a local instance: the detail issued a five-minute signed URL '
+                       '(200), the blob route served the bytes (200) and the browser rendered the '
+                       'image in the thread. On PRODUCTION this path was returning Next\'s 404 '
+                       'page for every attachment until this run - the API mints links at the site '
+                       'origin, but nginx gives /api/* to the web app and the API publishes no '
+                       'port, so nothing reached it. A route was added; a bad signature now '
+                       'returns 401 from the API rather than 404 HTML from Next.'),
 
     # --- 16. Activity events and rollup ----------------------------------------------------
     'ROLL-01': ('Pass', 'Events captured from both sources.'),
