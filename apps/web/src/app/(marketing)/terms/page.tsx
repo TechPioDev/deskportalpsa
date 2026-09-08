@@ -120,7 +120,7 @@ const SECTIONS: LegalSection[] = [
       <p>
         Fees, billing period and payment terms are those set out in your order form or written
         agreement with us. Unless that document says otherwise, invoices are payable within{' '}
-        <Fill>e.g. 30 days</Fill> and fees are exclusive of any applicable taxes.
+        30 days and fees are exclusive of any applicable taxes.
       </p>
     ),
   },
@@ -177,7 +177,7 @@ const SECTIONS: LegalSection[] = [
         <p>
           Subject to that, neither party is liable for indirect or consequential loss, loss of profit,
           or loss of anticipated savings. Each party&rsquo;s total liability arising out of this
-          agreement is limited to <Fill>e.g. the fees paid in the preceding 12 months</Fill>.
+          agreement is limited to the fees paid in the 12 months before the claim.
         </p>
       </>
     ),
@@ -189,7 +189,7 @@ const SECTIONS: LegalSection[] = [
       <>
         <p>
           These terms apply for as long as you use the service. Either party may terminate for
-          material breach that is not put right within <Fill>e.g. 30 days</Fill> of written notice.
+          material breach that is not put right within 30 days of written notice.
         </p>
         <p>
           On termination your right to use the software ends. Because your PSA remains the system of
@@ -204,8 +204,8 @@ const SECTIONS: LegalSection[] = [
     heading: 'Governing law',
     body: (
       <p>
-        These terms are governed by the laws of <Fill>your jurisdiction</Fill>, and the courts of{' '}
-        <Fill>your jurisdiction</Fill> have exclusive jurisdiction over any dispute arising from them.
+        These terms are governed by the laws of India, and the courts at Mohali, Punjab have
+        exclusive jurisdiction over any dispute arising from them.
       </p>
     ),
   },
