@@ -145,6 +145,20 @@ mod("3. Tenant Isolation and Security",
       "POST /api/public/enquiries/contact six times within ten minutes from one IP.",
       "The sixth is rate limited (policy allows 5 per 10 minutes per IP).",
       "curl loop, observe 429."),
+     ("SEC-13", "A file posted with an internal note never reaches a client",
+      "As staff, post an INTERNAL note on a client's ticket with a file attached (name it "
+      "obviously, e.g. INTERNAL-credentials.png). Then, as a client user of that company, open "
+      "the ticket and read the API response, not just the page. Finally take the attachment id "
+      "from the staff view and call the download endpoint as the client: "
+      "GET /api/tickets/{ticketId}/attachments/{attachmentId}/download",
+      "The client's detail payload contains neither the internal note NOR its attachment - no "
+      "file name, size, uploader or id. The download returns 404 (not 403). A file attached to a "
+      "PUBLIC note, and one attached to no note at all, are both still returned and downloadable "
+      "- a rule that refuses those has been written too broadly.",
+      "DevTools > Network on the ticket detail response, plus curl for the download. CHECK THE "
+      "PAYLOAD, NOT THE PAGE: the UI hides an internal-note attachment by accident - it matches "
+      "no rendered message, and the loose-files list takes only attachments with no note - so a "
+      "leak here looks completely normal on screen. This is how it was missed."),
     ])
 
 mod("4. Roles and Permissions",
