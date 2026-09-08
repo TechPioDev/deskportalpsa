@@ -144,8 +144,8 @@ const SECTIONS: LegalSection[] = [
       <LegalList
         items={[
           <>
-            Enquiries: kept until we delete them. We review them periodically and remove those
-            we no longer need; ask us and we will delete yours.
+            Enquiries: 24 months from when you sent them, then deleted automatically. Ask us
+            sooner and we will delete yours straight away.
           </>,
           <>
             Web server logs: 14 days, after which they are rotated away automatically.

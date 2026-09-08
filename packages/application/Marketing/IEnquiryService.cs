@@ -63,6 +63,26 @@ public sealed record EnquiryDto(
 
 public sealed record EnquiryListResult(int Total, int NewCount, IReadOnlyList<EnquiryDto> Items);
 
+/// <summary>
+/// How long an enquiry is kept before it is deleted, counted from when it arrived.
+///
+/// The number is here rather than in a comment on the privacy policy because it IS the privacy
+/// policy: the page states a period, and a stated period nothing enforces is a false compliance
+/// claim rather than a missing feature. Change one and change the other.
+/// </summary>
+public sealed class EnquiryRetentionPolicy
+{
+    public int Months { get; init; } = 24;
+
+    /// <summary>
+    /// Zero or less keeps enquiries forever. It exists so an operator who does NOT want automatic
+    /// deletion has a supported way to say so — the alternative is that they disable the worker and
+    /// lose the other jobs with it. If it is set, the published policy has to say "kept until we
+    /// delete them" again.
+    /// </summary>
+    public bool Enabled => Months > 0;
+}
+
 public interface IEnquiryService
 {
     /// <summary>
@@ -75,4 +95,13 @@ public interface IEnquiryService
     Task<EnquiryListResult> ListAsync(EnquiryStatus? status = null, CancellationToken ct = default);
 
     Task<bool> SetStatusAsync(Guid id, EnquiryStatus status, CancellationToken ct = default);
+
+    /// <summary>
+    /// Deletes enquiries past the retention period. Returns how many went.
+    ///
+    /// Called on a schedule, and safe to call at any time: it is defined by the age of the rows,
+    /// not by when it last ran, so a missed pass costs nothing and a double pass deletes nothing
+    /// twice.
+    /// </summary>
+    Task<int> PurgeExpiredAsync(CancellationToken ct = default);
 }

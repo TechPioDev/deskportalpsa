@@ -16,10 +16,30 @@ namespace Desk.Tests.Unit;
 /// </summary>
 public class EnquiryTests
 {
-    private static (EnquiryService Svc, DeskDbContext Db) Build()
+    private static (EnquiryService Svc, DeskDbContext Db) Build(int retentionMonths = 24)
+    {
+        var (svc, db, _) = BuildWithClock(retentionMonths);
+        return (svc, db);
+    }
+
+    private static (EnquiryService Svc, DeskDbContext Db, TestClock Clock) BuildWithClock(int retentionMonths = 24)
     {
         var h = AdminHarness.Create(Guid.NewGuid());
-        return (new EnquiryService(h.Db, h.Clock), h.Db);
+        return (new EnquiryService(h.Db, h.Clock, new EnquiryRetentionPolicy { Months = retentionMonths }), h.Db, h.Clock);
+    }
+
+    /// <summary>
+    /// Puts an enquiry in the past, which is the only thing retention reacts to.
+    ///
+    /// Aged against the SERVICE's clock, not wall time. The harness clock is fixed in the past, so
+    /// dating a row from DateTimeOffset.UtcNow puts it in that clock's future and every purge test
+    /// passes for the wrong reason - which is exactly what these did on the first run.
+    /// </summary>
+    private static async Task AgeAsync(DeskDbContext db, TestClock clock, string name, int monthsAgo)
+    {
+        var row = await db.Enquiries.SingleAsync(e => e.Name == name);
+        row.CreatedAt = clock.GetUtcNow().AddMonths(-monthsAgo);
+        await db.SaveChangesAsync();
     }
 
     private static SubmitEnquiryInput Input(
@@ -224,6 +244,84 @@ public class EnquiryTests
         (await svc.SubmitAsync(Input(name: ""))).Refusal.Should().Be(EnquiryRefusal.Incomplete);
         (await svc.SubmitAsync(Input(name: new string('n', 200)))).Refusal.Should().Be(EnquiryRefusal.TooLong);
         (await db.Enquiries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Enquiries_past_the_retention_period_are_deleted_and_recent_ones_are_not()
+    {
+        // The privacy policy states 24 months. This is the code that makes that sentence true, so
+        // both directions matter: a purge that spares nothing is a data loss incident, and a purge
+        // that deletes nothing is a false claim on a public page.
+        var (svc, db, clock) = BuildWithClock(retentionMonths: 24);
+        await using var _ = db;
+        await svc.SubmitAsync(Input(name: "Ancient"));
+        await svc.SubmitAsync(Input(name: "Recent"));
+        await AgeAsync(db, clock, "Ancient", monthsAgo: 25);
+
+        (await svc.PurgeExpiredAsync()).Should().Be(1);
+
+        (await db.Enquiries.SingleAsync()).Name.Should().Be("Recent");
+    }
+
+    [Fact]
+    public async Task An_enquiry_exactly_at_the_limit_survives()
+    {
+        // Off-by-one at a two-year boundary is the kind of thing nobody notices until an enquiry
+        // that should still be there is gone, long after the run that took it.
+        var (svc, db, clock) = BuildWithClock(retentionMonths: 24);
+        await using var _ = db;
+        await svc.SubmitAsync(Input(name: "Exactly"));
+        await AgeAsync(db, clock, "Exactly", monthsAgo: 24);
+
+        (await svc.PurgeExpiredAsync()).Should().Be(0);
+        (await db.Enquiries.CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Retention_set_to_zero_keeps_everything()
+    {
+        // The escape hatch, and the reading that must NOT happen: zero months is "keep forever",
+        // never "everything is older than zero months, delete the lot". A misconfiguration should
+        // cost nothing; here it would cost every enquiry the business has.
+        var (svc, db, clock) = BuildWithClock(retentionMonths: 0);
+        await using var _ = db;
+        await svc.SubmitAsync(Input(name: "Kept"));
+        await AgeAsync(db, clock, "Kept", monthsAgo: 600);
+
+        (await svc.PurgeExpiredAsync()).Should().Be(0);
+        (await db.Enquiries.CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Reading_an_enquiry_does_not_restart_its_clock()
+    {
+        // Retention runs from arrival, not from the last touch. Keying it on UpdatedAt would look
+        // identical for two years and then quietly keep the enquiries staff had opened most often
+        // - the opposite of what a retention promise means.
+        var (svc, db, clock) = BuildWithClock(retentionMonths: 24);
+        await using var _ = db;
+        await svc.SubmitAsync(Input(name: "Old but read"));
+        await AgeAsync(db, clock, "Old but read", monthsAgo: 30);
+
+        var row = await db.Enquiries.SingleAsync();
+        (await svc.SetStatusAsync(row.Id, EnquiryStatus.InProgress)).Should().BeTrue();
+
+        (await svc.PurgeExpiredAsync()).Should().Be(1);
+        (await db.Enquiries.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Purging_twice_deletes_nothing_the_second_time()
+    {
+        // The job is defined by row age, not by a watermark, so it is safe to run at any time and
+        // a missed day repairs itself. This pins that there is no state to get wrong.
+        var (svc, db, clock) = BuildWithClock(retentionMonths: 24);
+        await using var _ = db;
+        await svc.SubmitAsync(Input(name: "Ancient"));
+        await AgeAsync(db, clock, "Ancient", monthsAgo: 25);
+
+        (await svc.PurgeExpiredAsync()).Should().Be(1);
+        (await svc.PurgeExpiredAsync()).Should().Be(0);
     }
 
     [Fact]
