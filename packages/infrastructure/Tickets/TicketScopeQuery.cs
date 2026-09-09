@@ -26,7 +26,11 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
         var scoped = eff.Scope switch
         {
             PermissionScope.All => source,
-            PermissionScope.Assigned or PermissionScope.Own => await AssignedOnlyAsync(source, appUserId, ct),
+            // Board grants are passed in because they change what "assigned to me" should include:
+            // a technician who covers a board needs to see its unclaimed queue, or there is nothing
+            // for them to pick up and work never starts.
+            PermissionScope.Assigned or PermissionScope.Own =>
+                await AssignedOnlyAsync(source, appUserId, eff.BoardMode == BoardAccessMode.Selected, ct),
             PermissionScope.Department => await GroupOrUnassignedAsync(source, appUserId, byTeam: false, ct),
             PermissionScope.Team => await GroupOrUnassignedAsync(source, appUserId, byTeam: true, ct),
             // Selected has no meaning for a ticket-visibility scope (it belongs to board access,
@@ -51,15 +55,51 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
         return await visible.FirstOrDefaultAsync(t => t.Id == ticketId, ct);
     }
 
-    private async Task<IQueryable<Ticket>> AssignedOnlyAsync(IQueryable<Ticket> source, Guid appUserId, CancellationToken ct)
+    /// <summary>
+    /// What "assigned to me" means for someone who may exist in the PSA, only in the portal, or both.
+    ///
+    /// Two identities, OR'd rather than chosen between. A technician linked to a PSA resource keeps
+    /// seeing everything the provider assigned them; one who exists only here sees what the portal
+    /// assigned them. Picking one identity would have broken the other group, and the whole point is
+    /// that a desk can run both at once.
+    ///
+    /// This used to return NOTHING for an unlinked user, on the reasoning that nothing could ever be
+    /// assigned to someone the PSA has never heard of. That was true when assignment lived only in
+    /// the PSA. It stopped being true the moment the portal could assign, and until then it meant
+    /// forty technicians would have signed in to an empty list.
+    ///
+    /// <paramref name="includeUnclaimed"/> adds the unassigned queue, and is passed only when the
+    /// caller has board grants — the board filter applied after this narrows it to their boards. For
+    /// a caller with no grants it stays off, because "every unassigned ticket in the tenant" is not
+    /// a queue, it is a firehose.
+    /// </summary>
+    private async Task<IQueryable<Ticket>> AssignedOnlyAsync(
+        IQueryable<Ticket> source, Guid appUserId, bool includeUnclaimed, CancellationToken ct)
     {
         var me = await db.AppUsers.AsNoTracking()
             .Where(u => u.Id == appUserId)
             .Select(u => u.ExternalTechnicianId)
             .FirstOrDefaultAsync(ct);
-        // Not linked to a PSA technician: there is nothing that could ever be "assigned to them", so
-        // the honest answer is nothing, not everything.
-        return string.IsNullOrEmpty(me) ? source.Where(_ => false) : source.Where(t => t.AssignedTechnicianExternalId == me);
+        var linked = !string.IsNullOrEmpty(me);
+
+        // Written out per case rather than composed from a shared helper: a predicate that calls a
+        // method cannot be translated to SQL, and one built from captured booleans reads worse than
+        // the four sentences it replaces. "Unclaimed" means nobody has it on EITHER side — a ticket
+        // the PSA assigned to the integration's own API user carries an external id and so is not
+        // unclaimed, which is right: it belongs to whoever the portal gave it to, and showing it in
+        // everyone's queue would invite two technicians onto the same work.
+        return (linked, includeUnclaimed) switch
+        {
+            (true, false) => source.Where(t =>
+                t.AssignedAppUserId == appUserId || t.AssignedTechnicianExternalId == me),
+            (true, true) => source.Where(t =>
+                t.AssignedAppUserId == appUserId || t.AssignedTechnicianExternalId == me
+                || (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)),
+            (false, false) => source.Where(t => t.AssignedAppUserId == appUserId),
+            (false, true) => source.Where(t =>
+                t.AssignedAppUserId == appUserId
+                || (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)),
+        };
     }
 
     /// <summary>
@@ -80,17 +120,25 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
 
         if (groupIds.Count == 0)
             // Not a member of anything: only the unclaimed queue is visible, nothing "shared".
-            return source.Where(t => t.AssignedTechnicianExternalId == null);
+            return source.Where(t => t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null);
 
-        var technicianIds = byTeam
+        // Both identities of every member, because a department contains both kinds of technician
+        // and a manager who could see only the PSA-linked half would be reading a partial team.
+        var memberIds = byTeam
             ? await db.UserTeams.AsNoTracking().Where(ut => groupIds.Contains(ut.TeamId))
-                .Join(db.AppUsers, ut => ut.AppUserId, u => u.Id, (ut, u) => u.ExternalTechnicianId)
-                .Where(id => id != null).Select(id => id!).Distinct().ToListAsync(ct)
+                .Select(ut => ut.AppUserId).Distinct().ToListAsync(ct)
             : await db.UserDepartments.AsNoTracking().Where(ud => groupIds.Contains(ud.DepartmentId))
-                .Join(db.AppUsers, ud => ud.AppUserId, u => u.Id, (ud, u) => u.ExternalTechnicianId)
-                .Where(id => id != null).Select(id => id!).Distinct().ToListAsync(ct);
+                .Select(ud => ud.AppUserId).Distinct().ToListAsync(ct);
 
-        return source.Where(t => t.AssignedTechnicianExternalId == null || technicianIds.Contains(t.AssignedTechnicianExternalId!));
+        var technicianIds = await db.AppUsers.AsNoTracking()
+            .Where(u => memberIds.Contains(u.Id) && u.ExternalTechnicianId != null)
+            .Select(u => u.ExternalTechnicianId!)
+            .Distinct().ToListAsync(ct);
+
+        return source.Where(t =>
+            (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)
+            || (t.AssignedAppUserId != null && memberIds.Contains(t.AssignedAppUserId.Value))
+            || (t.AssignedTechnicianExternalId != null && technicianIds.Contains(t.AssignedTechnicianExternalId!)));
     }
 
     /// <summary>

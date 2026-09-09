@@ -34,12 +34,13 @@ public class TicketScopeQueryTests
         return new DeskDbContext(options, tenant, new TestClock());
     }
 
-    private static Ticket NewTicket(string title, string? assignedTo = null, Guid? connectionId = null, string? board = null) => new()
+    private static Ticket NewTicket(string title, string? assignedTo = null, Guid? connectionId = null,
+        string? board = null, Guid? assignedUser = null) => new()
     {
         MspOrganizationId = Org, PsaConnectionId = connectionId ?? Guid.NewGuid(), Provider = ProviderType.ConnectWisePsa,
         ClientCompanyId = Guid.NewGuid(), RequesterName = "r", RequesterEmail = "r@test",
         Title = title, PortalStatus = "NEW", PortalPriority = "NORMAL",
-        AssignedTechnicianExternalId = assignedTo, QueueOrBoard = board,
+        AssignedTechnicianExternalId = assignedTo, QueueOrBoard = board, AssignedAppUserId = assignedUser,
     };
 
     private static async Task<Guid> SeedUserAsync(DeskDbContext db, string? externalTechnicianId = null)
@@ -65,6 +66,85 @@ public class TicketScopeQueryTests
     }
 
     private static TicketScopeQuery Query(DeskDbContext db) => new(db, new EffectivePermissionService(db));
+
+    [Fact]
+    public async Task A_portal_only_technician_sees_the_tickets_assigned_to_them_here()
+    {
+        // The case the whole change exists for. This user has no PSA resource, and before it they
+        // saw NOTHING - the scope returned Where(_ => false) on the reasoning that nothing could be
+        // assigned to someone the PSA has never heard of. Forty technicians would have signed in to
+        // an empty list.
+        var db = NewDb();
+        var meId = await SeedUserAsync(db);           // no external technician id
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Assigned);
+
+        db.Tickets.AddRange(
+            NewTicket("mine", assignedUser: meId),
+            NewTicket("a colleague's", assignedUser: Guid.NewGuid()),
+            NewTicket("the PSA's", assignedTo: "tech-someone-else"));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.Select(t => t.Title).ToListAsync()).Should().BeEquivalentTo(["mine"]);
+    }
+
+    [Fact]
+    public async Task A_linked_technician_sees_both_identities_worth_of_work()
+    {
+        // Someone who exists in both places must not lose either half. Picking one identity would
+        // have quietly broken whichever group was not chosen.
+        var db = NewDb();
+        var meId = await SeedUserAsync(db, "tech-me");
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Assigned);
+
+        db.Tickets.AddRange(
+            NewTicket("assigned in the PSA", assignedTo: "tech-me"),
+            NewTicket("assigned in the portal", assignedUser: meId),
+            NewTicket("neither", assignedTo: "tech-other"));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.Select(t => t.Title).ToListAsync())
+            .Should().BeEquivalentTo(["assigned in the PSA", "assigned in the portal"]);
+    }
+
+    [Fact]
+    public async Task Without_board_grants_the_unclaimed_queue_stays_hidden()
+    {
+        // The firehose guard. A technician with no board access has no queue to pick up from, so
+        // "everything nobody owns, across the whole tenant" is not a useful list - it is every
+        // ticket in the desk shown to everyone.
+        var db = NewDb();
+        var meId = await SeedUserAsync(db);
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Assigned);
+
+        db.Tickets.AddRange(NewTicket("mine", assignedUser: meId), NewTicket("nobody's"));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.Select(t => t.Title).ToListAsync()).Should().BeEquivalentTo(["mine"]);
+    }
+
+    [Fact]
+    public async Task A_ticket_the_PSA_gave_to_the_integration_is_not_unclaimed()
+    {
+        // Work arriving under the API user's identity carries an external id, so it is owned - by
+        // whoever the portal gave it to. Treating it as unclaimed would put one job in every
+        // technician's queue and invite two people to start it.
+        var db = NewDb();
+        var meId = await SeedUserAsync(db);
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Assigned);
+
+        db.Tickets.Add(NewTicket("held by the integration", assignedTo: "api-user-id"));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.ToListAsync()).Should().BeEmpty();
+    }
 
     [Fact]
     public async Task Assigned_scope_shows_only_the_callers_own_tickets()

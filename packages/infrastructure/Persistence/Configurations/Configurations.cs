@@ -209,6 +209,9 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         // Client-portal list queries filter by company; dashboard metrics group by technician.
         b.HasIndex(x => x.ClientCompanyId);
         b.HasIndex(x => new { x.MspOrganizationId, x.AssignedTechnicianExternalId });
+        // "My tickets" for a portal-only technician runs on this, and it is the query every one of
+        // them issues on every page load — the same reason the PSA-side index above exists.
+        b.HasIndex(x => new { x.MspOrganizationId, x.AssignedAppUserId });
         b.HasMany(x => x.Notes).WithOne(n => n.Ticket!).HasForeignKey(n => n.TicketId);
         b.HasMany(x => x.Attachments).WithOne(a => a.Ticket!).HasForeignKey(a => a.TicketId);
     }

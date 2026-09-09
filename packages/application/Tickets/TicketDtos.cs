@@ -68,7 +68,12 @@ public sealed record TicketDetailDto(
     string? AssignedTechnicianName = null,
     // Deep link to the same record in the PSA, for verifying a note or a time entry at source.
     // Null when the connection's endpoint does not match a shape we can map with confidence.
-    string? ExternalTicketUrl = null);
+    string? ExternalTicketUrl = null,
+    // Who is working it in the PORTAL, which is a separate answer from the provider's assignee
+    // above and frequently the only true one: work done by a portal-only technician reaches the
+    // PSA under the integration's identity, so the field above names the API user or nobody.
+    Guid? AssignedAppUserId = null,
+    string? AssignedAppUserName = null);
 
 public sealed record AttachmentDto(
     Guid Id,

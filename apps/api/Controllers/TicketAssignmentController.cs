@@ -75,9 +75,21 @@ public sealed class TicketAssignmentController(
             .OrderBy(t => t.name)
             .ToList();
 
+        // Portal technicians, offered alongside the PSA's own. Not merged into one list: they are
+        // different things and the difference matters to whoever is choosing. Assigning a PSA
+        // technician changes the ticket in the provider and their name appears there; assigning a
+        // portal technician does not leave this system. A single blended list would make that
+        // invisible at exactly the moment someone decides.
+        var portalTechnicians = await db.AppUsers.AsNoTracking()
+            .Where(u => u.IsActive)
+            .OrderBy(u => u.DisplayName)
+            .Select(u => new { id = u.Id, name = u.DisplayName, email = u.Email })
+            .ToListAsync(ct);
+
         return Ok(new
         {
             queueOrBoardId = queueId,
+            portalTechnicians,
             // Reported separately: narrowing by role and narrowing to this queue are different
             // promises, and claiming the stronger one when only the weaker happened misleads.
             filteredByRole = rolesByTechnician.Count > 0,
@@ -98,8 +110,40 @@ public sealed class TicketAssignmentController(
 
         var technicianId = Blank(req.TechnicianExternalId);
         var queueId = Blank(req.QueueOrBoardId);
-        if (technicianId is null && queueId is null)
+        if (technicianId is null && queueId is null && req.AppUserId is null)
             throw new ValidationFailedException("Choose a technician or a queue to change.");
+
+        // A portal assignee is recorded here and NEVER pushed. The person has no resource in the
+        // PSA — that is what "portal technician" means — so there is nothing to send and any
+        // attempt would be rejected. It is also the point: work reaches the provider under the
+        // integration's identity, and their name stays inside the portal.
+        //
+        // Done before the provider call so that assigning a portal technician does not depend on
+        // the PSA being reachable. The two assignments are independent facts and a failure to
+        // change one must not silently discard the other.
+        if (req.AppUserId is { } appUserId)
+        {
+            var assignee = await db.AppUsers.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == appUserId && u.IsActive, ct)
+                ?? throw new ValidationFailedException("That portal user does not exist, or is not active.");
+
+            ticket.AssignedAppUserId = assignee.Id;
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("ticket.assigned.portal", "Ticket", ticket.Id.ToString(),
+                new { ticket.ExternalTicketId, appUserId = assignee.Id, assignee.DisplayName }, ct);
+
+            // Nothing else was asked for, so nothing else should be attempted — in particular not a
+            // provider round trip that could fail and report an error for work that succeeded.
+            if (technicianId is null && queueId is null)
+                return Ok(new
+                {
+                    assignedAppUserId = ticket.AssignedAppUserId,
+                    assignedAppUserName = assignee.DisplayName,
+                    assignedTechnicianExternalId = ticket.AssignedTechnicianExternalId,
+                    assignedTechnicianName = ticket.AssignedTechnicianName,
+                    queueOrBoard = ticket.QueueOrBoard,
+                });
+        }
 
         var fields = await admin.GetFieldsAsync(ticket.PsaConnectionId, ct);
 
@@ -157,6 +201,7 @@ public sealed class TicketAssignmentController(
 
         return Ok(new
         {
+            assignedAppUserId = ticket.AssignedAppUserId,
             assignedTechnicianExternalId = ticket.AssignedTechnicianExternalId,
             assignedTechnicianName = ticket.AssignedTechnicianName,
             queueOrBoard = ticket.QueueOrBoard,
@@ -224,6 +269,12 @@ public sealed class TicketAssignmentController(
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
 
-    /// <summary>RoleId is optional: left unset, the technician's role on this queue is used.</summary>
-    public sealed record AssignRequest(string? TechnicianExternalId, string? QueueOrBoardId, string? RoleId = null);
+    /// <param name="RoleId">Optional: left unset, the technician's role on this queue is used.</param>
+    /// <param name="AppUserId">
+    /// A PORTAL technician to give the ticket to. Independent of <paramref name="TechnicianExternalId"/>
+    /// rather than an alternative to it — a desk running both kinds of technician needs to say "the
+    /// PSA has it on the integration account, and Basit is working it" in one sentence.
+    /// </param>
+    public sealed record AssignRequest(
+        string? TechnicianExternalId, string? QueueOrBoardId, string? RoleId = null, Guid? AppUserId = null);
 }

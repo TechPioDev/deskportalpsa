@@ -105,6 +105,16 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             .Where(c => c.Id == ticket.ClientCompanyId)
             .Select(c => c.Name)
             .FirstOrDefaultAsync(ct);
+
+        // Resolved by join rather than cached on the ticket, unlike the provider's assignee name.
+        // That one is cached because the alternative is a call to the PSA on every read; this one
+        // is a local row, so a stale copy would be a cost with nothing bought.
+        var assignedAppUserName = ticket.AssignedAppUserId is { } assigneeId
+            ? await db.AppUsers.AsNoTracking()
+                .Where(u => u.Id == assigneeId)
+                .Select(u => u.DisplayName)
+                .FirstOrDefaultAsync(ct)
+            : null;
         var connection = await db.PsaConnections
             .AsNoTracking()
             .Where(p => p.Id == ticket.PsaConnectionId)
@@ -168,7 +178,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             ServiceInstructions: serviceInstructions,
             AssignedTechnicianExternalId: ticket.AssignedTechnicianExternalId,
             AssignedTechnicianName: ticket.AssignedTechnicianName,
-            ExternalTicketUrl: externalUrl);
+            ExternalTicketUrl: externalUrl,
+            AssignedAppUserId: ticket.AssignedAppUserId,
+            AssignedAppUserName: assignedAppUserName);
     }
 
     public async Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)
