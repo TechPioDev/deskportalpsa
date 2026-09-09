@@ -42,6 +42,22 @@ public class Ticket : TenantEntity
     public string? AssignedTechnicianName { get; set; }
 
     /// <summary>
+    /// The PORTAL user this ticket sits with, which is a different question from
+    /// <see cref="AssignedTechnicianExternalId"/> and deliberately not the same field.
+    ///
+    /// A technician who exists only here has no PSA resource to be assigned to. Their work still
+    /// reaches the PSA — under the connection's API identity, because that is the only identity the
+    /// PSA has — so the provider's assignee says "the integration" and can never say who actually
+    /// did it. Without somewhere local to record that, the answer is lost: every ticket looks
+    /// unassigned to the portal, "my tickets" is empty for everyone, and no metric can be attributed
+    /// to a person.
+    ///
+    /// Both may be set at once, and that is the normal case rather than a conflict: the PSA holds
+    /// whatever it holds, and this holds who is really working it.
+    /// </summary>
+    public Guid? AssignedAppUserId { get; set; }
+
+    /// <summary>
     /// When the PSA says the ticket was RAISED — distinct from <see cref="BaseEntity.CreatedAt"/>,
     /// which is when this row was first written and therefore when the portal happened to import it.
     /// Every metric about ticket age or resolution time must use this one: measuring from the import

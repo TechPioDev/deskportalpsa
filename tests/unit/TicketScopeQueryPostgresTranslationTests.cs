@@ -66,6 +66,44 @@ public class TicketScopeQueryPostgresTranslationTests
     }
 
     [Fact]
+    public void Dual_identity_assigned_scope_compiles_to_sql()
+    {
+        // "Assigned to me" now means either identity, plus the unclaimed queue for a board holder.
+        // The first draft of this expressed "unclaimed" as a static helper method called inside the
+        // predicate — which the in-memory provider evaluates client-side without complaint and
+        // Npgsql cannot translate at all. This is the test that would have caught it.
+        using var db = NpgsqlDb();
+        var appUserId = Guid.NewGuid();
+        const string me = "tech-123";
+
+        var act = () => db.Tickets
+            .Where(t => t.AssignedAppUserId == appUserId
+                        || t.AssignedTechnicianExternalId == me
+                        || (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null))
+            .ToQueryString();
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Department_scope_across_both_identities_compiles_to_sql()
+    {
+        using var db = NpgsqlDb();
+        var memberIds = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+        var technicianIds = new List<string> { "tech-1", "tech-2" };
+
+        // Guid list Contains over a NULLABLE column is the part worth pinning: it needs the .Value
+        // access to compile in C#, and that is exactly the shape a provider can refuse.
+        var act = () => db.Tickets
+            .Where(t => (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)
+                        || (t.AssignedAppUserId != null && memberIds.Contains(t.AssignedAppUserId.Value))
+                        || (t.AssignedTechnicianExternalId != null && technicianIds.Contains(t.AssignedTechnicianExternalId!)))
+            .ToQueryString();
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
     public void Department_scope_unassigned_or_in_technician_list_compiles_to_sql()
     {
         using var db = NpgsqlDb();

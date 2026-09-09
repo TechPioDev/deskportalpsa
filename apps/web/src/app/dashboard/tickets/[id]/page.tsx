@@ -84,18 +84,20 @@ type TicketAttachment = TicketDetail['attachments'][number];
  * "who can take this" is a role question first — an Engineer and a Help Desk tech covering the same
  * board are not interchangeable, and the provider only exposes that through queue coverage.
  */
-function AssignPanel({ options, currentTechnicianId, currentQueueId, pending, error, onCancel, onSave }: {
+function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppUserId, pending, error, onCancel, onSave }: {
   options: AssigneeOptions | undefined;
   currentTechnicianId: string | null;
   currentQueueId: string | null;
+  currentAppUserId: string | null;
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onSave: (body: { technicianExternalId?: string; queueOrBoardId?: string; roleId?: string }) => void;
+  onSave: (body: { technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string }) => void;
 }) {
   const [technician, setTechnician] = useState(currentTechnicianId ?? '');
   const [queue, setQueue] = useState('');
   const [role, setRole] = useState('');
+  const [portalUser, setPortalUser] = useState(currentAppUserId ?? '');
 
   if (!options) return <p className="text-xs text-[var(--muted)]">Loading technicians…</p>;
 
@@ -103,7 +105,9 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, pending, er
   // server picks the single role they have on this queue and the field is noise.
   const roleOptions = options.technicians.find((t) => t.id === technician)?.roleOptions ?? [];
 
-  const changed = (technician && technician !== currentTechnicianId) || (queue && queue !== currentQueueId);
+  const changed = (technician && technician !== currentTechnicianId)
+    || (queue && queue !== currentQueueId)
+    || (portalUser && portalUser !== currentAppUserId);
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -144,6 +148,20 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, pending, er
           </select>
           <span className="mt-1 block text-xs text-[var(--muted)]">Moving a ticket can change who covers it.</span>
         </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium">Working it (portal)</span>
+          <select value={portalUser} onChange={(e) => setPortalUser(e.target.value)}
+            className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand">
+            <option value="">— unchanged —</option>
+            {options.portalTechnicians.map((u) => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs text-[var(--muted)]">
+            Who on your team is actually working this. Stays in the portal — the PSA is not told, and
+            their name does not appear there.
+          </span>
+        </label>
       </div>
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex items-center gap-2">
@@ -152,6 +170,7 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, pending, er
             technicianExternalId: technician || undefined,
             queueOrBoardId: queue || undefined,
             roleId: role || undefined,
+            appUserId: portalUser || undefined,
           })}
           disabled={pending || !changed}
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
@@ -535,7 +554,13 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <Meta label="Reference" value={ticket.externalTicketId ?? '—'} href={ticket.externalTicketUrl} />
                 <Meta label="Source" value={ticket.connectionName ?? '—'} />
                 <Meta label="Queue / Board" value={ticket.queueOrBoard ?? '—'} />
-                <Meta label="Assigned to" value={ticket.assignedTechnicianName ?? ticket.assignedTechnicianExternalId ?? 'Unassigned'} />
+                {/* Two lines, not one merged answer. The PSA's assignee and the person actually
+                    working it are different facts, and on a desk where technicians exist only in
+                    the portal the provider's line will read as the integration account or nothing
+                    at all — collapsing them would report that as "unassigned" while someone is
+                    mid-way through the job. */}
+                <Meta label="Assigned to (PSA)" value={ticket.assignedTechnicianName ?? ticket.assignedTechnicianExternalId ?? 'Unassigned'} />
+                {ticket.assignedAppUserName && <Meta label="Working it" value={ticket.assignedAppUserName} />}
                 <Meta label="Category" value={ticket.portalCategory ?? '—'} />
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 <Meta label="Opened" value={fmt(ticket.createdAt)} />
@@ -547,13 +572,14 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 {!assignOpen ? (
                   <button onClick={() => setAssignOpen(true)}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--bg)]">
-                    <UserCog size={14} /> {ticket.assignedTechnicianName ? 'Reassign or move queue' : 'Assign technician'}
+                    <UserCog size={14} /> {ticket.assignedTechnicianName || ticket.assignedAppUserName ? 'Reassign or move queue' : 'Assign technician'}
                   </button>
                 ) : (
                   <AssignPanel
                     options={assignOpts}
                     currentTechnicianId={ticket.assignedTechnicianExternalId}
                     currentQueueId={assignOpts?.queueOrBoardId ?? null}
+                    currentAppUserId={ticket.assignedAppUserId}
                     pending={assign.isPending}
                     error={assign.isError ? (assign.error instanceof Error ? assign.error.message : 'The PSA rejected the change.') : null}
                     onCancel={() => { setAssignOpen(false); assign.reset(); }}

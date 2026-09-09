@@ -63,6 +63,10 @@ export const TicketDetailSchema = z.object({
   serviceInstructions: z.string().nullable().optional(),
   assignedTechnicianExternalId: z.string().nullable().default(null),
   assignedTechnicianName: z.string().nullable().default(null),
+  // The portal's own assignee, distinct from the provider's above. Defaulted so an older API
+  // response (or a cached one mid-deploy) parses rather than throwing the whole detail away.
+  assignedAppUserId: z.string().nullable().default(null),
+  assignedAppUserName: z.string().nullable().default(null),
   externalTicketUrl: z.string().nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;

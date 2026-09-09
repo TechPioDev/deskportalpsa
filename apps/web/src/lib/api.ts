@@ -124,15 +124,21 @@ export const api = {
       canChooseRecipients: z.boolean(),
       contacts: z.array(z.object({ externalId: z.string(), name: z.string(), email: z.string() })),
     })),
+  // Cast to the schema's OUTPUT type: portalTechnicians carries a .default([]), which makes it
+  // optional on the way in and guaranteed on the way out. Without this the caller sees the input
+  // type and has to null-check a field the parser has already filled.
   ticketAssignees: (id: string) =>
-    request(`/api/tickets/${id}/assignees`, AssigneeOptionsSchema),
-  assignTicket: (id: string, body: { technicianExternalId?: string; queueOrBoardId?: string; roleId?: string }) =>
+    request(`/api/tickets/${id}/assignees`, AssigneeOptionsSchema) as Promise<AssigneeOptions>,
+  assignTicket: (id: string, body: {
+    technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string;
+  }) =>
     request(`/api/tickets/${id}/assignment`,
       z.object({
+        assignedAppUserId: z.string().nullable().default(null),
         assignedTechnicianExternalId: z.string().nullable(),
         assignedTechnicianName: z.string().nullable(),
         queueOrBoard: z.string().nullable(),
-      }),
+      }).passthrough(),
       { method: 'PUT', body: JSON.stringify(body) }),
   updateTicketStatus: (id: string, status: string) =>
     request(`/api/tickets/${id}/status`, z.object({ portalStatus: z.string() }), { method: 'POST', body: JSON.stringify({ status }) }),
@@ -659,6 +665,13 @@ const AssigneeOptionsSchema = z.object({
     roles: z.array(z.string()),
     roleOptions: z.array(z.object({ id: z.string(), name: z.string() })),
   })),
+  // Portal staff, listed separately from the PSA's technicians rather than merged with them.
+  // Assigning one of these does not touch the provider and their name never appears there.
+  portalTechnicians: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    email: z.string(),
+  })).default([]),
 });
 export type AssigneeOptions = z.infer<typeof AssigneeOptionsSchema>;
 
