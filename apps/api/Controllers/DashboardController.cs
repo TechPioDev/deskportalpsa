@@ -38,15 +38,49 @@ public sealed class DashboardController(
         // therefore pinned to themselves regardless of what they asked for.
         if (!user.HasPermission(Permissions.ProductivityViewTeam))
         {
+            // Pinned to whichever identity this person actually has. A technician who exists only
+            // in the portal has no PSA id, and refusing them their own figures - which is what
+            // happened here - told the larger half of a desk that their work does not count.
             var self = user.TechnicianExternalId;
-            if (string.IsNullOrEmpty(self))
-                throw new ForbiddenException(
-                    "Your account is not linked to a technician in the PSA, so it has no own-productivity figures to show.");
-            filter = filter with { TechnicianExternalId = self };
+            filter = !string.IsNullOrEmpty(self)
+                ? filter with { TechnicianExternalId = self, AppUserId = null }
+                : user.UserId is { } uid
+                    ? filter with { AppUserId = uid, TechnicianExternalId = null }
+                    : throw new ForbiddenException(
+                        "Your sign-in is not linked to a portal user, so it has no productivity figures to show.");
         }
 
         var m = await metrics.ForTechnicianAsync(filter, q.ToWeights(), ct);
         return Ok(new { metrics = m, disclaimer = ProductivityScore.Disclaimer });
+    }
+
+    /// <summary>
+    /// Per technician, per day: hours logged and tickets resolved over the requested range.
+    ///
+    /// One endpoint rather than one per period. A week, a month, a quarter and an arbitrary range
+    /// differ only in their bounds, and four endpoints would be four places to fix the next time
+    /// attribution changes.
+    ///
+    /// Someone without the team permission gets their own series, pinned the same way the technician
+    /// endpoint pins - passing a colleague's id must not read their figures.
+    /// </summary>
+    [HttpGet("daily")]
+    [RequirePermission(Permissions.ProductivityViewOwn)]
+    public async Task<IActionResult> Daily([FromQuery] DashboardQuery q, CancellationToken ct)
+    {
+        var filter = q.ToFilter();
+        if (!user.HasPermission(Permissions.ProductivityViewTeam))
+        {
+            var self = user.TechnicianExternalId;
+            filter = !string.IsNullOrEmpty(self)
+                ? filter with { TechnicianExternalId = self, AppUserId = null }
+                : user.UserId is { } uid
+                    ? filter with { AppUserId = uid, TechnicianExternalId = null }
+                    : throw new ForbiddenException(
+                        "Your sign-in is not linked to a portal user, so it has no productivity figures to show.");
+        }
+
+        return Ok(await metrics.DailyAsync(filter, ct));
     }
 
     /// <summary>
@@ -122,9 +156,12 @@ public sealed class DashboardController(
         public double? WWorklog { get; init; }
         public double? WDocumentation { get; init; }
 
+        /// <summary>A PORTAL technician to narrow to, where Technician narrows to a PSA one.</summary>
+        public Guid? AppUserId { get; init; }
+
         public MetricsFilter ToFilter() => new()
         {
-            From = From, To = To, TechnicianExternalId = Technician,
+            From = From, To = To, TechnicianExternalId = Technician, AppUserId = AppUserId,
             ClientCompanyId = CompanyId, PsaConnectionId = ConnectionId, Priority = Priority,
         };
 

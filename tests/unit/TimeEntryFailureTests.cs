@@ -44,6 +44,52 @@ public class TimeEntryFailureTests
     }
 
     [Fact]
+    public async Task A_logged_hour_records_which_PORTAL_user_logged_it()
+    {
+        // Attribution is stamped on the row at creation, and this is the test that fails if that
+        // stamp is ever dropped. Without it every hour the team logs is unattributable: the PSA
+        // side falls back to the connection's default resource, so all forty technicians would
+        // share one identity and "hours per technician" would be a single row.
+        //
+        // Driven through the FAILING push on purpose. The row is written before the provider call,
+        // so a rejected entry still has to carry who logged it - that is the entry someone will
+        // retry days later, and the hour belongs to whoever did the work, not whoever retried it.
+        var h = AdminHarness.Create(Org);
+        h.Db.PsaConnections.Add(new PsaConnection
+        {
+            Id = Conn, MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://x", CredentialSecretRef = "mem://x",
+        });
+        var company = new ClientCompany { MspOrganizationId = Org, PsaConnectionId = Conn, Name = "Acme", ExternalCompanyId = "1" };
+        h.Db.ClientCompanies.Add(company);
+        var ticket = new Ticket
+        {
+            MspOrganizationId = Org, ClientCompanyId = company.Id, PsaConnectionId = Conn,
+            Title = "t", RequesterName = "r", RequesterEmail = "r@a.test", ExternalTicketId = "7814",
+        };
+        h.Db.Tickets.Add(ticket);
+        await h.Db.SaveChangesAsync();
+
+        var basit = Guid.NewGuid();
+        var connector = new StubConnector
+        {
+            TimeEntryFailure = new ConnectorException(ConnectorFailureKind.InvalidRequest, "rejected"),
+        };
+        var controller = new TicketTimeController(
+            h.Db, new FakeResolver(connector), null!, new NoopTicketScopeQuery(), new TestUser(basit));
+
+        var act = async () => await controller.LogTime(ticket.Id,
+            new TicketTimeController.LogTimeRequest(1.5m, "Billable", "worked on it", null, null, null), default);
+        await act.Should().ThrowAsync<ValidationFailedException>();
+
+        var stored = await h.Db.TicketTimeEntries.AsNoTracking().SingleAsync();
+        stored.AppUserId.Should().Be(basit);
+        stored.Hours.Should().Be(1.5m);
+        stored.TechnicianExternalId.Should().BeNull(
+            "this technician has no PSA identity - which is exactly why the portal id has to be recorded");
+    }
+
+    [Fact]
     public async Task A_provider_rejection_replaces_the_stale_reason_with_what_the_provider_actually_said()
     {
         var h = AdminHarness.Create(Org);

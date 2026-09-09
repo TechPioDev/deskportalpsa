@@ -55,6 +55,20 @@ public class TicketTimeEntry : TenantEntity
     public string? TechnicianExternalId { get; set; }
     public string? TechnicianName { get; set; }
 
+    /// <summary>
+    /// The PORTAL user who logged this hour, stamped at creation.
+    ///
+    /// <see cref="TechnicianExternalId"/> answers "whose timesheet does the PSA put this on", and
+    /// for a technician who exists only here the answer is the connection's default resource — the
+    /// integration account. That is correct for the provider and useless for us: every hour the
+    /// team logs would carry the same identity, and "hours worked per technician" would be one row
+    /// with everybody's time in it.
+    ///
+    /// Null for entries imported FROM the PSA, which were logged by someone who may have no portal
+    /// account at all. Null is therefore "not ours to attribute", never "unknown person".
+    /// </summary>
+    public Guid? AppUserId { get; set; }
+
     public TimeEntrySource Source { get; set; } = TimeEntrySource.Portal;
     public TimeEntrySyncStatus SyncStatus { get; set; } = TimeEntrySyncStatus.Pending;
 

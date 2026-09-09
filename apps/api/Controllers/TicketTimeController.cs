@@ -134,6 +134,10 @@ public sealed class TicketTimeController(
             // user has no identity on this connection — the connector then falls back to the
             // connection's default resource, which is the behaviour every entry had before.
             TechnicianExternalId = await MyTechnicianIdAsync(ticket.PsaConnectionId, ct),
+            // Who logged it HERE, which is the only attribution that survives for a technician the
+            // PSA has never heard of. Stamped at creation for the same reason as the line above: a
+            // retry days later by someone else must not rewrite whose hour it was.
+            AppUserId = user.UserId,
         };
         db.TicketTimeEntries.Add(record);
         await db.SaveChangesAsync(ct);
