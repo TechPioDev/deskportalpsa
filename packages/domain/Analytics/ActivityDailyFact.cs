@@ -28,6 +28,17 @@ public class ActivityDailyFact : BaseEntity, ITenantScoped
     /// </summary>
     public string? ActorExternalId { get; set; }
 
+    /// <summary>
+    /// The PORTAL user who acted, where one is known. Added beside the PSA id rather than instead
+    /// of it: a desk runs both kinds of technician, and the two namespaces cannot be collapsed into
+    /// one column without guessing which a value belongs to.
+    ///
+    /// Before this, a portal event by someone with no PSA identity resolved to a NULL actor - so
+    /// every such technician's work landed in one anonymous bucket, indistinguishable from each
+    /// other and from work nobody could attribute at all.
+    /// </summary>
+    public Guid? ActorAppUserId { get; set; }
+
     public Guid? ClientCompanyId { get; set; }
 
     public int EventCount { get; set; }

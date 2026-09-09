@@ -11,6 +11,13 @@ public interface ITechnicianMetricsService
     Task<TechnicianMetrics> ForTechnicianAsync(MetricsFilter filter, ProductivityWeights weights, CancellationToken ct = default);
     Task<IReadOnlyList<TeamComparisonRow>> TeamAsync(MetricsFilter filter, ProductivityWeights weights, CancellationToken ct = default);
     Task<IReadOnlyList<TrendPoint>> TrendAsync(MetricsFilter filter, CancellationToken ct = default);
+
+    /// <summary>
+    /// Per technician, per day, over the filter's range: hours logged and tickets resolved. The
+    /// series every productivity view is drawn from — a week, a month, a quarter and a custom range
+    /// are the same query with different bounds, so there is one of these rather than four.
+    /// </summary>
+    Task<IReadOnlyList<TechnicianDay>> DailyAsync(MetricsFilter filter, CancellationToken ct = default);
 }
 
 /// <summary>

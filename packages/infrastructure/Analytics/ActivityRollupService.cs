@@ -81,6 +81,12 @@ public sealed class ActivityRollupService(DeskDbContext db, TimeProvider clock) 
         var actorLookup = externalIdByUser
             .GroupBy(i => i.AppUserId)
             .ToDictionary(g => g.Key, g => g.First().ExternalTechnicianId);
+        // The reverse direction too, so PSA-observed work also lands on a portal person where we
+        // know who they are. Without it a linked technician's synced activity and portal activity
+        // would aggregate on different axes and never add up to one number.
+        var userByExternalId = externalIdByUser
+            .GroupBy(i => i.ExternalTechnicianId)
+            .ToDictionary(g => g.Key, g => g.First().AppUserId);
 
         var events = (await db.ActivityEvents.IgnoreQueryFilters().AsNoTracking()
             .Where(e => e.OccurredAt >= rangeStart && e.OccurredAt < rangeEndExclusive)
@@ -111,6 +117,10 @@ public sealed class ActivityRollupService(DeskDbContext db, TimeProvider clock) 
                 e.Source,
                 Actor = e.ActorExternalId
                     ?? (e.ActorUserId is { } uid ? actorLookup.GetValueOrDefault(uid) : null),
+                // Whoever acted, as a portal person: the event's own user if it had one, else the
+                // portal account behind the PSA id it carried.
+                ActorUser = e.ActorUserId
+                    ?? (e.ActorExternalId is { } ext ? userByExternalId.GetValueOrDefault(ext) : null),
                 e.ClientCompanyId,
             })
             .Select(g => new ActivityDailyFact
@@ -119,6 +129,7 @@ public sealed class ActivityRollupService(DeskDbContext db, TimeProvider clock) 
                 Day = g.Key.Day,
                 Source = g.Key.Source,
                 ActorExternalId = g.Key.Actor,
+                ActorAppUserId = g.Key.ActorUser,
                 ClientCompanyId = g.Key.ClientCompanyId,
                 EventCount = g.Count(),
                 DurationSeconds = g.Sum(e => e.DurationSeconds ?? 0),

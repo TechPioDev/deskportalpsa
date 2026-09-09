@@ -269,6 +269,9 @@ public sealed class TicketTimeEntryConfig : IEntityTypeConfiguration<TicketTimeE
         b.HasIndex(x => x.TicketId);
         // Reconciling a provider read against portal rows is a lookup by the PSA's own id.
         b.HasIndex(x => x.ExternalEntryId);
+        // "Hours this technician logged between two dates" is the query every productivity report
+        // runs, per person, per range — so it gets the date alongside the person.
+        b.HasIndex(x => new { x.MspOrganizationId, x.AppUserId, x.EntryDate });
     }
 }
 

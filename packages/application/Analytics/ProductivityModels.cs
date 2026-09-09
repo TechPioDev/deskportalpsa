@@ -56,6 +56,14 @@ public sealed record MetricsFilter
     public DateTimeOffset? From { get; init; }
     public DateTimeOffset? To { get; init; }
     public string? TechnicianExternalId { get; init; }
+
+    /// <summary>
+    /// Narrow to one PORTAL technician. Separate from the external id rather than overloading it:
+    /// a desk can hold both kinds of person, and one field would have to guess which namespace a
+    /// value belongs to.
+    /// </summary>
+    public Guid? AppUserId { get; init; }
+
     public Guid? ClientCompanyId { get; init; }
     public Guid? PsaConnectionId { get; init; }
     public string? Priority { get; init; }
@@ -79,9 +87,32 @@ public sealed record TechnicianMetrics
     public ProductivityScore? Score { get; init; }
 }
 
-public sealed record TeamComparisonRow(string TechnicianExternalId, int Resolved, double SlaCompliancePct, double? Score);
+/// <param name="TechnicianExternalId">
+/// The PSA's id where there is one. For a portal-only technician it carries the portal user id in
+/// string form so the row still has a stable key — <paramref name="AppUserId"/> is what says which
+/// namespace it came from, and <paramref name="TechnicianName"/> is what a human should read.
+/// </param>
+/// <param name="TechnicianName">
+/// Display name. Added because a comparison table listing "29682889" against "29682885" is not a
+/// team report; whoever reads it cannot tell who is who.
+/// </param>
+public sealed record TeamComparisonRow(
+    string TechnicianExternalId, int Resolved, double SlaCompliancePct, double? Score,
+    string? TechnicianName = null, Guid? AppUserId = null);
 
 public sealed record TrendPoint(DateOnly Date, int Created, int Resolved);
+
+/// <summary>
+/// One technician's day: hours they logged and tickets they resolved.
+///
+/// Hours come from TIME ENTRIES rather than the ticket's own worked total, because a ticket total
+/// is the sum of everyone who touched it — attributing it to the current assignee would credit one
+/// person with a colleague's afternoon. Resolved counts tickets whose resolution landed on the day,
+/// attributed to whoever the ticket sits with.
+/// </summary>
+public sealed record TechnicianDay(
+    DateOnly Date, Guid? AppUserId, string? TechnicianExternalId, string Name,
+    decimal Hours, decimal BillableHours, int Resolved, int TicketsTouched);
 
 /// <summary>
 /// One client's consumption of the desk, for the question management actually asks: where is our
