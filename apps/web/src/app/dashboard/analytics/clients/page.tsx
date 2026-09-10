@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Building2, Clock, Users, AlertCircle } from 'lucide-react';
@@ -145,10 +146,24 @@ export default function ClientAnalyticsPage() {
                   <tbody>
                     {clients.map((c) => (
                       <tr key={c.clientCompanyId} className="border-t border-[var(--border)]">
-                        <td className="px-4 py-2.5 font-medium">{c.clientName}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{c.totalTickets}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{c.openTickets}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{c.closedTickets}</td>
+                        {/* Counts navigate; measures do not.
+                            Tickets, Open and Closed are each a count OF A LIST, so there is
+                            somewhere real to land. Hours, Billable, Avg to close and SLA met are
+                            derived - there is no page listing 32 hours - and sending them somewhere
+                            approximate would teach people the links are unreliable, which costs
+                            more than the convenience buys. */}
+                        <td className="px-4 py-2.5 font-medium">
+                          <CountLink company={c.clientName} label={c.clientName} />
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          <CountLink company={c.clientName} label={c.totalTickets} />
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          <CountLink company={c.clientName} view="open" label={c.openTickets} />
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          <CountLink company={c.clientName} view="resolved" label={c.closedTickets} />
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">{fmtHours(c.hoursWorked)}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-green-700 dark:text-green-400">
                           {fmtHours(c.billableHours)}
@@ -205,5 +220,26 @@ function Stat({ icon: Icon, label, value }: { icon: typeof Clock; label: string;
         <span className="block text-xs text-[var(--muted)]">{label}</span>
       </span>
     </div>
+  );
+}
+
+/**
+ * A figure in the table that opens the tickets behind it.
+ *
+ * Zero is rendered as plain text: a link promising a list and delivering an empty one is a small
+ * betrayal, and it happens on most rows of a table like this.
+ */
+function CountLink({ company, view, label }: {
+  company: string; view?: 'open' | 'resolved'; label: string | number;
+}) {
+  const q = new URLSearchParams({ company });
+  if (view) q.set('view', view);
+
+  if (label === 0) return <span className="text-[var(--faint)]">0</span>;
+
+  return (
+    <Link href={`/dashboard/tickets?${q}`} className="hover:text-brand hover:underline underline-offset-2">
+      {label}
+    </Link>
   );
 }
