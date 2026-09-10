@@ -1,3 +1,4 @@
+using Desk.Api.Auth;
 using Desk.Api.Controllers;
 using Desk.Application.Analytics;
 using Desk.Application.Common;
@@ -125,6 +126,33 @@ public class ProductivityScopeTests
             new DashboardController.DashboardQuery { Technician = "tech-someone-else" }, default);
 
         metrics.Captured!.TechnicianExternalId.Should().Be("tech-someone-else");
+    }
+
+    [Fact]
+    public void An_any_of_policy_admits_a_caller_holding_either_permission()
+    {
+        // The daily view serves a technician reading their own days and a manager reading the
+        // team's. Those are DIFFERENT permissions held by different roles - own belongs to
+        // Technician, team to managers and admins - so a single-key gate locks out one audience or
+        // the other. Gated on own alone, this endpoint returned 403 to every manager in the
+        // product, which is how the gap was found.
+        var policyName = PermissionPolicyProvider.For(
+            Permissions.ProductivityViewOwn, Permissions.ProductivityViewTeam);
+        var requirement = new PermissionRequirement(
+            policyName[PermissionPolicyProvider.Prefix.Length..].Split(PermissionPolicyProvider.Any));
+
+        Satisfied(requirement, Permissions.ProductivityViewOwn).Should().BeTrue("a technician reads their own");
+        Satisfied(requirement, Permissions.ProductivityViewTeam).Should().BeTrue("a manager reads the team's");
+        Satisfied(requirement, Permissions.TicketsUpdate).Should().BeFalse("holding neither is still refused");
+    }
+
+    private static bool Satisfied(PermissionRequirement requirement, params string[] held)
+    {
+        var handler = new PermissionAuthorizationHandler(new ICurrentUserStub(null, held));
+        var ctx = new Microsoft.AspNetCore.Authorization.AuthorizationHandlerContext(
+            [requirement], new System.Security.Claims.ClaimsPrincipal(), null);
+        handler.HandleAsync(ctx).GetAwaiter().GetResult();
+        return ctx.HasSucceeded;
     }
 
     [Fact]

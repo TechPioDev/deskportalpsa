@@ -198,7 +198,7 @@ export default function Analytics() {
             <div className="px-4 pb-2 pt-3">
               <div className="text-2xl font-semibold">{slaPct.toFixed(1)}%</div>
               <div className="mb-2 text-xs text-[var(--muted)]">weighted team compliance</div>
-              {rows.length > 0 ? <BarChart values={rows.map((r) => Math.round(r.slaCompliancePct))} labels={rows.map((r) => first(r.technicianExternalId))} color="#3b82f6" height={170} unit="%" /> : <div className="py-10 text-center text-sm text-[var(--muted)]">No data.</div>}
+              {rows.length > 0 ? <BarChart values={rows.map((r) => Math.round(r.slaCompliancePct))} labels={rows.map((r) => first(r.technicianName ?? r.technicianExternalId))} color="#3b82f6" height={170} unit="%" /> : <div className="py-10 text-center text-sm text-[var(--muted)]">No data.</div>}
             </div>
           </Card>
         </div>
@@ -232,7 +232,7 @@ export default function Analytics() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.technicianExternalId} className="border-b border-[var(--border)] last:border-0">
-                    <td className="px-4 py-2.5"><span className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg)] text-[9px] font-semibold">{r.technicianExternalId.split(' ').map((n) => n[0]).join('')}</span>{r.technicianExternalId}</span></td>
+                    <td className="px-4 py-2.5"><span className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg)] text-[9px] font-semibold">{(r.technicianName ?? r.technicianExternalId).split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>{r.technicianName ?? r.technicianExternalId}</span></td>
                     <td className="px-2 py-2.5 tabular-nums">{r.resolved}</td>
                     <td className="px-2 py-2.5 tabular-nums text-[var(--muted)]">{r.slaCompliancePct.toFixed(0)}%</td>
                     <td className="px-4 py-2.5"><span className="tabular-nums font-medium">{r.score?.toFixed(1) ?? '—'}</span></td>

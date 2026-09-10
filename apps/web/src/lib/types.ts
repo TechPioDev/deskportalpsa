@@ -117,6 +117,10 @@ export const TeamRowSchema = z.object({
   resolved: z.number(),
   slaCompliancePct: z.number(),
   score: z.number().nullable(),
+  // Defaulted rather than required: a response served mid-deploy by the previous build carries
+  // neither field, and throwing the whole team table away over a missing label helps nobody.
+  technicianName: z.string().nullable().default(null),
+  appUserId: z.string().nullable().default(null),
 });
 export const TeamResponseSchema = z.object({
   team: z.array(TeamRowSchema),
@@ -129,6 +133,19 @@ export const TrendPointSchema = z.object({
   resolved: z.number(),
 });
 export type TrendPoint = z.infer<typeof TrendPointSchema>;
+
+/// One technician's day. The series every productivity view is drawn from.
+export const TechnicianDaySchema = z.object({
+  date: z.string(),
+  appUserId: z.string().nullable(),
+  technicianExternalId: z.string().nullable(),
+  name: z.string(),
+  hours: z.number(),
+  billableHours: z.number(),
+  resolved: z.number(),
+  ticketsTouched: z.number(),
+});
+export type TechnicianDay = z.output<typeof TechnicianDaySchema>;
 export type TechnicianResponse = z.infer<typeof TechnicianResponseSchema>;
 export type TeamResponse = z.infer<typeof TeamResponseSchema>;
 

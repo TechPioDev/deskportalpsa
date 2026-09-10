@@ -65,7 +65,10 @@ public sealed class DashboardController(
     /// endpoint pins - passing a colleague's id must not read their figures.
     /// </summary>
     [HttpGet("daily")]
-    [RequirePermission(Permissions.ProductivityViewOwn)]
+    // Both audiences: a technician reading their own days, and a manager reading the team's. The
+    // own permission belongs to the Technician role and the team one to managers and admins, so
+    // gating on either alone locks out exactly the people the view is for.
+    [RequirePermission(Permissions.ProductivityViewOwn, Permissions.ProductivityViewTeam)]
     public async Task<IActionResult> Daily([FromQuery] DashboardQuery q, CancellationToken ct)
     {
         var filter = q.ToFilter();
