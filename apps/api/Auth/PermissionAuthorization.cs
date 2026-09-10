@@ -3,10 +3,17 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace Desk.Api.Auth;
 
-/// <summary>Authorization requirement satisfied when the caller holds a specific permission claim.</summary>
-public sealed class PermissionRequirement(string permissionKey) : IAuthorizationRequirement
+/// <summary>
+/// Authorization requirement satisfied when the caller holds ANY of the listed permissions.
+///
+/// Any-of rather than all-of, because the cases that need more than one key are views serving two
+/// audiences from one endpoint — a technician reading their own figures and a manager reading the
+/// team's. Requiring both would lock out each of them in turn; the alternative, gating on one and
+/// checking the other by hand inside the action, puts half the rule somewhere nobody looks for it.
+/// </summary>
+public sealed class PermissionRequirement(params string[] permissionKeys) : IAuthorizationRequirement
 {
-    public string PermissionKey { get; } = permissionKey;
+    public IReadOnlyList<string> PermissionKeys { get; } = permissionKeys;
 }
 
 public sealed class PermissionAuthorizationHandler(ICurrentUser currentUser)
@@ -14,7 +21,7 @@ public sealed class PermissionAuthorizationHandler(ICurrentUser currentUser)
 {
     protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, PermissionRequirement requirement)
     {
-        if (currentUser.HasPermission(requirement.PermissionKey))
+        if (requirement.PermissionKeys.Any(currentUser.HasPermission))
             context.Succeed(requirement);
         return Task.CompletedTask;
     }
@@ -31,7 +38,10 @@ public sealed class PermissionPolicyProvider(Microsoft.Extensions.Options.IOptio
     public const string Prefix = "perm:";
     private readonly DefaultAuthorizationPolicyProvider _fallback = new(options);
 
-    public static string For(string permissionKey) => Prefix + permissionKey;
+    /// <summary>Separator for an any-of policy name. Not a character any permission key contains.</summary>
+    public const char Any = '|';
+
+    public static string For(params string[] permissionKeys) => Prefix + string.Join(Any, permissionKeys);
 
     public Task<AuthorizationPolicy> GetDefaultPolicyAsync() => _fallback.GetDefaultPolicyAsync();
     public Task<AuthorizationPolicy?> GetFallbackPolicyAsync() => _fallback.GetFallbackPolicyAsync();
@@ -42,7 +52,7 @@ public sealed class PermissionPolicyProvider(Microsoft.Extensions.Options.IOptio
         {
             var policy = new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()
-                .AddRequirements(new PermissionRequirement(policyName[Prefix.Length..]))
+                .AddRequirements(new PermissionRequirement(policyName[Prefix.Length..].Split(Any)))
                 .Build();
             return Task.FromResult<AuthorizationPolicy?>(policy);
         }
@@ -53,5 +63,7 @@ public sealed class PermissionPolicyProvider(Microsoft.Extensions.Options.IOptio
 /// <summary>Convenience attribute: <c>[RequirePermission(Permissions.TicketsCreate)]</c>.</summary>
 public sealed class RequirePermissionAttribute : Microsoft.AspNetCore.Authorization.AuthorizeAttribute
 {
-    public RequirePermissionAttribute(string permissionKey) => Policy = PermissionPolicyProvider.For(permissionKey);
+    /// <summary>Holding ANY of these is enough. One key is the ordinary case.</summary>
+    public RequirePermissionAttribute(params string[] permissionKeys)
+        => Policy = PermissionPolicyProvider.For(permissionKeys);
 }

@@ -3,6 +3,7 @@ import {
   TicketListItemSchema, TicketDetailSchema, NotificationSchema, ProfileSchema,
   TechnicianResponseSchema, TeamResponseSchema, TrendPointSchema,
   ConnectionSummarySchema, HealthSchema, JobSchema, AuditEntrySchema, AttachmentSchema,
+  TechnicianDaySchema, type TechnicianDay,
   ConnectionFieldsSchema, FieldOptionSchema, type ConnectionFields,
   MappingRuleSchema, type MappingRule,
   type TicketDetail, type TicketListItem, type Notification, type Profile,
@@ -227,6 +228,17 @@ export const api = {
   trend: (fromIso?: string) =>
     request(`/api/dashboard/trend${fromIso ? `?from=${encodeURIComponent(fromIso)}` : ''}`, z.array(TrendPointSchema)) as Promise<TrendPoint[]>,
   teamExportUrl: `${BFF_BASE}/api/dashboard/team/export`,
+  /**
+   * Per technician, per day, for an arbitrary window. `to` is what makes a custom range possible;
+   * the presets are the same call with computed bounds, so there is one code path to be wrong in
+   * rather than four.
+   */
+  dailyMetrics: (fromIso: string, toIso?: string, appUserId?: string) => {
+    const q = new URLSearchParams({ from: fromIso });
+    if (toIso) q.set('to', toIso);
+    if (appUserId) q.set('appUserId', appUserId);
+    return request(`/api/dashboard/daily?${q}`, z.array(TechnicianDaySchema)) as Promise<TechnicianDay[]>;
+  },
 
   // Admin
   connections: () => request('/api/admin/connections', z.array(ConnectionSummarySchema)) as Promise<ConnectionSummary[]>,
