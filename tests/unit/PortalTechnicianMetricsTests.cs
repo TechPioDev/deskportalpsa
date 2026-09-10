@@ -68,12 +68,14 @@ public class PortalTechnicianMetricsTests
         };
     }
 
-    private static Ticket Ticket(Guid? appUser, string? psaTech, int created, int? resolved) => new()
+    private static Ticket Ticket(Guid? appUser, string? psaTech, int created, int? resolved,
+        string? psaTechName = null) => new()
     {
         MspOrganizationId = Org, PsaConnectionId = Conn, Provider = ProviderType.AutotaskPsa,
         ClientCompanyId = Company, RequesterName = "R", RequesterEmail = "r@x", Title = "t",
         PortalStatus = "NEW", PortalPriority = "NORMAL",
         AssignedAppUserId = appUser, AssignedTechnicianExternalId = psaTech,
+        AssignedTechnicianName = psaTechName,
         CreatedAt = D(created), PsaCreatedAt = D(created),
         ResolvedAt = resolved is null ? null : D(resolved.Value),
     };
@@ -118,6 +120,38 @@ public class PortalTechnicianMetricsTests
         team.Should().ContainSingle();
         team[0].TechnicianExternalId.Should().Be("29682889");
         team[0].AppUserId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task A_PSA_technician_is_named_not_numbered()
+    {
+        // "29682889" in a table headed Technician Performance is not a name, and nobody reading the
+        // dashboard can turn it into one. The sync already caches the provider's display name on
+        // the ticket; this is the code that uses it.
+        var f = await SetupAsync();
+        f.Db.Value.Tickets.Add(Ticket(appUser: null, psaTech: "29682889", created: 1, resolved: 2,
+            psaTechName: "Basit Lone"));
+        await f.Db.Value.SaveChangesAsync();
+
+        var team = await f.Svc.TeamAsync(new MetricsFilter(), ProductivityWeights.Default);
+
+        team.Should().ContainSingle();
+        team[0].TechnicianName.Should().Be("Basit Lone");
+        team[0].TechnicianExternalId.Should().Be("29682889", "the id stays as the stable key");
+    }
+
+    [Fact]
+    public async Task A_PSA_technician_with_no_cached_name_still_shows_something_stable()
+    {
+        // Fallback, not a blank cell: an empty Technician column reads as missing data and sends
+        // someone hunting for a bug that is not there.
+        var f = await SetupAsync();
+        f.Db.Value.Tickets.Add(Ticket(appUser: null, psaTech: "29682889", created: 1, resolved: 2));
+        await f.Db.Value.SaveChangesAsync();
+
+        var team = await f.Svc.TeamAsync(new MetricsFilter(), ProductivityWeights.Default);
+
+        team[0].TechnicianName.Should().Be("29682889");
     }
 
     [Fact]

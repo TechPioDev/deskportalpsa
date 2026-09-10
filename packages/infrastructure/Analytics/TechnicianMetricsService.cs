@@ -10,9 +10,9 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
 {
     /// <summary>Lightweight projection of the ticket fields the metrics need.</summary>
     private sealed record Row(
-        Guid Id, string? Tech, Guid? AppUserId, DateTimeOffset CreatedAt, DateTimeOffset? ResolvedAt,
-        DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt, decimal Worked, decimal Billable,
-        decimal NonBillable, bool HasNote);
+        Guid Id, string? Tech, Guid? AppUserId, string? TechName, DateTimeOffset CreatedAt,
+        DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
+        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote);
 
     private async Task<List<Row>> LoadAsync(MetricsFilter f, CancellationToken ct)
     {
@@ -31,6 +31,10 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
 
         return await q.Select(t => new Row(
             t.Id, t.AssignedTechnicianExternalId, t.AssignedAppUserId,
+            // The provider's own display name, already cached on the ticket by the sync. Without it
+            // a PSA-side technician shows as a bare id - "29682889" in a table headed Technician
+            // Performance, which nobody can read as a person.
+            t.AssignedTechnicianName,
             t.PsaCreatedAt ?? t.CreatedAt, t.ResolvedAt, t.ClosedAt, t.SlaDueAt,
             t.TimeWorkedHours, t.BillableHours, t.NonBillableHours,
             t.Notes.Any(n => n.IsPublic))).ToListAsync(ct);
@@ -59,9 +63,10 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
                 var m = Compute(key, g.ToList(), weights);
                 var name = first.AppUserId is { } uid
                     ? names.GetValueOrDefault(uid)
-                    // A PSA-side technician's name is not on the ticket row, so the id stands in.
-                    // Better a stable key than a blank cell that looks like missing data.
-                    : first.Tech;
+                    // A PSA-side technician: the sync cached the provider's display name on the
+                    // ticket, so use it. The id only stands in when even that is missing, because a
+                    // stable key still beats a blank cell that reads as missing data.
+                    : first.TechName ?? first.Tech;
                 return new TeamComparisonRow(
                     key, m.Resolved, m.SlaCompliancePct, m.Score?.Overall, name, first.AppUserId);
             })
@@ -91,6 +96,12 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // Resolution counts come from the tickets themselves, attributed to whoever holds them.
         var rows = (await LoadAsync(filter, ct)).Where(r => r.ResolvedAt is not null).ToList();
 
+        // Provider display names for the PSA-side rows, taken from the tickets themselves.
+        var psaNames = rows
+            .Where(r => r.Tech is not null && r.TechName is not null)
+            .GroupBy(r => r.Tech!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().TechName!, StringComparer.OrdinalIgnoreCase);
+
         var names = await NamesForAsync(
             loggedRaw.Where(e => e.AppUserId is not null).Select(e => e.AppUserId!.Value)
                 .Concat(rows.Where(r => r.AppUserId is not null).Select(r => r.AppUserId!.Value))
@@ -106,7 +117,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             if (buckets.TryGetValue((day, key), out var found)) return found;
             var name = appUserId is { } uid
                 ? names.GetValueOrDefault(uid, "Unknown user")
-                : ext ?? "Unattributed";
+                : psaNames.GetValueOrDefault(ext ?? "", ext ?? "Unattributed");
             var seeded = new TechnicianDay(day, appUserId, ext, name, 0m, 0m, 0, 0);
             buckets[(day, key)] = seeded;
             return seeded;

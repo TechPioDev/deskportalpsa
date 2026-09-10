@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw, Plus, Calendar, TrendingUp, Clock, ShieldCheck, Plug, Ticket as TicketIcon,
-  CheckCircle2, Inbox,
+  CheckCircle2, Inbox, ArrowUpRight,
 } from 'lucide-react';
 import { MiniSpark, TrendChart, Donut } from '@/components/charts';
 import { StatusBadge, PriorityBadge } from '@/components/badges';
@@ -71,10 +71,10 @@ export default function Overview() {
     .sort((a, b) => a.order - b.order);
 
   const stats = [
-    { label: 'Open Tickets', value: open, sub: `${ts.length} total`, icon: Inbox, tone: 'blue', spark: created, color: '#3b82f6' },
-    { label: 'Resolved', value: resolved, sub: 'this period', icon: CheckCircle2, tone: 'green', spark: resolvedSeries, color: '#22c55e' },
-    { label: 'SLA Compliance', value: `${slaPct.toFixed(1)}%`, sub: 'weighted across techs', icon: ShieldCheck, tone: 'violet', spark: null, color: '#8b5cf6' },
-    { label: 'Active Connections', value: connections.length, sub: 'monitored', icon: Plug, tone: 'orange', spark: null, color: '#f97316' },
+    { label: 'Open Tickets', value: open, sub: `${ts.length} total`, icon: Inbox, tone: 'blue', spark: created, color: '#3b82f6', href: '/dashboard/tickets?view=open' },
+    { label: 'Resolved', value: resolved, sub: 'this period', icon: CheckCircle2, tone: 'green', spark: resolvedSeries, color: '#22c55e', href: '/dashboard/tickets?view=resolved' },
+    { label: 'SLA Compliance', value: `${slaPct.toFixed(1)}%`, sub: 'weighted across techs', icon: ShieldCheck, tone: 'violet', spark: null, color: '#8b5cf6', href: '/dashboard/analytics' },
+    { label: 'Active Connections', value: connections.length, sub: 'monitored', icon: Plug, tone: 'orange', spark: null, color: '#f97316', href: '/dashboard/connections' },
   ];
   const toneBg: Record<string, string> = {
     blue: 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300',
@@ -102,17 +102,22 @@ export default function Overview() {
         {stats.map((s) => {
           const Icon = s.icon;
           return (
-            <Card key={s.label} className="p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-sm text-[var(--muted)]">{s.label}</div>
-                  <div className="mt-1 text-2xl font-semibold tabular-nums">{s.value}</div>
-                  <div className="text-xs text-[var(--faint)]">{s.sub}</div>
+            <Link key={s.label} href={s.href} className="group block rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand">
+              <Card className="p-4 transition-colors group-hover:border-brand">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-1 text-sm text-[var(--muted)]">
+                      {s.label}
+                      <ArrowUpRight size={13} className="opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold tabular-nums">{s.value}</div>
+                    <div className="text-xs text-[var(--faint)]">{s.sub}</div>
+                  </div>
+                  <span className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${toneBg[s.tone]}`}><Icon size={17} /></span>
                 </div>
-                <span className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${toneBg[s.tone]}`}><Icon size={17} /></span>
-              </div>
-              {s.spark && s.spark.length > 1 && <div className="mt-2"><MiniSpark points={s.spark} color={s.color} width={150} height={30} /></div>}
-            </Card>
+                {s.spark && s.spark.length > 1 && <div className="mt-2"><MiniSpark points={s.spark} color={s.color} width={150} height={30} /></div>}
+              </Card>
+            </Link>
           );
         })}
       </div>
@@ -177,15 +182,20 @@ export default function Overview() {
                 <tr className="border-b border-[var(--border)]"><th className="px-5 py-2 font-medium">Technician</th><th className="px-2 py-2 font-medium">Resolved</th><th className="px-5 py-2 font-medium">SLA</th></tr>
               </thead>
               <tbody>
-                {teamRows.slice(0, 5).map((r) => (
-                  <tr key={r.technicianExternalId} className="border-b border-[var(--border)] last:border-0">
+                {teamRows.slice(0, 5).map((r) => {
+                  const who = r.technicianName ?? r.technicianExternalId;
+                  return (
+                  <tr key={r.technicianExternalId} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)]">
                     <td className="px-5 py-2.5">
-                      <span className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg)] text-[9px] font-semibold">{r.technicianExternalId.split(' ').map((n) => n[0]).join('')}</span>{r.technicianExternalId}</span>
+                      <Link href="/dashboard/analytics/technicians" className="flex items-center gap-2 hover:text-brand">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg)] text-[9px] font-semibold">{who.split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>{who}
+                      </Link>
                     </td>
                     <td className="px-2 py-2.5 tabular-nums">{r.resolved}</td>
                     <td className="px-5 py-2.5"><span className="flex items-center gap-1.5"><span className="tabular-nums text-xs">{r.slaCompliancePct.toFixed(0)}%</span><span className="h-1.5 w-10 overflow-hidden rounded-full bg-[var(--bg)]"><span className="block h-full rounded-full bg-green-500" style={{ width: `${r.slaCompliancePct}%` }} /></span></span></td>
                   </tr>
-                ))}
+                  );
+                })}
                 {teamRows.length === 0 && <tr><td colSpan={3} className="px-5 py-6 text-center text-sm text-[var(--muted)]">No data.</td></tr>}
               </tbody>
             </table>
@@ -198,7 +208,14 @@ export default function Overview() {
             {byPriority.length > 0 ? <Donut segments={byPriority} total={ts.length} size={150} /> : <div className="py-8 text-sm text-[var(--muted)]">No tickets.</div>}
             <ul className="space-y-1.5 text-xs">
               {byPriority.map((d) => (
-                <li key={d.label} className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-sm" style={{ background: d.color }} /><span className="capitalize">{d.label.toLowerCase()}</span><span className="ml-auto tabular-nums text-[var(--muted)]">{d.value}</span></li>
+                <li key={d.label}>
+                  <Link href={`/dashboard/tickets?priority=${encodeURIComponent(d.label)}`}
+                    className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-[var(--bg)] hover:text-brand">
+                    <i className="h-2.5 w-2.5 rounded-sm" style={{ background: d.color }} />
+                    <span className="capitalize">{d.label.toLowerCase()}</span>
+                    <span className="ml-auto tabular-nums text-[var(--muted)]">{d.value}</span>
+                  </Link>
+                </li>
               ))}
             </ul>
           </div>

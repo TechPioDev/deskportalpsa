@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Inbox, Search, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { StatusBadge, PriorityBadge, SourceBadge } from '@/components/badges';
 import type { TicketListItem } from '@/lib/types';
+import { isResolvedStatus } from '@/lib/status';
 
 const ALL = '__all__';
 
@@ -31,12 +33,32 @@ function Select({ label, value, onChange, options }: {
   );
 }
 
+/**
+ * Wrapped in Suspense because useSearchParams() below opts the page out of the static shell
+ * otherwise — the build fails outright rather than degrading, which is the better failure but
+ * still needs this boundary.
+ */
 export default function TicketsPage() {
+  return (
+    <Suspense fallback={<div className="h-64 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]" />}>
+      <TicketsList />
+    </Suspense>
+  );
+}
+
+function TicketsList() {
   const { data, isLoading, isError } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
 
+  // Filters can arrive in the URL, so a figure on the dashboard can link to the tickets behind it
+  // — and so the resulting view is a link someone can send to a colleague. `view` handles the two
+  // that are not a single status: "open" and "resolved" are each a SET of statuses, and which
+  // statuses those are is a decision that already lives in isResolvedStatus.
+  const params = useSearchParams();
+  const view = params.get('view');
+
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState(ALL);
-  const [priority, setPriority] = useState(ALL);
+  const [status, setStatus] = useState(() => params.get('status') ?? ALL);
+  const [priority, setPriority] = useState(() => params.get('priority') ?? ALL);
   const [source, setSource] = useState(ALL);
   const [company, setCompany] = useState(ALL);
   const [queue, setQueue] = useState(ALL);
@@ -47,14 +69,23 @@ export default function TicketsPage() {
     return rows.filter((t) =>
       (!needle || (t.title ?? '').toLowerCase().includes(needle) || (t.externalTicketId ?? '').toLowerCase().includes(needle))
       && (status === ALL || t.portalStatus === status)
+      && (view !== 'open' || !isResolvedStatus(t.portalStatus))
+      && (view !== 'resolved' || isResolvedStatus(t.portalStatus))
       && (priority === ALL || t.portalPriority === priority)
       && (source === ALL || (t.connectionName ?? '') === source)
       && (company === ALL || (t.customerName ?? '') === company)
       && (queue === ALL || (t.queueOrBoard ?? '') === queue));
-  }, [rows, q, status, priority, source, company, queue]);
+  }, [rows, q, status, priority, source, company, queue, view]);
 
-  const active = q.trim() !== '' || [status, priority, source, company, queue].some((v) => v !== ALL);
-  const clear = () => { setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL); };
+  const active = q.trim() !== '' || view !== null
+    || [status, priority, source, company, queue].some((v) => v !== ALL);
+  const router = useRouter();
+  const clear = () => {
+    setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL);
+    // Drops `view` as well. Leaving it would clear every visible control and still filter the list,
+    // which reads as the page ignoring the button.
+    if (params.toString()) router.replace('/dashboard/tickets');
+  };
 
   return (
     <div className="space-y-5">
