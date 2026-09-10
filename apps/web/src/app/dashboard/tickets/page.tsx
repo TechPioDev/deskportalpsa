@@ -59,8 +59,10 @@ function TicketsList() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState(() => params.get('status') ?? ALL);
   const [priority, setPriority] = useState(() => params.get('priority') ?? ALL);
+  // Company arrives by NAME, not id: this list filters on the name it displays, and a link that
+  // carried an id would have to resolve it before it could select anything.
+  const [company, setCompany] = useState(() => params.get('company') ?? ALL);
   const [source, setSource] = useState(ALL);
-  const [company, setCompany] = useState(ALL);
   const [queue, setQueue] = useState(ALL);
 
   const rows = useMemo(() => data ?? [], [data]);
