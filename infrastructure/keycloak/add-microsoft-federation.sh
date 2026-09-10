@@ -34,11 +34,35 @@ ALIAS=oidc                      # must match the /broker/<alias>/endpoint redire
 CONTAINER=desk-portal-prod-keycloak-1
 KC=/opt/keycloak/bin/kcadm.sh
 
-read -rp  "Keycloak admin username: " KC_ADMIN
-read -rsp "Keycloak admin password: " KC_PASS; echo
-read -rp  "Entra directory (tenant) ID: " TENANT
-read -rp  "Entra application (client) ID: " CLIENT_ID
-read -rsp "Entra client secret: " CLIENT_SECRET; echo
+# Values may be supplied in the environment instead of typed, so this can be run unattended from a
+# file only root can read:
+#
+#   umask 077; cat > /root/entra.env <<'EOF'
+#   TENANT=<directory (tenant) ID>
+#   CLIENT_ID=<application (client) ID>
+#   CLIENT_SECRET=<the secret VALUE, not its ID>
+#   EOF
+#   set -a; . /root/entra.env; . /opt/deskportal/infrastructure/docker/.env.prod; set +a
+#   bash add-microsoft-federation.sh
+#
+# The Keycloak admin credentials already live in .env.prod as KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD,
+# so sourcing that file supplies them without anyone retyping or quoting a password. Nothing is
+# echoed and nothing is written back.
+KC_ADMIN="${KC_ADMIN:-${KEYCLOAK_ADMIN:-}}"
+KC_PASS="${KC_PASS:-${KEYCLOAK_ADMIN_PASSWORD:-}}"
+TENANT="${TENANT:-}"
+CLIENT_ID="${CLIENT_ID:-}"
+CLIENT_SECRET="${CLIENT_SECRET:-}"
+
+[ -n "$KC_ADMIN" ]     || read -rp  "Keycloak admin username: " KC_ADMIN
+[ -n "$KC_PASS" ]      || { read -rsp "Keycloak admin password: " KC_PASS; echo; }
+[ -n "$TENANT" ]       || read -rp  "Entra directory (tenant) ID: " TENANT
+[ -n "$CLIENT_ID" ]    || read -rp  "Entra application (client) ID: " CLIENT_ID
+[ -n "$CLIENT_SECRET" ] || { read -rsp "Entra client secret: " CLIENT_SECRET; echo; }
+
+for v in KC_ADMIN KC_PASS TENANT CLIENT_ID CLIENT_SECRET; do
+  [ -n "${!v}" ] || { echo "Missing $v - nothing was changed." >&2; exit 1; }
+done
 
 kc() { docker exec -i "$CONTAINER" "$KC" "$@"; }
 
