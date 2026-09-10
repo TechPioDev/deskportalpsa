@@ -454,14 +454,137 @@ public sealed class UserAdminService(
             .Select(t => new PermissionTemplateOptionDto(t.Id, t.Name, t.Description, t.BaseRoleType))
             .ToListAsync(ct);
 
+    public async Task<ImportStaffUsersResult> ImportAsync(ImportStaffUsersInput input, CancellationToken ct = default)
+    {
+        // Departments are matched, never created. A typo in a spreadsheet would otherwise become a
+        // permanent department, and the row that caused it would look like it imported perfectly.
+        var departments = await db.Departments.AsNoTracking()
+            .Where(d => d.IsActive)
+            .Select(d => new { d.Id, d.Name })
+            .ToListAsync(ct);
+        var departmentByName = departments
+            .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
+
+        var existingEmails = (await db.AppUsers.AsNoTracking()
+                .Where(u => u.MspOrganizationId == tenant.OrganizationId)
+                .Select(u => u.Email)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Duplicates WITHIN the file are caught here rather than by the second insert failing. A
+        // spreadsheet that lists someone twice is an ordinary mistake, and "already exists" is a
+        // truthful, useful thing to say about the second occurrence.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rows = new List<ImportStaffUserResult>();
+
+        foreach (var row in input.Rows)
+        {
+            var email = (row.Email ?? string.Empty).Trim();
+            var name = (row.DisplayName ?? string.Empty).Trim();
+
+            if (email.Length == 0 || name.Length == 0)
+            {
+                rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.Invalid,
+                    "A name and an email address are both required.", null));
+                continue;
+            }
+
+            // Checked HERE and not only inside CreateAsync, so the preview and the apply agree.
+            if (StaffInputProblem(name, email) is { } problem)
+            {
+                rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.Invalid, problem, null));
+                continue;
+            }
+
+            if (!seen.Add(email))
+            {
+                rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.AlreadyExists,
+                    "Listed more than once in this file.", null));
+                continue;
+            }
+
+            if (existingEmails.Contains(email))
+            {
+                rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.AlreadyExists,
+                    "A user with this email already exists.", null));
+                continue;
+            }
+
+            Guid? departmentId = null;
+            if (!string.IsNullOrWhiteSpace(row.Department))
+            {
+                if (!departmentByName.TryGetValue(row.Department.Trim(), out var found))
+                {
+                    rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.Invalid,
+                        $"No active department called \"{row.Department.Trim()}\".", null));
+                    continue;
+                }
+                departmentId = found;
+            }
+
+            if (input.DryRun)
+            {
+                rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.Created, null, null));
+                continue;
+            }
+
+            try
+            {
+                // The same path an administrator uses by hand, so the rules and the audit event are
+                // the same ones. A bulk route with its own validation would drift from the single
+                // one and nobody would notice until the two disagreed about a real user.
+                var created = await CreateAsync(new CreateStaffUserInput(name, email, input.RoleIds), ct);
+                if (departmentId is { } dept)
+                    await SetDepartmentAsync(created.Id, dept, isPrimary: true, ct);
+
+                rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.Created, null, created.Id));
+            }
+            catch (ValidationFailedException ex)
+            {
+                // Reported and skipped, not thrown: in a list of forty, one malformed address must
+                // not cost the other thirty-nine, and the caller still learns exactly which failed.
+                rows.Add(new ImportStaffUserResult(email, name, ImportRowOutcome.Invalid, ex.Message, null));
+            }
+        }
+
+        var result = new ImportStaffUsersResult(
+            input.DryRun,
+            rows.Count(r => r.Outcome == ImportRowOutcome.Created),
+            rows.Count(r => r.Outcome == ImportRowOutcome.AlreadyExists),
+            rows.Count(r => r.Outcome == ImportRowOutcome.Invalid),
+            rows);
+
+        if (!input.DryRun)
+            await audit.WriteAsync("users.imported", "AppUser", null,
+                new { result.Created, result.AlreadyExisted, result.Invalid, rows = input.Rows.Count }, ct);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Why a name/email pair cannot become a staff user, or null when it can.
+    ///
+    /// Shared by the single-user create and the import preview ON PURPOSE. When the preview had its
+    /// own idea of validity it reported a malformed address as "will be created" and the apply then
+    /// refused it - a preview that promises more than the run delivers is worse than none, because
+    /// it is believed.
+    /// </summary>
+    private static string? StaffInputProblem(string displayName, string email)
+    {
+        if (displayName.Length is < 2 or > 120)
+            return "Display name must be between 2 and 120 characters.";
+        if (email.Length > 254 || !email.Contains('@') || email.StartsWith('@') || email.EndsWith('@'))
+            return "That does not look like an email address.";
+        return null;
+    }
+
     public async Task<UserSummary> CreateAsync(CreateStaffUserInput input, CancellationToken ct = default)
     {
         var displayName = input.DisplayName.Trim();
         var email = input.Email.Trim();
-        if (displayName.Length is < 2 or > 120)
-            throw new ValidationFailedException("Display name must be between 2 and 120 characters.");
-        if (email.Length > 254 || !email.Contains('@') || email.StartsWith('@') || email.EndsWith('@'))
-            throw new ValidationFailedException("That does not look like an email address.");
+        if (StaffInputProblem(displayName, email) is { } problem)
+            throw new ValidationFailedException(problem);
         if (input.RoleIds.Count == 0)
             throw new ValidationFailedException("Pick at least one role — a user with none can do nothing.");
 

@@ -146,6 +146,17 @@ public interface IUserAdminService
     /// <summary>Creates a technician/manager/admin account. Sign-in binds on their first IdP login by email.</summary>
     Task<UserSummary> CreateAsync(CreateStaffUserInput input, CancellationToken ct = default);
 
+    /// <summary>
+    /// Creates many staff users from a spreadsheet, row by row through the same path a single
+    /// creation takes - one set of validation rules, one audit event shape, no second way to make
+    /// a user.
+    ///
+    /// A bad row is reported and skipped rather than aborting the run: in a list of forty, one
+    /// malformed address should not cost the other thirty-nine, and the caller gets a per-row
+    /// account of what happened either way.
+    /// </summary>
+    Task<ImportStaffUsersResult> ImportAsync(ImportStaffUsersInput input, CancellationToken ct = default);
+
     /// <summary>Edits profile fields. Never touches roles, department/team, or board access.</summary>
     Task<UserSummary> UpdateAsync(Guid userId, UpdateStaffUserInput input, CancellationToken ct = default);
 
