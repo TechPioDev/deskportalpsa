@@ -375,6 +375,16 @@ public sealed class AdminReadController(
     public async Task<IActionResult> CreateUser([FromBody] CreateStaffUserInput input, CancellationToken ct)
         => Ok(await users.CreateAsync(input, ct));
 
+    /// <summary>
+    /// Creates staff from a spreadsheet. Send DryRun first and show the caller what would happen:
+    /// forty rows is well past what anyone checks by eye, and a half-finished import cannot be told
+    /// from a complete one by looking at the result.
+    /// </summary>
+    [HttpPost("users/import")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> ImportUsers([FromBody] ImportStaffUsersInput input, CancellationToken ct)
+        => Ok(await users.ImportAsync(input, ct));
+
     [HttpPut("users/{id:guid}")]
     [RequirePermission(Permissions.UsersManage)]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateStaffUserInput input, CancellationToken ct)

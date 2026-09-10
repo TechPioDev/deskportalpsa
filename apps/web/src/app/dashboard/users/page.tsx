@@ -4,9 +4,11 @@ import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ImportStaffDrawer } from '@/components/ImportStaffDrawer';
 import {
   UserPlus, Search, X, MailQuestion, Power, MoreVertical,
   Users, UserCheck, Crown, Trash2, Copy, Pencil,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   api, BoardAccessMode as BAM,
@@ -390,6 +392,7 @@ export default function UsersPage() {
   const [boardName, setBoardName] = useState(ALL);
   const [status, setStatus] = useState(ALL);
   const [showImport, setShowImport] = useState(false);
+  const [showFileImport, setShowFileImport] = useState(false);
   const [page, setPage] = useState(1);
   const pageSize = 25;
 
@@ -469,6 +472,10 @@ export default function UsersPage() {
           <button onClick={() => setShowImport(true)}
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3.5 py-2 text-sm font-medium hover:bg-[var(--bg)]">
             <Users size={16} /> Import from PSA
+          </button>
+          <button onClick={() => setShowFileImport(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3.5 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+            <FileSpreadsheet size={16} /> Import from file
           </button>
           <button onClick={() => setShowAdd(true)}
             className="inline-flex items-center gap-2 rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-brand-fg hover:opacity-90">
@@ -666,6 +673,15 @@ export default function UsersPage() {
               className="rounded-lg border border-[var(--border)] px-2.5 py-1 font-medium disabled:opacity-40">Next</button>
           </div>
         </div>
+      )}
+
+      {showFileImport && (
+        <DrawerShell title="Import staff from a file" onClose={() => setShowFileImport(false)}>
+          <ImportStaffDrawer
+            onClose={() => setShowFileImport(false)}
+            onImported={() => qc.invalidateQueries({ queryKey: ['staff-users'] })}
+          />
+        </DrawerShell>
       )}
 
       <ImportFromPsaDrawer

@@ -216,6 +216,40 @@ public sealed record UserListQuery(
 
 public sealed record CreateStaffUserInput(string DisplayName, string Email, IReadOnlyList<Guid> RoleIds);
 
+/// <summary>One row of a staff import, as it arrived from the spreadsheet.</summary>
+/// <param name="Department">
+/// Matched to an existing department BY NAME, case-insensitively. Deliberately not created on the
+/// fly: a typo in a spreadsheet would otherwise become a permanent department, and the row that
+/// caused it would look like it imported perfectly.
+/// </param>
+public sealed record ImportStaffUserRow(string DisplayName, string Email, string? Department);
+
+/// <param name="DryRun">
+/// Report what WOULD happen and write nothing. The point of the whole endpoint: forty rows is far
+/// past the number a person can check by eye, and an import that half-succeeds is worse than one
+/// that refuses - you cannot tell by looking which half landed.
+/// </param>
+public sealed record ImportStaffUsersInput(
+    IReadOnlyList<ImportStaffUserRow> Rows, IReadOnlyList<Guid> RoleIds, bool DryRun);
+
+public enum ImportRowOutcome
+{
+    /// <summary>Would be created, or was.</summary>
+    Created = 0,
+    /// <summary>Someone already holds this email. Skipped, never overwritten - an import must not
+    /// silently rename a colleague or move them between departments.</summary>
+    AlreadyExists = 1,
+    /// <summary>Rejected before anything was written. Reason says why.</summary>
+    Invalid = 2,
+}
+
+public sealed record ImportStaffUserResult(
+    string Email, string DisplayName, ImportRowOutcome Outcome, string? Reason, Guid? UserId);
+
+public sealed record ImportStaffUsersResult(
+    bool DryRun, int Created, int AlreadyExisted, int Invalid,
+    IReadOnlyList<ImportStaffUserResult> Rows);
+
 public sealed record UpdateStaffUserInput(
     string DisplayName, string Email, string? PhoneNumber, string? Location, Guid? ManagerId);
 

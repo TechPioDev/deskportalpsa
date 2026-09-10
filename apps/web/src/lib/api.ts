@@ -54,6 +54,22 @@ export class ApiError extends Error {
   }
 }
 
+/** Per-row outcome of a staff import. 0 created, 1 already exists, 2 invalid. */
+const ImportResultSchema = z.object({
+  dryRun: z.boolean(),
+  created: z.number(),
+  alreadyExisted: z.number(),
+  invalid: z.number(),
+  rows: z.array(z.object({
+    email: z.string(),
+    displayName: z.string(),
+    outcome: z.union([z.literal(0), z.literal(1), z.literal(2), z.string()]),
+    reason: z.string().nullable(),
+    userId: z.string().nullable(),
+  })),
+});
+export type ImportResult = z.infer<typeof ImportResultSchema>;
+
 export const EnquirySchema = z.object({
   id: z.string(),
   kind: z.union([z.literal('Contact'), z.literal('Meeting'), z.number()]),
@@ -349,6 +365,19 @@ export const api = {
     request(`/api/admin/teams/${id}/active`, z.void(), { method: 'PUT', body: JSON.stringify(active) }),
   deleteTeam: (id: string) =>
     request(`/api/admin/teams/${id}`, z.void(), { method: 'DELETE' }),
+  /**
+   * Bulk staff import. Call with dryRun first and show the caller the per-row outcome: forty rows
+   * is past what anyone checks by eye, and a half-finished import cannot be told from a complete
+   * one by looking at the result.
+   */
+  importStaffUsers: (body: {
+    rows: { displayName: string; email: string; department: string | null }[];
+    roleIds: string[];
+    dryRun: boolean;
+  }) => request('/api/admin/users/import', ImportResultSchema, {
+    method: 'POST', body: JSON.stringify(body),
+  }) as Promise<ImportResult>,
+
   createStaffUser: (body: { displayName: string; email: string; roleIds: string[] }) =>
     request('/api/admin/users', UserSummarySchema, { method: 'POST', body: JSON.stringify(body) }),
   updateStaffUser: (id: string, body: { displayName: string; email: string; phoneNumber?: string | null; location?: string | null; managerId?: string | null }) =>
