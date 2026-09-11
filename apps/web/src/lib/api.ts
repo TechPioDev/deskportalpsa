@@ -423,6 +423,8 @@ export const api = {
         // The people behind techniciansInvolved. Defaulted so a response from the previous build
         // mid-deploy still renders the table; the count then simply has nothing to open.
         people: z.array(z.object({
+          // Null only from a build that predates it; the name is then shown without a link.
+          key: z.string().nullable().default(null),
           appUserId: z.string().nullable(),
           technicianExternalId: z.string().nullable(),
           name: z.string(),

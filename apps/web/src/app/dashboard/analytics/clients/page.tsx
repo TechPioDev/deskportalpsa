@@ -221,7 +221,7 @@ export default function ClientAnalyticsPage() {
                       {peopleFor === c.clientCompanyId && (
                         <tr id={`people-${c.clientCompanyId}`} className="bg-[var(--bg)]">
                           <td colSpan={9} className="px-4 py-3">
-                            <PeoplePanel people={c.people ?? []} />
+                            <PeoplePanel people={c.people ?? []} company={c.clientName} from={from} />
                           </td>
                         </tr>
                       )}
@@ -246,17 +246,33 @@ export default function ClientAnalyticsPage() {
  * figure is the PSA's per-ticket total - a sum over everyone that cannot be split between people -
  * so a line reading "0h" here means "no entry recorded here", which the caption says outright.
  */
-function PeoplePanel({ people }: {
-  people: { appUserId: string | null; technicianExternalId: string | null; name: string;
+function PeoplePanel({ people, company, from }: {
+  people: { key?: string | null; appUserId: string | null; technicianExternalId: string | null; name: string;
     assignedTickets: number; hoursLogged: number }[];
+  company: string; from?: string;
 }) {
+  // Same client, same window, one person: the tickets this line was counted from. The key is the
+  // server's, so it matches the ticket list's exactly rather than being rebuilt here.
+  const hrefFor = (key: string) => {
+    const q = new URLSearchParams({ company, tech: key });
+    if (from) q.set('from', from);
+    return `/dashboard/tickets?${q}`;
+  };
+
   return (
     <div className="space-y-2">
       <ul className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
         {people.map((p) => (
           <li key={p.appUserId ?? `x:${p.technicianExternalId}`} className="flex items-baseline justify-between gap-3">
             <span className="flex min-w-0 items-baseline gap-2">
-              <span className="truncate font-medium" title={p.name}>{p.name}</span>
+              {p.key ? (
+                <Link href={hrefFor(p.key)} title={`Tickets ${p.name} holds or logged time on`}
+                  className="truncate font-medium hover:text-brand hover:underline underline-offset-2">
+                  {p.name}
+                </Link>
+              ) : (
+                <span className="truncate font-medium" title={p.name}>{p.name}</span>
+              )}
               <span className="shrink-0 rounded bg-[var(--surface)] px-1.5 text-[10px] uppercase tracking-wide text-[var(--faint)]">
                 {p.appUserId ? 'Portal' : 'PSA'}
               </span>
@@ -270,7 +286,8 @@ function PeoplePanel({ people }: {
         ))}
       </ul>
       <p className="text-[11px] text-[var(--faint)]">
-        Everyone who holds one of this client&rsquo;s tickets in the range or logged time on one.
+        Everyone who holds one of this client&rsquo;s tickets in the range or logged time on one;
+        a name opens those tickets.
         Logged hours are entries recorded in the portal; the Hours column is the PSA&rsquo;s total per
         ticket and is not split between people.
       </p>

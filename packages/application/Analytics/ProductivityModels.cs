@@ -152,7 +152,11 @@ public sealed record ClientWorkloadPerson(
     string? TechnicianExternalId,
     string Name,
     int AssignedTickets,
-    decimal HoursLogged);
+    decimal HoursLogged)
+{
+    /// <summary>The key a ticket's people carry for this same person, so a name here can filter the ticket list.</summary>
+    public string Key => Desk.Application.Tickets.PersonKey.For(AppUserId, TechnicianExternalId);
+}
 
 /// <summary>
 /// Client workload, plus what the numbers do NOT cover. A dashboard that shows only figures invites

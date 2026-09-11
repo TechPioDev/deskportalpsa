@@ -19,16 +19,17 @@ function optionsFor(rows: TicketListItem[], pick: (t: TicketListItem) => string 
   return Array.from(new Set(rows.map((r) => pick(r) ?? '').filter(Boolean))).sort();
 }
 
-function Select({ label, value, onChange, options }: {
+function Select({ label, value, onChange, options, labelFor, title }: {
   label: string; value: string; onChange: (v: string) => void; options: string[];
+  labelFor?: (v: string) => string; title?: string;
 }) {
   return (
-    <label className="flex items-center gap-1.5 text-xs">
+    <label className="flex items-center gap-1.5 text-xs" title={title}>
       <span className="text-[var(--muted)]">{label}</span>
       <select value={value} onChange={(e) => onChange(e.target.value)}
         className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm outline-none focus:border-brand">
         <option value={ALL}>All</option>
-        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        {options.map((o) => <option key={o} value={o}>{labelFor ? labelFor(o) : o}</option>)}
       </select>
     </label>
   );
@@ -69,8 +70,27 @@ function TicketsList() {
   const [company, setCompany] = useState(() => params.get('company') ?? ALL);
   const [source, setSource] = useState(ALL);
   const [queue, setQueue] = useState(ALL);
+  // A person KEY ("u:<portal user>" or "x:<PSA resource>"), not a name: two people can share a
+  // name, and Client workload's People list links here with exactly the key it counted by.
+  const [tech, setTech] = useState(() => params.get('tech') ?? ALL);
 
   const rows = useMemo(() => data ?? [], [data]);
+
+  // Everyone who holds or logged time on a ticket in the list. Staff lists carry this; a client's
+  // carries none, and then neither the filter nor the Assignee column is offered.
+  const hasPeople = rows.some((t) => t.people !== null);
+  const techNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const t of rows) for (const p of t.people ?? []) if (!names.has(p.key)) names.set(p.key, p.name);
+    return names;
+  }, [rows]);
+  const techOptions = useMemo(() => {
+    const keys = Array.from(techNames.keys())
+      .sort((a, b) => techNames.get(a)!.localeCompare(techNames.get(b)!));
+    // A key from a link that no ticket here carries must still be selectable, or the control would
+    // read "All" while the list stayed filtered - the page contradicting itself.
+    return tech !== ALL && !techNames.has(tech) ? [tech, ...keys] : keys;
+  }, [techNames, tech]);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return rows.filter((t) =>
@@ -82,8 +102,11 @@ function TicketsList() {
       && (priority === ALL || t.portalPriority === priority)
       && (source === ALL || (t.connectionName ?? '') === source)
       && (company === ALL || (t.customerName ?? '') === company)
-      && (queue === ALL || (t.queueOrBoard ?? '') === queue));
-  }, [rows, q, status, priority, source, company, queue, view, from]);
+      && (queue === ALL || (t.queueOrBoard ?? '') === queue)
+      // Holds it OR logged time on it - the rule People counts by. Holder alone would send anyone
+      // who only logged time from that list to an empty one.
+      && (tech === ALL || (t.people ?? []).some((p) => p.key === tech)));
+  }, [rows, q, status, priority, source, company, queue, view, from, tech]);
 
   // The hours behind what is on screen. Opened from a client's hours figure, this is the same
   // sum - which is what makes that link honest rather than approximate.
@@ -91,10 +114,10 @@ function TicketsList() {
   const totalBillable = filtered.reduce((a, t) => a + t.billableHours, 0);
 
   const active = q.trim() !== '' || view !== null || from !== null
-    || [status, priority, source, company, queue].some((v) => v !== ALL);
+    || [status, priority, source, company, queue, tech].some((v) => v !== ALL);
   const router = useRouter();
   const clear = () => {
-    setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL);
+    setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL); setTech(ALL);
     // Drops `view` as well. Leaving it would clear every visible control and still filter the list,
     // which reads as the page ignoring the button.
     if (params.toString()) router.replace('/dashboard/tickets');
@@ -140,6 +163,11 @@ function TicketsList() {
           <Select label="Source" value={source} onChange={setSource} options={optionsFor(rows, (t) => t.connectionName)} />
           <Select label="Company" value={company} onChange={setCompany} options={optionsFor(rows, (t) => t.customerName)} />
           <Select label="Queue" value={queue} onChange={setQueue} options={optionsFor(rows, (t) => t.queueOrBoard)} />
+          {hasPeople && (
+            <Select label="Technician" value={tech} onChange={setTech} options={techOptions}
+              labelFor={(k) => techNames.get(k) ?? 'Selected technician'}
+              title="Tickets this person holds, or logged time on" />
+          )}
           <span className="ml-auto text-xs text-[var(--muted)]">
             {filtered.length === rows.length ? `${rows.length} tickets` : `${filtered.length} of ${rows.length} tickets`}
             {totalWorked > 0 && <span> · {fmtHours(totalWorked)} worked, {fmtHours(totalBillable)} billable</span>}
@@ -167,6 +195,7 @@ function TicketsList() {
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Priority</th>
                 <th className="px-4 py-3 font-medium">Queue</th>
+                {hasPeople && <th className="px-4 py-3 font-medium">Assignee</th>}
                 <th className="px-4 py-3 text-right font-medium">Worked</th>
                 <th className="px-4 py-3 font-medium">Created</th>
               </tr>
@@ -187,6 +216,9 @@ function TicketsList() {
                   <td className="px-4 py-3"><StatusBadge status={t.portalStatus} /></td>
                   <td className="px-4 py-3"><PriorityBadge priority={t.portalPriority} /></td>
                   <td className="px-4 py-3 text-[var(--muted)]">{t.queueOrBoard ?? '—'}</td>
+                  {hasPeople && (
+                    <td className="px-4 py-3 text-[var(--muted)]">{t.people?.find((p) => p.holds)?.name ?? '—'}</td>
+                  )}
                   <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">{t.timeWorkedHours > 0 ? fmtHours(t.timeWorkedHours) : '—'}</td>
                   {/* The raise date, not the import date: the from-filter works on this one, and
                       a list showing one date while filtering on another looks broken. */}
