@@ -204,6 +204,31 @@ public class ClientWorkloadTests
     }
 
     [Fact]
+    public async Task The_account_the_portal_writes_as_is_not_one_of_the_people()
+    {
+        // Portal-only technicians' time reaches the PSA under the connection's time-entry resource,
+        // and the integration's tickets sit "assigned" to it. Named from the PSA it read as one more
+        // colleague - on Techpio's Autotask, "Sudanshu Aggarwal" - holding tickets nobody holds.
+        await using var db = await SeedAsync();
+        db.PsaConnections.Single().DefaultTimeEntryResourceId = "api-user";
+        var accountHeld = T(Acme, "1", Jun1, tech: "api-user");
+        accountHeld.AssignedTechnicianName = "Sudanshu Aggarwal";
+        var kamals = T(Acme, "2", Jun1, tech: "29682889");
+        kamals.AssignedTechnicianName = "Kamal Arora";
+        db.Tickets.AddRange(accountHeld, kamals);
+        await db.SaveChangesAsync();
+        // Spelled differently from the setting, as provider ids sometimes are: still the account.
+        db.TicketTimeEntries.Add(Entry(accountHeld.Id, 2m, psaTech: "API-User", psaName: "Sudanshu Aggarwal"));
+        await db.SaveChangesAsync();
+
+        var acme = (await new ClientWorkloadService(db).ForClientsAsync(new MetricsFilter())).Clients.Single();
+
+        acme.People.Select(p => p.Name).Should().Equal("Kamal Arora");
+        acme.TechniciansInvolved.Should().Be(1);
+        acme.TotalTickets.Should().Be(2, "the account's tickets still count as the client's work");
+    }
+
+    [Fact]
     public async Task The_import_window_travels_with_the_figures()
     {
         // A number computed over "open tickets active in the last 7 days" is not the number a

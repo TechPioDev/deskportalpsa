@@ -107,6 +107,54 @@ public class PortalTechnicianMetricsTests
     }
 
     [Fact]
+    public async Task The_account_the_portal_writes_as_is_nobody_on_the_technician_pages()
+    {
+        // Techpio's Autotask time-entry resource is named "Sudanshu Aggarwal". Credited as a person it
+        // was a colleague holding tickets nobody holds and hours the portal team logged.
+        var f = await SetupAsync();
+        f.Db.Value.PsaConnections.Single().DefaultTimeEntryResourceId = "api-user";
+        var accountHeld = Ticket(appUser: null, psaTech: "api-user", created: 1, resolved: 2, psaTechName: "Sudanshu Aggarwal");
+        var basits = Ticket(f.Basit, psaTech: "api-user", created: 1, resolved: 2);
+        f.Db.Value.Tickets.AddRange(accountHeld, basits);
+        await f.Db.Value.SaveChangesAsync();
+        f.Db.Value.TicketTimeEntries.AddRange(
+            Time(accountHeld.Id, appUser: null, psaTech: "api-user", day: 1, hours: 2m, billable: true),
+            Time(basits.Id, f.Basit, psaTech: "api-user", day: 1, hours: 1m, billable: true));
+        await f.Db.Value.SaveChangesAsync();
+
+        var team = await f.Svc.TeamAsync(new MetricsFilter(), ProductivityWeights.Default);
+        team.Select(r => r.TechnicianName).Should().Equal("Basit Lone");
+
+        var days = await f.Svc.DailyAsync(new MetricsFilter());
+        days.Should().NotContain(d => d.Name == "Sudanshu Aggarwal" || d.TechnicianExternalId == "api-user");
+        // Nothing lost: the account's hours and resolution still count, as work no one here is credited with.
+        days.Sum(d => d.Hours).Should().Be(3m);
+        days.Sum(d => d.Resolved).Should().Be(2);
+        var nobody = days.Where(d => d.AppUserId is null).ToList();
+        nobody.Should().OnlyContain(d => d.Name == "Unattributed");
+        (nobody.Sum(d => d.Hours), nobody.Sum(d => d.Resolved)).Should().Be((2m, 1));
+    }
+
+    [Fact]
+    public async Task Coverage_lists_no_row_for_the_account_the_portal_writes_as()
+    {
+        var f = await SetupAsync();
+        f.Db.Value.PsaConnections.Single().DefaultTimeEntryResourceId = "api-user";
+        var ticket = Ticket(appUser: null, psaTech: "29682889", created: 1, resolved: null);
+        f.Db.Value.Tickets.Add(ticket);
+        await f.Db.Value.SaveChangesAsync();
+        var viaAccount = Time(ticket.Id, null, "api-user", day: 1, hours: 2m, billable: true);
+        var kamals = Time(ticket.Id, null, "29682889", day: 1, hours: 1m, billable: true);
+        viaAccount.SyncStatus = kamals.SyncStatus = TimeEntrySyncStatus.Synced;
+        f.Db.Value.TicketTimeEntries.AddRange(viaAccount, kamals);
+        await f.Db.Value.SaveChangesAsync();
+
+        var report = await new PortalCoverageService(f.Db.Value).CoverageAsync(new MetricsFilter());
+
+        report.Technicians.Select(r => r.TechnicianExternalId).Should().Equal("29682889");
+    }
+
+    [Fact]
     public async Task A_PSA_technician_still_appears_when_nobody_holds_the_ticket_here()
     {
         // The other half. A desk mid-migration has both, and a change that attributed only portal

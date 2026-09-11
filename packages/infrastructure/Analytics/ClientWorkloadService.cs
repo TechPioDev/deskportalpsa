@@ -1,6 +1,7 @@
 using Desk.Application.Analytics;
 using Desk.Application.Tickets;
 using Desk.Infrastructure.Persistence;
+using Desk.Infrastructure.Tickets;
 using Microsoft.EntityFrameworkCore;
 
 namespace Desk.Infrastructure.Analytics;
@@ -47,6 +48,7 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,
                 t.AssignedAppUserId,
+                t.PsaConnectionId,
                 t.TimeWorkedHours,
                 t.BillableHours,
             })
@@ -67,9 +69,10 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
         var entries = await db.TicketTimeEntries.AsNoTracking()
             .Where(e => e.AppUserId != null || (e.TechnicianExternalId != null && e.TechnicianExternalId != ""))
             .Join(q, e => e.TicketId, t => t.Id,
-                (e, t) => new { t.ClientCompanyId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName, e.Hours })
+                (e, t) => new { t.ClientCompanyId, t.PsaConnectionId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName, e.Hours })
             .ToListAsync(ct);
         var entriesByClient = entries.ToLookup(e => e.ClientCompanyId);
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
 
         var userNames = await UserNamesAsync(
             rows.Where(r => r.AssignedAppUserId is not null).Select(r => r.AssignedAppUserId!.Value)
@@ -79,10 +82,12 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
         // The provider's display names, as the sync cached them on tickets and entries. The id only
         // stands in where neither carried one.
         var psaNames = rows
-            .Where(r => !string.IsNullOrEmpty(r.AssignedTechnicianExternalId) && r.AssignedTechnicianName is not null)
+            .Where(r => !string.IsNullOrEmpty(r.AssignedTechnicianExternalId) && r.AssignedTechnicianName is not null
+                && !account.IsAccount(r.PsaConnectionId, r.AssignedTechnicianExternalId))
             .Select(r => (Id: r.AssignedTechnicianExternalId!, Name: r.AssignedTechnicianName!))
             .Concat(entries
-                .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && e.TechnicianName is not null)
+                .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && e.TechnicianName is not null
+                    && !account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId))
                 .Select(e => (Id: e.TechnicianExternalId!, Name: e.TechnicianName!)))
             .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
@@ -118,10 +123,16 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
                 foreach (var t in g)
                 {
                     if (t.AssignedAppUserId is { } uid) For(uid, null).Assigned++;
-                    else if (!string.IsNullOrEmpty(t.AssignedTechnicianExternalId)) For(null, t.AssignedTechnicianExternalId).Assigned++;
+                    // Held by the account the portal writes as is held by nobody.
+                    else if (!string.IsNullOrEmpty(t.AssignedTechnicianExternalId)
+                             && !account.IsAccount(t.PsaConnectionId, t.AssignedTechnicianExternalId))
+                        For(null, t.AssignedTechnicianExternalId).Assigned++;
                 }
                 foreach (var e in entriesByClient[g.Key])
+                {
+                    if (e.AppUserId is null && account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId)) continue;
                     For(e.AppUserId, e.TechnicianExternalId).Hours += e.Hours;
+                }
 
                 // The count IS the length of this list, so the figure and the list it opens cannot
                 // disagree - they are one computation, not two that happen to match today.
