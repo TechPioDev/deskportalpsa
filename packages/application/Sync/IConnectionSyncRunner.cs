@@ -30,4 +30,12 @@ public interface IConnectionSyncRunner
     /// read again, so a correction the import learned later could never reach it.
     /// </summary>
     Task<int> RefreshNotesAsync(Guid psaConnectionId, IReadOnlyCollection<string> externalTicketIds, CancellationToken ct = default);
+
+    /// <summary>
+    /// One undated attachment sweep, for providers that can answer one: every file the provider holds
+    /// for tickets the portal projects is read, and those already here are healed (author id). It is
+    /// the sweep a full sync runs, so it also brings in any file that never arrived and removes files
+    /// deleted in the PSA. A no-op for per-ticket providers and when attachment sync is off.
+    /// </summary>
+    Task<(int Added, int Removed)> RefreshAttachmentsAsync(Guid psaConnectionId, CancellationToken ct = default);
 }

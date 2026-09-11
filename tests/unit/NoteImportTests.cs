@@ -447,10 +447,10 @@ public class NoteImportTests
             N("E", "Demo Admin", imported: false));               // a portal reply: our own record
         await db.SaveChangesAsync();
 
-        var pending = await NoteAuthorBackfill.PendingAsync(db);
+        var pending = await AuthorBackfill.NotesPendingAsync(db);
 
         pending.Should().ContainSingle().Which.Value.Should().Equal("A");
-        (await NoteAuthorBackfill.CountAsync(db)).Should().Be(1);
+        (await AuthorBackfill.NotesCountAsync(db)).Should().Be(1);
     }
 
     [Fact]

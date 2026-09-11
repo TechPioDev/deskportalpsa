@@ -232,6 +232,13 @@ public record UnifiedAttachment(
 
     /// <summary>Provider note this file hangs off, when the provider records one.</summary>
     public string? ExternalNoteId { get; init; }
+
+    /// <summary>
+    /// The provider's id for the staff member who attached it, as for a note: the name above is only
+    /// what that person is called. Null for a contact's file, a system file, and wherever the provider
+    /// does not report the id in the form its other person references use.
+    /// </summary>
+    public string? AuthorExternalId { get; init; }
 }
 
 /// <summary>

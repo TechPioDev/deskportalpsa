@@ -51,4 +51,11 @@ public sealed class IntegrationIdentity
     /// </summary>
     public string NoteAuthor(Guid connectionId, string? authorExternalId, string authorName)
         => IsAccount(connectionId, authorExternalId) ? $"{_connectionName[connectionId]} integration" : authorName;
+
+    /// <summary>
+    /// An attachment's byline, on the note's rule. Null stays null: a portal upload by the ticket's own
+    /// requester has no byline to replace.
+    /// </summary>
+    public string? AttachmentAuthor(Guid connectionId, string? authorExternalId, string? authorName)
+        => IsAccount(connectionId, authorExternalId) ? $"{_connectionName[connectionId]} integration" : authorName;
 }

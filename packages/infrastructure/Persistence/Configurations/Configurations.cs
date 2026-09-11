@@ -252,6 +252,7 @@ public sealed class TicketAttachmentConfig : IEntityTypeConfiguration<TicketAtta
         b.Property(x => x.OriginalFileName).HasMaxLength(400).IsRequired();
         b.Property(x => x.ContentType).HasMaxLength(200).IsRequired();
         b.Property(x => x.StorageObjectKey).HasMaxLength(400).IsRequired();
+        b.Property(x => x.AuthorExternalId).HasMaxLength(64);
         b.HasIndex(x => x.TicketId);
         b.HasIndex(x => x.TicketNoteId);
     }
