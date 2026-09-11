@@ -556,8 +556,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <Meta label="Queue / Board" value={ticket.queueOrBoard ?? '—'} />
                 {/* Two lines, not one merged answer. The PSA's assignee and the person actually
                     working it are different facts, and on a desk where technicians exist only in
-                    the portal the provider's line will read as the integration account or nothing
-                    at all — collapsing them would report that as "unassigned" while someone is
+                    the portal the provider's line reads "Unassigned" - the API reports a ticket
+                    held only by the integration account as held by nobody, because that account
+                    is not a person. Collapsing the two lines would report that while someone is
                     mid-way through the job. */}
                 <Meta label="Assigned to (PSA)" value={ticket.assignedTechnicianName ?? ticket.assignedTechnicianExternalId ?? 'Unassigned'} />
                 {ticket.assignedAppUserName && <Meta label="Working it" value={ticket.assignedAppUserName} />}

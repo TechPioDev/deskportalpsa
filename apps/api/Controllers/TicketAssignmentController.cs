@@ -7,6 +7,7 @@ using Desk.Application.Mapping;
 using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
 using Desk.Infrastructure.Persistence;
+using Desk.Infrastructure.Tickets;
 using Desk.PsaCore.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -59,8 +60,12 @@ public sealed class TicketAssignmentController(
 
         // A technician with no role at all cannot take work in the PSA — Autotask's own API-only
         // users are the clearest case — so offering them would only produce a rejection later.
+        // Nor the account the portal writes as: assigning a ticket to it in the PSA assigns it to
+        // nobody. It is the integration's login, not a technician who will pick the work up.
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
         var candidates = fields.Technicians
             .Where(t => rolesByTechnician.Count == 0 || rolesByTechnician.ContainsKey(t.Value))
+            .Where(t => !account.IsAccount(ticket.PsaConnectionId, t.Value))
             .Select(t => new
             {
                 id = t.Value,

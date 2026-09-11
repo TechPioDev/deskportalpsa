@@ -204,6 +204,12 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             serviceInstructions = instructions.FirstOrDefault(i => i.ClientCompanyId == null)?.Body;
         serviceInstructions = string.IsNullOrWhiteSpace(serviceInstructions) ? null : serviceInstructions;
 
+        // The PSA's assignee - unless it is the account the portal writes as. That is how the PSA
+        // records work the integration did, not a person holding the ticket, so the ticket reads as
+        // unassigned there and the reassign panel pre-selects nobody.
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        var psaAssigneeIsAccount = account.IsAccount(ticket.PsaConnectionId, ticket.AssignedTechnicianExternalId);
+
         return new TicketDetailDto(
             ticket.Id, ticket.ExternalTicketId, ticket.Provider, ticket.Title, ticket.Description,
             ticket.PortalStatus, ticket.PortalPriority, ticket.PortalCategory, ticket.QueueOrBoard,
@@ -245,8 +251,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             UpdatedAt: ticket.UpdatedAt,
             ConnectionName: connectionName,
             ServiceInstructions: serviceInstructions,
-            AssignedTechnicianExternalId: ticket.AssignedTechnicianExternalId,
-            AssignedTechnicianName: ticket.AssignedTechnicianName,
+            AssignedTechnicianExternalId: psaAssigneeIsAccount ? null : ticket.AssignedTechnicianExternalId,
+            AssignedTechnicianName: psaAssigneeIsAccount ? null : ticket.AssignedTechnicianName,
             ExternalTicketUrl: externalUrl,
             AssignedAppUserId: ticket.AssignedAppUserId,
             AssignedAppUserName: assignedAppUserName);

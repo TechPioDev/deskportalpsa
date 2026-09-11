@@ -8,6 +8,7 @@ using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
+using Desk.Infrastructure.Tickets;
 using Desk.PsaCore.Contracts;
 using Desk.PsaCore.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -61,8 +62,26 @@ public sealed class TicketTimeController(
             .Where(t => t.TicketId == id)
             .ToListAsync(ct);
 
+        // Whose time it is. The PSA files every hour a portal-only technician logs under the account
+        // the portal writes as, so the provider's name on those entries credits the account - on
+        // Techpio's Autotask, "Sudanshu Aggarwal" - with the team's work. The portal's own row knows
+        // who actually logged it; where there is no such row the entry names nobody, which is true,
+        // rather than the account, which is not.
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        var userIds = local.Where(l => l.AppUserId is not null).Select(l => l.AppUserId!.Value).Distinct().ToList();
+        var userNames = userIds.Count == 0
+            ? []
+            : await db.AppUsers.AsNoTracking().Where(u => userIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+        (string? Id, string? Name) Who(TicketTimeEntry? origin, string? technicianId, string? technicianName)
+        {
+            if (!account.IsAccount(ticket.PsaConnectionId, technicianId)) return (technicianId, technicianName);
+            return origin?.AppUserId is { } uid && userNames.TryGetValue(uid, out var person) ? (null, person) : (null, null);
+        }
+        TimeRow Local(TicketTimeEntry l) => LocalRowAs(l, Who(l, l.TechnicianExternalId, l.TechnicianName));
+
         if (string.IsNullOrEmpty(ticket.ExternalTicketId))
-            return Ok(local.OrderByDescending(l => l.EntryDate).Select(LocalRow));
+            return Ok(local.OrderByDescending(l => l.EntryDate).Select(Local));
 
         var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
         var entries = await connector.GetTimeEntriesAsync(ticket.ExternalTicketId, ct);
@@ -74,13 +93,14 @@ public sealed class TicketTimeController(
         var rows = entries.Select(e =>
         {
             portalByExternalId.TryGetValue(e.ExternalId, out var origin);
+            var who = Who(origin, e.TechnicianExternalId, e.TechnicianName);
             return new TimeRow(
                 // Composed exactly as the thread composes it, through the same helper — two
                 // renderings of one entry that disagreed would be a bug waiting to happen.
                 // Staff-only endpoint; internal text never leaves it.
                 e.ExternalId, e.Hours, e.Billable, e.BillableOption.ToString(), e.EntryDate,
                 TimeEntryNarrative.Compose(e.Notes, e.InternalNotes),
-                e.TechnicianExternalId, e.TechnicianName, e.WorkType,
+                who.Id, who.Name, e.WorkType,
                 origin is null ? nameof(TimeEntrySource.Provider) : nameof(TimeEntrySource.Portal),
                 nameof(TimeEntrySyncStatus.Synced), null);
         }).ToList();
@@ -88,15 +108,15 @@ public sealed class TicketTimeController(
         // Anything the PSA rejected or has not accepted yet: it exists only here.
         rows.AddRange(local
             .Where(l => l.SyncStatus != TimeEntrySyncStatus.Synced)
-            .Select(LocalRow));
+            .Select(Local));
 
         return Ok(rows.OrderByDescending(r => r.EntryDate));
     }
 
-    private static TimeRow LocalRow(TicketTimeEntry l) => new(
+    private static TimeRow LocalRowAs(TicketTimeEntry l, (string? Id, string? Name) who) => new(
         l.ExternalEntryId ?? l.Id.ToString(), l.Hours, l.Billable,
         l.Billable ? nameof(BillableOption.Billable) : nameof(BillableOption.DoNotBill),
-        l.EntryDate, l.Notes, l.TechnicianExternalId, l.TechnicianName, l.WorkTypeLabel,
+        l.EntryDate, l.Notes, who.Id, who.Name, l.WorkTypeLabel,
         l.Source.ToString(), l.SyncStatus.ToString(), l.SyncError);
 
     /// <summary>One row of the time panel, whichever side it came from.</summary>
