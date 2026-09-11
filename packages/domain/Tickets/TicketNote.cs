@@ -13,6 +13,14 @@ public class TicketNote : TenantEntity
 
     public string? ExternalNoteId { get; set; }
     public required string AuthorName { get; set; }
+
+    /// <summary>
+    /// The provider's id for whoever wrote it (Autotask resource, ConnectWise member); null for a
+    /// portal reply, a contact's note or a system note. <see cref="AuthorName"/> is only what that
+    /// person is CALLED - and the account the portal writes as is called after a real person, so
+    /// only the id can tell its notes from theirs.
+    /// </summary>
+    public string? AuthorExternalId { get; set; }
     public bool AuthoredByClient { get; set; }
     public required string Body { get; set; }
 

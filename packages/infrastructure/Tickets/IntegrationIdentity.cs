@@ -20,17 +20,35 @@ namespace Desk.Infrastructure.Tickets;
 public sealed class IntegrationIdentity
 {
     private readonly Dictionary<Guid, string> _accountByConnection;
+    private readonly Dictionary<Guid, string> _connectionName;
 
-    private IntegrationIdentity(Dictionary<Guid, string> accountByConnection) => _accountByConnection = accountByConnection;
+    private IntegrationIdentity(Dictionary<Guid, string> accountByConnection, Dictionary<Guid, string> connectionName)
+    {
+        _accountByConnection = accountByConnection;
+        _connectionName = connectionName;
+    }
 
     public static async Task<IntegrationIdentity> LoadAsync(DeskDbContext db, CancellationToken ct = default)
-        => new(await db.PsaConnections.AsNoTracking()
+    {
+        var rows = await db.PsaConnections.AsNoTracking()
             .Where(c => c.DefaultTimeEntryResourceId != null && c.DefaultTimeEntryResourceId != "")
-            .ToDictionaryAsync(c => c.Id, c => c.DefaultTimeEntryResourceId!.Trim(), ct));
+            .Select(c => new { c.Id, Account = c.DefaultTimeEntryResourceId!, c.Name })
+            .ToListAsync(ct);
+        return new(rows.ToDictionary(r => r.Id, r => r.Account.Trim()), rows.ToDictionary(r => r.Id, r => r.Name));
+    }
 
     /// <summary>True when <paramref name="externalId"/> is the account <paramref name="connectionId"/> writes as.</summary>
     public bool IsAccount(Guid connectionId, string? externalId)
         => !string.IsNullOrWhiteSpace(externalId)
            && _accountByConnection.TryGetValue(connectionId, out var account)
            && string.Equals(account, externalId.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A note's byline. The name as stored - unless the note's AUTHOR ID is the account, which
+    /// makes it the integration's note whatever the account happens to be called ("Autotask
+    /// integration"). Decided on the id alone: a note stored before ids were kept keeps its name
+    /// until the sync fills the id in, rather than being relabelled on a guess from the name.
+    /// </summary>
+    public string NoteAuthor(Guid connectionId, string? authorExternalId, string authorName)
+        => IsAccount(connectionId, authorExternalId) ? $"{_connectionName[connectionId]} integration" : authorName;
 }

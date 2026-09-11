@@ -356,6 +356,83 @@ public class NoteImportTests
     }
 
     [Fact]
+    public async Task A_notes_author_is_stored_as_an_id_and_backfilled_on_the_next_read()
+    {
+        // The name is only what the author is called. Techpio's integration account is called after
+        // a real person, so without the id its notes and that person's are indistinguishable.
+        var clock = new TestClock();
+        await using var db = await SeedAsync(Guid.NewGuid().ToString());
+        var connector = new StubConnector { SupportsTimeEntries = true };
+        connector.Tickets.Add(Incoming("7814"));
+        connector.Notes["7814"] =
+        [
+            new UnifiedTicketNote("1", "Sudanshu Aggarwal", "Written through the integration.", IsPublic: true,
+                clock.GetUtcNow(), AuthorExternalId: "29682885"),
+            new UnifiedTicketNote("2", "Ravi Customer", "From the customer.", IsPublic: true,
+                clock.GetUtcNow(), FromClient: true),
+        ];
+        connector.TimeEntries["7814"] =
+            [new UnifiedTimeEntry("900", "29682889", 0.5m, true, clock.GetUtcNow(), "Fixed it.") { TechnicianName = "Kamal Arora" }];
+
+        await Runner(db, connector, clock).RunAsync(Conn, full: true);
+
+        (await db.TicketNotes.SingleAsync(n => n.ExternalNoteId == "1")).AuthorExternalId.Should().Be("29682885");
+        (await db.TicketNotes.SingleAsync(n => n.ExternalNoteId == "2")).AuthorExternalId
+            .Should().BeNull("a customer contact is not a resource");
+        (await db.TicketNotes.SingleAsync(n => n.ExternalNoteId == "te-900")).AuthorExternalId
+            .Should().Be("29682889", "a time entry's author is the resource it is filed under");
+
+        // A row imported before the id was kept: the next read fills it in from the provider.
+        var old = await db.TicketNotes.SingleAsync(n => n.ExternalNoteId == "1");
+        old.AuthorExternalId = null;
+        await db.SaveChangesAsync();
+
+        await Runner(db, connector, clock).RunAsync(Conn, full: true);
+
+        (await db.TicketNotes.AsNoTracking().SingleAsync(n => n.ExternalNoteId == "1")).AuthorExternalId
+            .Should().Be("29682885", "the heal backfills it from the provider's own record");
+    }
+
+    [Fact]
+    public async Task The_integrations_notes_say_so_and_a_real_person_of_the_same_name_keeps_theirs()
+    {
+        var clock = new TestClock();
+        await using var db = await SeedAsync(Guid.NewGuid().ToString());
+        (await db.PsaConnections.SingleAsync()).DefaultTimeEntryResourceId = "29682885";
+        await db.SaveChangesAsync();
+        var connector = new StubConnector();
+        connector.Tickets.Add(Incoming("7814"));
+        connector.Notes["7814"] =
+        [
+            new UnifiedTicketNote("1", "Sudanshu Aggarwal", "Posted by the integration.", IsPublic: true,
+                clock.GetUtcNow(), AuthorExternalId: "29682885"),
+            // Same NAME, different resource: a real person - the reason this is decided on ids.
+            new UnifiedTicketNote("2", "Sudanshu Aggarwal", "Written by the person.", IsPublic: true,
+                clock.GetUtcNow().AddMinutes(1), AuthorExternalId: "29682999"),
+        ];
+        await Runner(db, connector, clock).RunAsync(Conn, full: true);
+
+        var ticket = await db.Tickets.SingleAsync();
+        var company = await db.ClientCompanies.SingleAsync();
+        var reads = new Desk.Infrastructure.Tickets.TicketReadService(
+            db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: Guid.NewGuid()));
+        var access = new Desk.Application.Tickets.ClientAccess(Org, company.Id, Guid.NewGuid(), IsCompanyAdministrator: true);
+
+        var staff = (await reads.GetDetailForStaffAsync(ticket.Id))!.Conversation;
+        var client = (await reads.GetDetailAsync(access, ticket.Id))!.Conversation;
+        foreach (var thread in new[] { staff, client })
+        {
+            thread.Single(n => n.Body == "Posted by the integration.").AuthorName.Should().Be("AT integration");
+            thread.Single(n => n.Body == "Written by the person.").AuthorName.Should().Be("Sudanshu Aggarwal");
+        }
+
+        // The client's notification history carries the same byline as the thread.
+        (await reads.ActivityHistoryAsync(access))
+            .Where(e => e.Kind == "staff-reply").Select(e => e.Actor)
+            .Should().BeEquivalentTo("AT integration", "Sudanshu Aggarwal");
+    }
+
+    [Fact]
     public async Task Provider_notes_are_imported_once_and_keep_their_author()
     {
         var dbName = Guid.NewGuid().ToString();

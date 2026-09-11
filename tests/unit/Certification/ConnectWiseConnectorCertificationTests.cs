@@ -165,6 +165,12 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
         notes[1].AuthorName.Should().Be("Harpal Singh");
         notes[2].FromClient.Should().BeTrue("an empty member stub is not an author — the named contact is");
         notes[2].AuthorName.Should().Be("Harpal Singh");
+
+        // The author's id follows the same attribution: the member's, in the numeric form a ticket's
+        // owner carries, and only when a member is the one named - never a contact's, never a stub's.
+        notes[0].AuthorExternalId.Should().Be("20");
+        notes[1].AuthorExternalId.Should().BeNull();
+        notes[2].AuthorExternalId.Should().BeNull("the stub names nobody, so it is no author");
     }
 
     /// <summary>

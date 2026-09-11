@@ -207,7 +207,9 @@ public sealed class ConnectionSyncRunner(
                     var body = TimeEntryNarrative.Compose(e.Notes, e.InternalNotes);
                     if (string.IsNullOrWhiteSpace(body)) continue;
                     merged.Add(new UnifiedTicketNote(
-                        $"te-{e.ExternalId}", e.TechnicianName ?? "", body, IsPublic: false, e.EntryDate));
+                        $"te-{e.ExternalId}", e.TechnicianName ?? "", body, IsPublic: false, e.EntryDate,
+                        // A time entry's author is the resource it is filed under.
+                        AuthorExternalId: string.IsNullOrWhiteSpace(e.TechnicianExternalId) ? null : e.TechnicianExternalId));
                 }
                 incoming = merged;
                 timeNotesFetched = true;
@@ -243,6 +245,14 @@ public sealed class ConnectionSyncRunner(
                 row.Body = n.Body;
                 healed++;
             }
+            // And who wrote it, as an id. A note imported before the id was kept gets it here, the
+            // next time its ticket is read - so the existing thread backfills from the provider's own
+            // record rather than from a guess on names.
+            if (row.AuthorExternalId != n.AuthorExternalId)
+            {
+                row.AuthorExternalId = n.AuthorExternalId;
+                healed++;
+            }
         }
 
         var added = 0;
@@ -260,6 +270,7 @@ public sealed class ConnectionSyncRunner(
                 // An empty author means the provider generated the note itself (workflow/SLA); name it
                 // after the provider rather than leaving a blank byline in the thread.
                 AuthorName = string.IsNullOrWhiteSpace(n.AuthorName) ? $"{connection.Provider} automation" : n.AuthorName,
+                AuthorExternalId = n.AuthorExternalId,
                 // The provider's word on which SIDE wrote it — a customer contact's note must land
                 // on the client side of the thread, not read as the MSP's own words.
                 AuthoredByClient = n.FromClient,

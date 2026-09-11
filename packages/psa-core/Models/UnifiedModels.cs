@@ -114,7 +114,11 @@ public record UnifiedTicketNote(
     // True when the provider says a customer CONTACT wrote this note (CW: contact instead of
     // member; AT: createdByContactID). Without it every imported note renders as the MSP's own
     // words, and the thread loses its two sides.
-    bool FromClient = false);
+    bool FromClient = false,
+    // The provider's id for the STAFF member who wrote it - Autotask resource, ConnectWise member -
+    // and null for a contact's or the system's note. The name above is only what that person is
+    // called; the integration account is called after a real person, and only the id tells them apart.
+    string? AuthorExternalId = null);
 
 public record UnifiedTicketNoteCreateRequest(string Body, bool IsPublic, string IdempotencyKey)
 {

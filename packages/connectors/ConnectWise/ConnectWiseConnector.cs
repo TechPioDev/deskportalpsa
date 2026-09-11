@@ -290,7 +290,10 @@ public sealed class ConnectWiseConnector(
                     // Empty author = provider-generated note; the sync layer treats that as a system note.
                     n.Id.ToString(), memberName ?? contactName ?? "", n.Text ?? "",
                     IsPublic: !n.InternalAnalysisFlag, n.DateCreated ?? clock.GetUtcNow(),
-                    FromClient: memberName is null && contactName is not null);
+                    FromClient: memberName is null && contactName is not null,
+                    // The member's numeric id - the same form a ticket's owner and a time entry's
+                    // member carry - and only when a member is the one attributed.
+                    AuthorExternalId: memberName is not null ? n.Member!.Id.ToString() : null);
             })
             .ToList();
     }
