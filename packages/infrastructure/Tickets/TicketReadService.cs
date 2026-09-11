@@ -33,7 +33,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
                 t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
                 db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
-                db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault()))
+                db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
+                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours))
             .ToListAsync(ct);
 
     /// <summary>
@@ -52,7 +53,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
                 t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
                 db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
-                db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault()))
+                db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
+                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours))
             .ToListAsync(ct);
     }
 

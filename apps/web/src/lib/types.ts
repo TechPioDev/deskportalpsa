@@ -12,6 +12,11 @@ export const TicketListItemSchema = z.object({
   lastSyncedAt: z.string().nullable(),
   customerName: z.string().nullable().optional(),
   connectionName: z.string().nullable().optional(),
+  // Defaulted: a response from the previous build mid-deploy carries none of these, and throwing
+  // the whole ticket list away over a missing column helps nobody.
+  raisedAt: z.string().nullable().default(null),
+  timeWorkedHours: z.number().default(0),
+  billableHours: z.number().default(0),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 
