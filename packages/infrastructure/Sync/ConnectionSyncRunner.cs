@@ -153,6 +153,25 @@ public sealed class ConnectionSyncRunner(
         return new SyncRunResult(fetched, created, updated, skipped, pages, notes, files, filesRemoved, notesRemoved);
     }
 
+    public async Task<int> RefreshNotesAsync(Guid psaConnectionId, IReadOnlyCollection<string> externalTicketIds, CancellationToken ct = default)
+    {
+        var connection = await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == psaConnectionId, ct)
+            ?? throw new NotFoundException("PSA connection");
+        // The same gates a sync applies: nothing is read back when inbound sync or notes are off.
+        if (!connection.TwoWaySync || !connection.ImportNotes || externalTicketIds.Count == 0) return 0;
+
+        var connector = await resolver.ResolveAsync(psaConnectionId, ct);
+        var read = 0;
+        foreach (var externalId in externalTicketIds)
+        {
+            // Through the sync's own note import, so a refreshed thread is indistinguishable from a
+            // synced one - no second copy of the heal and dedup rules to drift from the first.
+            await ImportNotesAsync(connection, connector, externalId, ct);
+            read++;
+        }
+        return read;
+    }
+
     /// <summary>
     /// Mirrors the provider's notes into the portal thread — internal ones included, carrying
     /// IsPublic=false. Deduplication is by the provider's own note id, which doubles as echo

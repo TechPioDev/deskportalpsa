@@ -19,4 +19,15 @@ public interface IConnectionSyncRunner
     /// since nothing changed on the provider side).
     /// </param>
     Task<SyncRunResult> RunAsync(Guid psaConnectionId, bool full = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// Re-reads the notes of tickets the portal already holds and heals them exactly as a sync does
+    /// (author id, body, side, deletions), whatever the connection's import window says. Returns how
+    /// many tickets were read.
+    ///
+    /// A sync - full or not - only reads the tickets its import window returns. The window decides
+    /// which tickets are IMPORTED, but it also meant a ticket that went quiet never had its thread
+    /// read again, so a correction the import learned later could never reach it.
+    /// </summary>
+    Task<int> RefreshNotesAsync(Guid psaConnectionId, IReadOnlyCollection<string> externalTicketIds, CancellationToken ct = default);
 }
