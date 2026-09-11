@@ -249,10 +249,11 @@ export const api = {
    * the presets are the same call with computed bounds, so there is one code path to be wrong in
    * rather than four.
    */
-  dailyMetrics: (fromIso: string, toIso?: string, appUserId?: string) => {
+  dailyMetrics: (fromIso: string, toIso?: string, appUserId?: string, companyId?: string) => {
     const q = new URLSearchParams({ from: fromIso });
     if (toIso) q.set('to', toIso);
     if (appUserId) q.set('appUserId', appUserId);
+    if (companyId) q.set('companyId', companyId);
     return request(`/api/dashboard/daily?${q}`, z.array(TechnicianDaySchema)) as Promise<TechnicianDay[]>;
   },
 

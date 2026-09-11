@@ -16,7 +16,16 @@ public sealed record TicketListItem(
     DateTimeOffset CreatedAt,
     DateTimeOffset? LastSyncedAt,
     string? CustomerName,
-    string? ConnectionName);
+    string? ConnectionName,
+    // When the PSA says the ticket was RAISED, falling back to the import time only where the
+    // provider gave none. Exposed because the client-workload figures are windowed on exactly this
+    // date: a list filtered on CreatedAt - the IMPORT date - would disagree with the number that
+    // linked to it, and on a freshly connected PSA every ticket shares one import day.
+    DateTimeOffset? RaisedAt = null,
+    // Worked and billable hours as the PSA totals them per ticket: the same figures the client
+    // workload sums, so a list of one client's tickets can show the total that brought someone to it.
+    decimal TimeWorkedHours = 0,
+    decimal BillableHours = 0);
 
 public sealed record TicketNoteDto(
     Guid Id,

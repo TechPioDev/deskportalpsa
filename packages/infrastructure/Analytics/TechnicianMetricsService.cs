@@ -88,6 +88,11 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         if (to is { } t) entries = entries.Where(e => e.EntryDate <= t);
         if (filter.AppUserId is { } who) entries = entries.Where(e => e.AppUserId == who);
         if (filter.TechnicianExternalId is { } tech) entries = entries.Where(e => e.TechnicianExternalId == tech);
+        // A time entry has no client of its own — it belongs to a ticket, and the ticket has one.
+        // Without this the ticket half of the answer narrowed to one client while the HOURS half
+        // stayed organization-wide, so a client's row would have shown the whole desk's time.
+        if (filter.ClientCompanyId is { } client)
+            entries = entries.Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.ClientCompanyId == client));
 
         var loggedRaw = await entries
             .Select(e => new { e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId })

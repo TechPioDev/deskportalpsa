@@ -200,6 +200,32 @@ public class PortalTechnicianMetricsTests
     }
 
     [Fact]
+    public async Task Narrowing_to_a_client_narrows_the_HOURS_too_not_only_the_tickets()
+    {
+        // A time entry carries no client of its own - it belongs to a ticket, and the ticket does.
+        // Filtering only the tickets left the hours organization-wide, so a client's row would have
+        // reported the whole desk's time under that client's name. The figure a person clicks and
+        // the figure they land on have to be the same number, or the link is worse than no link.
+        var f = await SetupAsync();
+        var other = Guid.NewGuid();
+
+        var mine = Ticket(f.Basit, psaTech: null, created: 1, resolved: 1);
+        var theirs = Ticket(f.Basit, psaTech: null, created: 1, resolved: 1);
+        theirs.ClientCompanyId = other;
+        f.Db.Value.Tickets.AddRange(mine, theirs);
+        f.Db.Value.TicketTimeEntries.AddRange(
+            Time(mine.Id, f.Basit, null, day: 1, hours: 3m, billable: true),
+            Time(theirs.Id, f.Basit, null, day: 1, hours: 5m, billable: true));
+        await f.Db.Value.SaveChangesAsync();
+
+        var days = await f.Svc.DailyAsync(new MetricsFilter { ClientCompanyId = Company });
+
+        days.Should().ContainSingle();
+        days[0].Hours.Should().Be(3m, "the other client's five hours belong to the other client");
+        days[0].Resolved.Should().Be(1);
+    }
+
+    [Fact]
     public async Task A_range_returns_only_the_days_inside_it()
     {
         // One query serves a week, a month, a quarter and a custom range; this is the bound that

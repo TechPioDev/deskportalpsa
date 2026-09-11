@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { StatusBadge, PriorityBadge, SourceBadge } from '@/components/badges';
 import type { TicketListItem } from '@/lib/types';
 import { isResolvedStatus } from '@/lib/status';
+import { fmtHours } from '@/lib/format';
 
 const ALL = '__all__';
 
@@ -55,6 +56,10 @@ function TicketsList() {
   // statuses those are is a decision that already lives in isResolvedStatus.
   const params = useSearchParams();
   const view = params.get('view');
+  // A window on the date the ticket was RAISED - the same axis the client-workload figures use.
+  // Filtering on the import date instead would make this list disagree with the number that
+  // linked here, which is the one thing a link from a figure must never do.
+  const from = params.get('from');
 
   const [q, setQ] = useState('');
   const [status, setStatus] = useState(() => params.get('status') ?? ALL);
@@ -73,13 +78,19 @@ function TicketsList() {
       && (status === ALL || t.portalStatus === status)
       && (view !== 'open' || !isResolvedStatus(t.portalStatus))
       && (view !== 'resolved' || isResolvedStatus(t.portalStatus))
+      && (!from || new Date(t.raisedAt ?? t.createdAt) >= new Date(from))
       && (priority === ALL || t.portalPriority === priority)
       && (source === ALL || (t.connectionName ?? '') === source)
       && (company === ALL || (t.customerName ?? '') === company)
       && (queue === ALL || (t.queueOrBoard ?? '') === queue));
-  }, [rows, q, status, priority, source, company, queue, view]);
+  }, [rows, q, status, priority, source, company, queue, view, from]);
 
-  const active = q.trim() !== '' || view !== null
+  // The hours behind what is on screen. Opened from a client's hours figure, this is the same
+  // sum - which is what makes that link honest rather than approximate.
+  const totalWorked = filtered.reduce((a, t) => a + t.timeWorkedHours, 0);
+  const totalBillable = filtered.reduce((a, t) => a + t.billableHours, 0);
+
+  const active = q.trim() !== '' || view !== null || from !== null
     || [status, priority, source, company, queue].some((v) => v !== ALL);
   const router = useRouter();
   const clear = () => {
@@ -131,6 +142,7 @@ function TicketsList() {
           <Select label="Queue" value={queue} onChange={setQueue} options={optionsFor(rows, (t) => t.queueOrBoard)} />
           <span className="ml-auto text-xs text-[var(--muted)]">
             {filtered.length === rows.length ? `${rows.length} tickets` : `${filtered.length} of ${rows.length} tickets`}
+            {totalWorked > 0 && <span> · {fmtHours(totalWorked)} worked, {fmtHours(totalBillable)} billable</span>}
           </span>
           {active && (
             <button onClick={clear} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
@@ -155,6 +167,7 @@ function TicketsList() {
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Priority</th>
                 <th className="px-4 py-3 font-medium">Queue</th>
+                <th className="px-4 py-3 text-right font-medium">Worked</th>
                 <th className="px-4 py-3 font-medium">Created</th>
               </tr>
             </thead>
@@ -174,7 +187,10 @@ function TicketsList() {
                   <td className="px-4 py-3"><StatusBadge status={t.portalStatus} /></td>
                   <td className="px-4 py-3"><PriorityBadge priority={t.portalPriority} /></td>
                   <td className="px-4 py-3 text-[var(--muted)]">{t.queueOrBoard ?? '—'}</td>
-                  <td className="px-4 py-3 text-[var(--muted)]">{new Date(t.createdAt).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">{t.timeWorkedHours > 0 ? fmtHours(t.timeWorkedHours) : '—'}</td>
+                  {/* The raise date, not the import date: the from-filter works on this one, and
+                      a list showing one date while filtering on another looks broken. */}
+                  <td className="px-4 py-3 text-[var(--muted)]">{new Date(t.raisedAt ?? t.createdAt).toLocaleDateString()}</td>
                 </tr>
               ))}
             </tbody>

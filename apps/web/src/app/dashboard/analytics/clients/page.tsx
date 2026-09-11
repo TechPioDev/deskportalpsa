@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Building2, Clock, Users, AlertCircle } from 'lucide-react';
 import { api } from '@/lib/api';
+import { fmtHours } from '@/lib/format';
 
 /**
  * Where the desk's capacity goes, by client — the question an owner actually asks before a renewal.
@@ -23,7 +24,6 @@ const RANGES = [
   { key: 'all', label: 'Everything held', days: null },
 ] as const;
 
-const fmtHours = (h: number) => h >= 10 ? `${Math.round(h)}h` : `${h.toFixed(1)}h`;
 const fmtDuration = (hours: number) =>
   hours < 24 ? `${hours.toFixed(1)}h` : `${(hours / 24).toFixed(1)}d`;
 
@@ -146,27 +146,32 @@ export default function ClientAnalyticsPage() {
                   <tbody>
                     {clients.map((c) => (
                       <tr key={c.clientCompanyId} className="border-t border-[var(--border)]">
-                        {/* Counts navigate; measures do not.
-                            Tickets, Open and Closed are each a count OF A LIST, so there is
-                            somewhere real to land. Hours, Billable, Avg to close and SLA met are
-                            derived - there is no page listing 32 hours - and sending them somewhere
-                            approximate would teach people the links are unreliable, which costs
-                            more than the convenience buys. */}
+                        {/* Counts and SUMS navigate; averages and rates do not.
+                            Tickets, Open and Closed count a list; Hours and Billable sum the PSA's
+                            worked hours over that same list - so they open it, windowed the same
+                            way, and the list totals to the figure that was clicked. They do NOT open
+                            Technician hours: that page counts PORTAL time entries, and for most
+                            clients the hours were logged in the PSA - Magnolia had 31.9h there and
+                            0.0h of portal entries, so that link would have landed on "no time
+                            logged". People, Avg to close and SLA met are not sums of any list a
+                            page could show, and stay plain. */}
                         <td className="px-4 py-2.5 font-medium">
-                          <CountLink company={c.clientName} label={c.clientName} />
+                          <CountLink company={c.clientName} from={from} label={c.clientName} />
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">
-                          <CountLink company={c.clientName} label={c.totalTickets} />
+                          <CountLink company={c.clientName} from={from} label={c.totalTickets} />
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">
-                          <CountLink company={c.clientName} view="open" label={c.openTickets} />
+                          <CountLink company={c.clientName} from={from} view="open" label={c.openTickets} />
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">
-                          <CountLink company={c.clientName} view="resolved" label={c.closedTickets} />
+                          <CountLink company={c.clientName} from={from} view="resolved" label={c.closedTickets} />
                         </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{fmtHours(c.hoursWorked)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          <CountLink company={c.clientName} from={from} label={fmtHours(c.hoursWorked)} empty={c.hoursWorked === 0} />
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums text-green-700 dark:text-green-400">
-                          {fmtHours(c.billableHours)}
+                          <CountLink company={c.clientName} from={from} label={fmtHours(c.billableHours)} empty={c.billableHours === 0} />
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">{c.techniciansInvolved}</td>
                         {/* The sample travels with the average. A figure from 2 of 40 tickets is
@@ -229,13 +234,17 @@ function Stat({ icon: Icon, label, value }: { icon: typeof Clock; label: string;
  * Zero is rendered as plain text: a link promising a list and delivering an empty one is a small
  * betrayal, and it happens on most rows of a table like this.
  */
-function CountLink({ company, view, label }: {
-  company: string; view?: 'open' | 'resolved'; label: string | number;
+function CountLink({ company, view, from, label, empty }: {
+  company: string; view?: 'open' | 'resolved'; from?: string; label: string | number; empty?: boolean;
 }) {
   const q = new URLSearchParams({ company });
   if (view) q.set('view', view);
+  // The window travels with the link. This table is windowed on when tickets were RAISED; before
+  // this every link opened an UNwindowed list, so on any range but "Everything held" the count that
+  // was clicked and the count landed on quietly disagreed.
+  if (from) q.set('from', from);
 
-  if (label === 0) return <span className="text-[var(--faint)]">0</span>;
+  if (empty ?? label === 0) return <span className="text-[var(--faint)]">{label}</span>;
 
   return (
     <Link href={`/dashboard/tickets?${q}`} className="hover:text-brand hover:underline underline-offset-2">

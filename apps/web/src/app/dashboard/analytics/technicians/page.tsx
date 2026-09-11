@@ -1,8 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { Suspense, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Clock, CheckCircle2, Users, Gauge, Info } from 'lucide-react';
+import { Clock, CheckCircle2, Users, Gauge, Info, Building2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { TechnicianDay } from '@/lib/types';
 import { BarChart, LineChart } from '@/components/charts';
@@ -45,8 +47,26 @@ type PerTech = {
 };
 
 export default function TechnicianProductivityPage() {
+  return (
+    <Suspense fallback={<div className="h-64 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]" />}>
+      <TechnicianProductivity />
+    </Suspense>
+  );
+}
+
+function TechnicianProductivity() {
+  // A client can arrive in the URL, so a figure on the client-workload table can open the hours
+  // behind it. The range comes with it: landing on a different window would show a different
+  // number from the one that was clicked, which is the whole thing this is supposed to avoid.
+  const params = useSearchParams();
+  const companyId = params.get('companyId');
+  const companyName = params.get('company');
+  const urlFrom = params.get('from');
+  const urlTo = params.get('to');
+
   const [days, setDays] = useState<number>(30);
-  const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
+  const [custom, setCustom] = useState<{ from: string; to: string } | null>(
+    urlFrom && urlTo ? { from: urlFrom.slice(0, 10), to: urlTo.slice(0, 10) } : null);
 
   const range = useMemo(() => {
     if (custom) return { from: `${custom.from}T00:00:00Z`, to: `${custom.to}T23:59:59Z` };
@@ -56,8 +76,8 @@ export default function TechnicianProductivityPage() {
   }, [custom, days]);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['daily', range.from, range.to],
-    queryFn: () => api.dailyMetrics(range.from, range.to),
+    queryKey: ['daily', range.from, range.to, companyId],
+    queryFn: () => api.dailyMetrics(range.from, range.to, undefined, companyId ?? undefined),
   });
 
   const rows: TechnicianDay[] = useMemo(() => data ?? [], [data]);
@@ -156,6 +176,18 @@ export default function TechnicianProductivityPage() {
           )}
         </div>
       </div>
+
+      {companyId && (
+        <p className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 py-2.5 text-sm">
+          <Building2 size={15} className="shrink-0 text-[var(--muted)]" aria-hidden="true" />
+          <span>
+            Showing only work for <strong>{companyName || 'one client'}</strong>.
+          </span>
+          <Link href="/dashboard/analytics/technicians" className="ml-auto text-xs font-medium text-brand hover:underline">
+            Show every client
+          </Link>
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Tile icon={Clock} label="Hours logged" value={hrs(totals.hours)}
