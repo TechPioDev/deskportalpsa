@@ -1,5 +1,6 @@
 using Desk.Application.Analytics;
 using Desk.Domain.Enums;
+using Desk.Domain.Identity;
 using Desk.Domain.Tenancy;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Analytics;
@@ -139,6 +140,67 @@ public class ClientWorkloadTests
 
         report.Clients.Single().SlaCompliancePct.Should().BeNull();
         report.Clients.Single().SlaEligible.Should().Be(0);
+    }
+
+    private static TicketTimeEntry Entry(Guid ticket, decimal hours, Guid? appUser = null, string? psaTech = null,
+        string? psaName = null) => new()
+        {
+            MspOrganizationId = Org, TicketId = ticket, Hours = hours, Billable = true,
+            AppUserId = appUser, TechnicianExternalId = psaTech, TechnicianName = psaName, EntryDate = Jun1,
+        };
+
+    [Fact]
+    public async Task People_opens_the_people_it_counts_and_portal_technicians_are_among_them()
+    {
+        // A portal-only technician's ticket carries the integration account as its PSA assignee and
+        // their hours arrive under it too. Keyed on the provider's id, Basit and Komal were one person
+        // called "the API user"; the people doing the work were never counted.
+        await using var db = await SeedAsync();
+        var basit = new AppUser { MspOrganizationId = Org, Email = "basit@techpio.com", DisplayName = "Basit Lone" };
+        var komal = new AppUser { MspOrganizationId = Org, Email = "komal@techpio.com", DisplayName = "Komal Sharma" };
+        db.AppUsers.AddRange(basit, komal);
+        var portalTicket = T(Acme, "1", Jun1, tech: "api-user");
+        portalTicket.AssignedAppUserId = basit.Id;
+        var psaTicket = T(Acme, "2", Jun1, tech: "29682889");
+        psaTicket.AssignedTechnicianName = "Kamal Arora";
+        db.Tickets.AddRange(portalTicket, psaTicket);
+        await db.SaveChangesAsync();
+        db.TicketTimeEntries.AddRange(
+            Entry(portalTicket.Id, 2.5m, appUser: basit.Id, psaTech: "api-user"),
+            Entry(psaTicket.Id, 1.0m, appUser: komal.Id, psaTech: "api-user"));
+        await db.SaveChangesAsync();
+
+        var acme = (await new ClientWorkloadService(db).ForClientsAsync(new MetricsFilter())).Clients.Single();
+
+        acme.People.Select(p => p.Name).Should().Equal("Basit Lone", "Komal Sharma", "Kamal Arora");
+        acme.TechniciansInvolved.Should().Be(acme.People.Count, "the count opens this list");
+        acme.People.Should().NotContain(p => p.TechnicianExternalId == "api-user");
+
+        var b = acme.People.Single(p => p.AppUserId == basit.Id);
+        (b.AssignedTickets, b.HoursLogged).Should().Be((1, 2.5m));
+        acme.People.Single(p => p.TechnicianExternalId == "29682889").AssignedTickets.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task People_are_counted_over_the_same_range_as_the_tickets()
+    {
+        // The row says "1 ticket in the last 30 days". Whoever logged time on a ticket from March
+        // did not work on that one, and counting them made People a figure from a different period
+        // than the Tickets figure beside it.
+        await using var db = await SeedAsync();
+        var old = T(Acme, "old", Jun1);
+        var recent = T(Acme, "new", Jun1.AddDays(40), tech: "current-tech");
+        db.Tickets.AddRange(old, recent);
+        await db.SaveChangesAsync();
+        db.TicketTimeEntries.Add(Entry(old.Id, 3m, psaTech: "former-tech", psaName: "Former Tech"));
+        await db.SaveChangesAsync();
+
+        var acme = (await new ClientWorkloadService(db).ForClientsAsync(
+            new MetricsFilter { From = Jun1.AddDays(30) })).Clients.Single();
+
+        acme.TotalTickets.Should().Be(1);
+        acme.People.Select(p => p.TechnicianExternalId).Should().Equal("current-tech");
+        acme.TechniciansInvolved.Should().Be(1);
     }
 
     [Fact]

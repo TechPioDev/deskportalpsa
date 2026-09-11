@@ -134,7 +134,25 @@ public sealed record ClientWorkloadRow(
     double? AvgResolutionHours,
     int ResolutionSample,
     double? SlaCompliancePct,
-    int SlaEligible);
+    int SlaEligible,
+    // Who <paramref name="TechniciansInvolved"/> counts. Carried rather than re-queried so the
+    // figure and the list it opens are one computation and cannot drift apart.
+    IReadOnlyList<ClientWorkloadPerson> People);
+
+/// <summary>
+/// One person who worked a client's tickets in the range: holding them, logging time on them, or both.
+///
+/// Exactly one of <paramref name="AppUserId"/> and <paramref name="TechnicianExternalId"/> is set —
+/// the portal user where there is one, the provider's resource only for someone with no portal
+/// identity. <paramref name="HoursLogged"/> counts time entries the portal holds; it is not the PSA's
+/// per-ticket total, which is a sum over everyone and cannot be split between people.
+/// </summary>
+public sealed record ClientWorkloadPerson(
+    Guid? AppUserId,
+    string? TechnicianExternalId,
+    string Name,
+    int AssignedTickets,
+    decimal HoursLogged);
 
 /// <summary>
 /// Client workload, plus what the numbers do NOT cover. A dashboard that shows only figures invites

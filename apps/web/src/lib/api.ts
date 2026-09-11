@@ -420,6 +420,15 @@ export const api = {
         resolutionSample: z.number(),
         slaCompliancePct: z.number().nullable(),
         slaEligible: z.number(),
+        // The people behind techniciansInvolved. Defaulted so a response from the previous build
+        // mid-deploy still renders the table; the count then simply has nothing to open.
+        people: z.array(z.object({
+          appUserId: z.string().nullable(),
+          technicianExternalId: z.string().nullable(),
+          name: z.string(),
+          assignedTickets: z.number(),
+          hoursLogged: z.number(),
+        })).default([]),
       })),
       ticketsWithoutRaiseDate: z.number(),
       ticketsWithoutClosure: z.number(),

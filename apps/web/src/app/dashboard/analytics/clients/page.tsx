@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Building2, Clock, Users, AlertCircle } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -29,6 +29,9 @@ const fmtDuration = (hours: number) =>
 
 export default function ClientAnalyticsPage() {
   const [range, setRange] = useState<typeof RANGES[number]['key']>('90');
+  // One client's people open at a time: a second panel pushing the first off screen is worse
+  // than closing it.
+  const [peopleFor, setPeopleFor] = useState<string | null>(null);
   const days = RANGES.find((r) => r.key === range)!.days;
   const from = days ? new Date(Date.now() - days * 86_400_000).toISOString() : undefined;
 
@@ -145,7 +148,8 @@ export default function ClientAnalyticsPage() {
                   </thead>
                   <tbody>
                     {clients.map((c) => (
-                      <tr key={c.clientCompanyId} className="border-t border-[var(--border)]">
+                      <Fragment key={c.clientCompanyId}>
+                      <tr className="border-t border-[var(--border)]">
                         {/* Counts and SUMS navigate; averages and rates do not.
                             Tickets, Open and Closed count a list; Hours and Billable sum the PSA's
                             worked hours over that same list - so they open it, windowed the same
@@ -153,8 +157,9 @@ export default function ClientAnalyticsPage() {
                             Technician hours: that page counts PORTAL time entries, and for most
                             clients the hours were logged in the PSA - Magnolia had 31.9h there and
                             0.0h of portal entries, so that link would have landed on "no time
-                            logged". People, Avg to close and SLA met are not sums of any list a
-                            page could show, and stay plain. */}
+                            logged". People opens the people it counts, in place - there is no
+                            page that lists exactly them. Avg to close and SLA met are rates, not
+                            counts of anything, and stay plain. */}
                         <td className="px-4 py-2.5 font-medium">
                           <CountLink company={c.clientName} from={from} label={c.clientName} />
                         </td>
@@ -173,7 +178,18 @@ export default function ClientAnalyticsPage() {
                         <td className="px-4 py-2.5 text-right tabular-nums text-green-700 dark:text-green-400">
                           <CountLink company={c.clientName} from={from} label={fmtHours(c.billableHours)} empty={c.billableHours === 0} />
                         </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{c.techniciansInvolved}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          {(c.people ?? []).length === 0 ? (
+                            <span className="text-[var(--faint)]">{c.techniciansInvolved}</span>
+                          ) : (
+                            <button type="button" aria-expanded={peopleFor === c.clientCompanyId}
+                              aria-controls={`people-${c.clientCompanyId}`}
+                              onClick={() => setPeopleFor(peopleFor === c.clientCompanyId ? null : c.clientCompanyId)}
+                              className="tabular-nums hover:text-brand hover:underline underline-offset-2">
+                              {c.techniciansInvolved}
+                            </button>
+                          )}
+                        </td>
                         {/* The sample travels with the average. A figure from 2 of 40 tickets is
                             not the same claim as one from 40, and hiding that difference is how a
                             dashboard becomes untrustworthy. */}
@@ -202,6 +218,14 @@ export default function ClientAnalyticsPage() {
                           )}
                         </td>
                       </tr>
+                      {peopleFor === c.clientCompanyId && (
+                        <tr id={`people-${c.clientCompanyId}`} className="bg-[var(--bg)]">
+                          <td colSpan={9} className="px-4 py-3">
+                            <PeoplePanel people={c.people ?? []} />
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -210,6 +234,46 @@ export default function ClientAnalyticsPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * The people a client's People figure counts, one line each. This list is the destination: the
+ * count is computed as its length, so the number clicked and the names shown are the same set.
+ *
+ * Logged hours are the time entries the portal holds, NOT a share of the client's Hours figure. That
+ * figure is the PSA's per-ticket total - a sum over everyone that cannot be split between people -
+ * so a line reading "0h" here means "no entry recorded here", which the caption says outright.
+ */
+function PeoplePanel({ people }: {
+  people: { appUserId: string | null; technicianExternalId: string | null; name: string;
+    assignedTickets: number; hoursLogged: number }[];
+}) {
+  return (
+    <div className="space-y-2">
+      <ul className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+        {people.map((p) => (
+          <li key={p.appUserId ?? `x:${p.technicianExternalId}`} className="flex items-baseline justify-between gap-3">
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="truncate font-medium" title={p.name}>{p.name}</span>
+              <span className="shrink-0 rounded bg-[var(--surface)] px-1.5 text-[10px] uppercase tracking-wide text-[var(--faint)]">
+                {p.appUserId ? 'Portal' : 'PSA'}
+              </span>
+            </span>
+            <span className="shrink-0 text-xs tabular-nums text-[var(--muted)]">
+              {p.assignedTickets > 0 ? `${p.assignedTickets} assigned` : 'not assigned'}
+              {' · '}
+              {p.hoursLogged > 0 ? `${fmtHours(p.hoursLogged)} logged` : 'no time logged here'}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-[var(--faint)]">
+        Everyone who holds one of this client&rsquo;s tickets in the range or logged time on one.
+        Logged hours are entries recorded in the portal; the Hours column is the PSA&rsquo;s total per
+        ticket and is not split between people.
+      </p>
     </div>
   );
 }
