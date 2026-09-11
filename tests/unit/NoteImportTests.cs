@@ -394,6 +394,66 @@ public class NoteImportTests
     }
 
     [Fact]
+    public async Task A_quiet_ticket_the_import_window_no_longer_returns_is_healed_by_a_note_refresh()
+    {
+        // Production, 11 Sep: a full resync filled in nothing. Both connections import only tickets
+        // active in the last 7 days, and a full run still applies that window, so the tickets behind
+        // the 53 integration notes - quiet since early September - were never read again.
+        var clock = new TestClock();
+        await using var db = await SeedAsync(Guid.NewGuid().ToString());
+        var connector = new StubConnector();
+        connector.Tickets.Add(Incoming("7814"));
+        connector.Notes["7814"] =
+            [new UnifiedTicketNote("1", "Sudanshu Aggarwal", "Old note.", IsPublic: false, clock.GetUtcNow(), AuthorExternalId: "29682885")];
+        await Runner(db, connector, clock).RunAsync(Conn, full: true);
+
+        // As it stood before the id was kept - and the ticket has since gone quiet.
+        var note = await db.TicketNotes.SingleAsync();
+        note.AuthorExternalId = null;
+        await db.SaveChangesAsync();
+        connector.Tickets.Clear();
+
+        await Runner(db, connector, clock).RunAsync(Conn, full: true);
+        (await db.TicketNotes.AsNoTracking().SingleAsync()).AuthorExternalId
+            .Should().BeNull("a sync only reads what its window returns - the reason the refresh exists");
+
+        var read = await Runner(db, connector, clock).RefreshNotesAsync(Conn, ["7814"]);
+
+        read.Should().Be(1);
+        (await db.TicketNotes.AsNoTracking().SingleAsync()).AuthorExternalId.Should().Be("29682885");
+    }
+
+    [Fact]
+    public async Task The_backfill_picks_only_tickets_with_staff_notes_that_should_have_an_author_id()
+    {
+        var clock = new TestClock();
+        await using var db = await SeedAsync(Guid.NewGuid().ToString());
+        var connector = new StubConnector();
+        foreach (var id in new[] { "A", "B", "C", "D", "E" }) connector.Tickets.Add(Incoming(id));
+        await Runner(db, connector, clock).RunAsync(Conn, full: true);
+        var byExt = await db.Tickets.ToDictionaryAsync(t => t.ExternalTicketId!, t => t.Id);
+
+        TicketNote N(string ticket, string author, bool imported = true, bool client = false, string? authorId = null) => new()
+        {
+            MspOrganizationId = Org, TicketId = byExt[ticket], ExternalNoteId = Guid.NewGuid().ToString("N"),
+            AuthorName = author, ImportedFromProvider = imported, AuthoredByClient = client,
+            AuthorExternalId = authorId, Body = "b", IsPublic = true, NoteCreatedAt = clock.GetUtcNow(),
+        };
+        db.TicketNotes.AddRange(
+            N("A", "Sudanshu Aggarwal"),                          // staff, imported, no id: needs it
+            N("B", "Ravi Customer", client: true),                // a contact: no resource to find
+            N("C", "AutotaskPsa automation"),                     // system note: no author at all
+            N("D", "Kamal Arora", authorId: "29682889"),          // already has one
+            N("E", "Demo Admin", imported: false));               // a portal reply: our own record
+        await db.SaveChangesAsync();
+
+        var pending = await NoteAuthorBackfill.PendingAsync(db);
+
+        pending.Should().ContainSingle().Which.Value.Should().Equal("A");
+        (await NoteAuthorBackfill.CountAsync(db)).Should().Be(1);
+    }
+
+    [Fact]
     public async Task The_integrations_notes_say_so_and_a_real_person_of_the_same_name_keeps_theirs()
     {
         var clock = new TestClock();
