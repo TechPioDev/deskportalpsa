@@ -17,6 +17,9 @@ export const TicketListItemSchema = z.object({
   raisedAt: z.string().nullable().default(null),
   timeWorkedHours: z.number().default(0),
   billableHours: z.number().default(0),
+  // Who holds the ticket and who logged time on it, keyed by the server's PersonKey. Staff lists
+  // only; null on a client's list, which is what tells the page not to offer a technician filter.
+  people: z.array(z.object({ key: z.string(), name: z.string(), holds: z.boolean() })).nullable().default(null),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 

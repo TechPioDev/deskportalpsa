@@ -1,4 +1,5 @@
 using Desk.Application.Analytics;
+using Desk.Application.Tickets;
 using Desk.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -108,7 +109,7 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
                 var people = new Dictionary<string, Tally>(StringComparer.OrdinalIgnoreCase);
                 Tally For(Guid? appUserId, string? externalId)
                 {
-                    var key = appUserId is { } u ? "u:" + u : "x:" + externalId;
+                    var key = PersonKey.For(appUserId, externalId);
                     if (!people.TryGetValue(key, out var tally))
                         people[key] = tally = new Tally(appUserId, appUserId is null ? externalId : null);
                     return tally;

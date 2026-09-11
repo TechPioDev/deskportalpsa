@@ -34,7 +34,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
                 db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                 db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
-                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours))
+                // People stays null on the client list: no technician identity reaches a client.
+                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null))
             .ToListAsync(ct);
 
     /// <summary>
@@ -46,16 +47,74 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     public async Task<IReadOnlyList<TicketListItem>> ListAllAsync(CancellationToken ct = default)
     {
         var visible = await StaffVisibleAsync(ct);
-        return await visible
+        var rows = await visible
             .AsNoTracking()
             .OrderByDescending(t => t.CreatedAt)
-            .Select(t => new TicketListItem(
-                t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
-                t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
-                db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
-                db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
-                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours))
+            .Select(t => new
+            {
+                Item = new TicketListItem(
+                    t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
+                    t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
+                    db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
+                    db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
+                    t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null),
+                t.AssignedAppUserId,
+                t.AssignedTechnicianExternalId,
+                t.AssignedTechnicianName,
+            })
             .ToListAsync(ct);
+
+        // Who worked each ticket: its holder, and everyone who logged time on it - the same rule, and
+        // the same PersonKey, that Client workload's People figure counts by. That is what lets a name
+        // in that list open this one and land on exactly the tickets it was counted from.
+        var logged = await db.TicketTimeEntries.AsNoTracking()
+            .Where(e => e.AppUserId != null || (e.TechnicianExternalId != null && e.TechnicianExternalId != ""))
+            .Join(visible, e => e.TicketId, t => t.Id,
+                (e, t) => new { e.TicketId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName })
+            .Distinct()
+            .ToListAsync(ct);
+        var loggedByTicket = logged.ToLookup(e => e.TicketId);
+
+        var userIds = rows.Where(r => r.AssignedAppUserId is not null).Select(r => r.AssignedAppUserId!.Value)
+            .Concat(logged.Where(e => e.AppUserId is not null).Select(e => e.AppUserId!.Value))
+            .Distinct().ToList();
+        var userNames = userIds.Count == 0
+            ? []
+            : await db.AppUsers.AsNoTracking().Where(u => userIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+        // Provider display names as the sync cached them; the id stands in only where neither did.
+        var psaNames = rows
+            .Where(r => !string.IsNullOrEmpty(r.AssignedTechnicianExternalId) && r.AssignedTechnicianName is not null)
+            .Select(r => (Id: r.AssignedTechnicianExternalId!, Name: r.AssignedTechnicianName!))
+            .Concat(logged
+                .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && e.TechnicianName is not null)
+                .Select(e => (Id: e.TechnicianExternalId!, Name: e.TechnicianName!)))
+            .GroupBy(p => p.Id.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
+
+        string NameOf(Guid? appUserId, string? externalId) => appUserId is { } u
+            ? userNames.GetValueOrDefault(u, "Unknown user")
+            : psaNames.GetValueOrDefault(externalId!.Trim(), externalId!);
+
+        return rows.Select(r =>
+        {
+            var people = new List<TicketPersonRef>();
+            // Portal holder first, the provider's only where there is none: on a portal-assigned
+            // ticket the provider's assignee is the integration account, not a person.
+            if (r.AssignedAppUserId is not null || !string.IsNullOrEmpty(r.AssignedTechnicianExternalId))
+            {
+                var ext = r.AssignedAppUserId is null ? r.AssignedTechnicianExternalId : null;
+                people.Add(new TicketPersonRef(PersonKey.For(r.AssignedAppUserId, ext), NameOf(r.AssignedAppUserId, ext), Holds: true));
+            }
+            foreach (var e in loggedByTicket[r.Item.Id])
+            {
+                var ext = e.AppUserId is null ? e.TechnicianExternalId : null;
+                var key = PersonKey.For(e.AppUserId, ext);
+                if (people.All(p => p.Key != key)) people.Add(new TicketPersonRef(key, NameOf(e.AppUserId, ext), Holds: false));
+            }
+            return r.Item with { People = people };
+        }).ToList();
     }
 
     /// <summary>Staff callers always resolve against TicketsViewAll — it is the only permission that

@@ -25,7 +25,11 @@ public sealed record TicketListItem(
     // Worked and billable hours as the PSA totals them per ticket: the same figures the client
     // workload sums, so a list of one client's tickets can show the total that brought someone to it.
     decimal TimeWorkedHours = 0,
-    decimal BillableHours = 0);
+    decimal BillableHours = 0,
+    // Who holds the ticket and who logged time on it, keyed by PersonKey. STAFF list only: the
+    // client list leaves this null, so no technician identity reaches a client, and the UI reads
+    // null as "this list has no people to filter by" rather than "nobody worked these".
+    IReadOnlyList<TicketPersonRef>? People = null);
 
 public sealed record TicketNoteDto(
     Guid Id,
