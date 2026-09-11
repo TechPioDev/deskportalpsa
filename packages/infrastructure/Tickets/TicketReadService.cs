@@ -247,7 +247,11 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     || ticket.Notes.Any(n => n.Id == a.TicketNoteId && n.IsPublic))
                 .OrderBy(a => a.UploadedAt)
                 .Select(a => new AttachmentDto(a.Id, a.OriginalFileName, a.ContentType, a.SizeBytes, a.ScanStatus, a.UploadedAt)
-                    { AuthorName = a.AuthorName, FromProvider = a.ImportedFromProvider, TicketNoteId = a.TicketNoteId })
+                    {
+                        // The same byline a note gets: a file the integration attached says so.
+                        AuthorName = account.AttachmentAuthor(ticket.PsaConnectionId, a.AuthorExternalId, a.AuthorName),
+                        FromProvider = a.ImportedFromProvider, TicketNoteId = a.TicketNoteId,
+                    })
                 .ToList(),
             CustomerName: customerName,
             UpdatedAt: ticket.UpdatedAt,

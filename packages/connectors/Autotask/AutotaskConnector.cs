@@ -413,6 +413,10 @@ public sealed class AutotaskConnector(
         {
             CreatedAt = a.AttachDate,
             AuthorName = a.AttachedByResourceId is { } rid && resourceNames.TryGetValue(rid, out var n) ? n : "",
+            // The resource behind the file, as for a note. A contact's file has no resource author.
+            AuthorExternalId = a.AttachedByContactId is > 0 || a.AttachedByResourceId is not > 0
+                ? null
+                : a.AttachedByResourceId.ToString(),
             ExternalNoteId = a.TicketNoteId is > 0 ? a.TicketNoteId!.Value.ToString() : null,
         };
 

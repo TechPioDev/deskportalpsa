@@ -296,6 +296,25 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
             .Which.AuthorExternalId.Should().Be("20");
     }
 
+    [Fact]
+    public async Task An_attachments_author_carries_the_resource_id_too()
+    {
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        var ticket = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "t", IdempotencyKey = "k", ExternalCompanyId = SeededOrganizationId,
+        });
+        byte[] content = [1, 2, 3];
+        await c.AddAttachmentAsync(ticket.ExternalId!, new SecureAttachment("a.bin", "application/octet-stream", 3, "k", content));
+
+        var swept = await c.GetRecentAttachmentsAsync(null);
+
+        // The fake stamps attachedByResourceID 20 on every file it stores, as Autotask does.
+        swept.Should().ContainSingle(r => r.TicketExternalId == ticket.ExternalId)
+            .Which.Attachment.AuthorExternalId.Should().Be("20");
+    }
+
     protected override string WebhookSecret => Secret;
 
     /// <summary>

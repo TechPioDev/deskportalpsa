@@ -34,6 +34,14 @@ public class TicketAttachment : TenantEntity
     /// <summary>Who attached it. Null for portal uploads, the provider-side name for imports.</summary>
     public string? AuthorName { get; set; }
 
+    /// <summary>
+    /// The provider's id for whoever attached it, where the provider reports one in the form its
+    /// other person references use (an Autotask resource). Null for portal uploads, contacts' files,
+    /// system files, and ConnectWise documents (owner given only as a login). See
+    /// <see cref="TicketNote.AuthorExternalId"/> for why the name alone is not enough.
+    /// </summary>
+    public string? AuthorExternalId { get; set; }
+
     /// <summary>True when this row came from the provider rather than a portal upload.</summary>
     public bool ImportedFromProvider { get; set; }
 

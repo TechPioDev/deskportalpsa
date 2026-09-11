@@ -390,6 +390,10 @@ public sealed class ConnectWiseConnector(
         {
             CreatedAt = d.CreatedOnDate,
             AuthorName = d.Owner,
+            // No AuthorExternalId: a document names its owner by LOGIN identifier ("jsmith"), where a
+            // ticket's owner, a note's member and a time entry's member all carry the numeric member
+            // id. Storing the login in the same field would put two id forms side by side, and every
+            // comparison against a member id would quietly miss.
         };
 
     private static string GuessContentType(string? fileName) =>

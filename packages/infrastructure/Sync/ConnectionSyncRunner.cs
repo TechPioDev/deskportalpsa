@@ -172,6 +172,21 @@ public sealed class ConnectionSyncRunner(
         return read;
     }
 
+    public async Task<(int Added, int Removed)> RefreshAttachmentsAsync(Guid psaConnectionId, CancellationToken ct = default)
+    {
+        var connection = await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == psaConnectionId, ct)
+            ?? throw new NotFoundException("PSA connection");
+        if (!connection.TwoWaySync || !connection.SyncAttachments) return (0, 0);
+
+        var connector = await resolver.ResolveAsync(psaConnectionId, ct);
+        var capabilities = await connector.GetCapabilitiesAsync(ct);
+        // Only a provider with a tenant-wide sweep: one undated read covers every file it holds, with
+        // no import window in the way. The per-ticket providers report no author id to fill.
+        if (!capabilities.SupportsAttachmentDownload || !capabilities.SupportsAttachmentSweep) return (0, 0);
+
+        return await ImportAttachmentsAsync(connection, connector, since: null, ct);
+    }
+
     /// <summary>
     /// Mirrors the provider's notes into the portal thread — internal ones included, carrying
     /// IsPublic=false. Deduplication is by the provider's own note id, which doubles as echo
@@ -544,10 +559,26 @@ public sealed class ConnectionSyncRunner(
             .Where(n => ticketIds.Contains(n.TicketId) && n.ExternalNoteId != null)
             .ToDictionaryAsync(n => n.ExternalNoteId!, n => n.Id, ct);
 
-        var known = new HashSet<string>(await db.TicketAttachments
+        var existing = await db.TicketAttachments
             .Where(a => ticketIds.Contains(a.TicketId) && a.ExternalAttachmentId != null)
-            .Select(a => a.ExternalAttachmentId!)
-            .ToListAsync(ct));
+            .ToListAsync(ct);
+        var known = existing.Select(a => a.ExternalAttachmentId!).ToHashSet();
+
+        // Heal who attached files already held, as notes do: a row imported before the author id was
+        // kept gets it the next time the provider reports the file. Provider-imported rows only - a
+        // portal upload is the portal's own record, whatever the provider stamped on its copy.
+        var importedById = existing
+            .Where(a => a.ImportedFromProvider)
+            .GroupBy(a => a.ExternalAttachmentId!)
+            .ToDictionary(g => g.Key, g => g.First());
+        var healed = 0;
+        foreach (var file in incoming.Select(r => r.Attachment))
+        {
+            if (string.IsNullOrEmpty(file.ExternalId) || !importedById.TryGetValue(file.ExternalId, out var row)) continue;
+            if (row.AuthorExternalId == file.AuthorExternalId) continue;
+            row.AuthorExternalId = file.AuthorExternalId;
+            healed++;
+        }
 
         var added = 0;
         foreach (var (externalTicketId, file) in incoming.Select(r => (r.TicketExternalId, r.Attachment)))
@@ -577,6 +608,7 @@ public sealed class ConnectionSyncRunner(
                 StorageObjectKey = string.Empty,
                 UploadedAt = file.CreatedAt ?? clock.GetUtcNow(),
                 AuthorName = string.IsNullOrWhiteSpace(file.AuthorName) ? $"{connection.Provider} automation" : file.AuthorName,
+                AuthorExternalId = file.AuthorExternalId,
                 ImportedFromProvider = true,
             };
 
@@ -608,7 +640,7 @@ public sealed class ConnectionSyncRunner(
             .ToHashSet();
         var removed = await ReconcileDeletionsAsync(reconcilable, stillPresent!, ct);
 
-        if (added > 0 || removed > 0) await db.SaveChangesAsync(ct);
+        if (added > 0 || removed > 0 || healed > 0) await db.SaveChangesAsync(ct);
         return (added, removed);
     }
 
