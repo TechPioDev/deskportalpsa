@@ -220,7 +220,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 .Select(n =>
                 {
                     var te = entriesByNote.GetValueOrDefault(n.Id);
-                    return new TicketNoteDto(n.Id, n.AuthorName, n.AuthoredByClient, n.Body, n.NoteCreatedAt, n.IsPublic,
+                    // The integration's own notes say so, instead of naming the account after a person.
+                    return new TicketNoteDto(n.Id, account.NoteAuthor(ticket.PsaConnectionId, n.AuthorExternalId, n.AuthorName),
+                        n.AuthoredByClient, n.Body, n.NoteCreatedAt, n.IsPublic,
                         n.ExternalNoteId != null && n.ExternalNoteId.StartsWith("te-")
                             ? n.ExternalNoteId[3..]
                             : te?.ExternalEntryId ?? te?.Id.ToString(),
@@ -289,12 +291,16 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         var replyRows = await db.TicketNotes.AsNoTracking()
             .Where(n => n.IsPublic)
             .Join(Visible(access), n => n.TicketId, t => t.Id,
-                (n, t) => new { t.Id, t.Title, n.AuthoredByClient, n.AuthorName, n.NoteCreatedAt })
+                (n, t) => new { t.Id, t.Title, t.PsaConnectionId, n.AuthoredByClient, n.AuthorName, n.AuthorExternalId, n.NoteCreatedAt })
             .OrderByDescending(x => x.NoteCreatedAt).Take(take)
             .ToListAsync(ct);
+        // The same byline the ticket's thread shows: a client reading "staff reply from Sudanshu
+        // Aggarwal" in their history would be told a person answered when the integration did.
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
         var replies = replyRows
             .Select(x => new ActivityEventDto(
-                x.Id, x.Title, x.AuthoredByClient ? "client-reply" : "staff-reply", x.AuthorName, x.NoteCreatedAt))
+                x.Id, x.Title, x.AuthoredByClient ? "client-reply" : "staff-reply",
+                account.NoteAuthor(x.PsaConnectionId, x.AuthorExternalId, x.AuthorName), x.NoteCreatedAt))
             .ToList();
 
         return created.Concat(resolved).Concat(replies)

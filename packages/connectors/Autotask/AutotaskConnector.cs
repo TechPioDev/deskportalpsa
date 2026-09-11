@@ -340,7 +340,12 @@ public sealed class AutotaskConnector(
             AuthorOf(n, names, contactNames),
             n.Description ?? "", IsPublic: n.Publish == config.PublicPublishValue, n.CreateDateTime ?? clock.GetUtcNow(),
             // createdByContactID set = the CUSTOMER's contact wrote it — client side of the thread.
-            FromClient: n.CreatedByContactId is > 0)).ToList();
+            FromClient: n.CreatedByContactId is > 0,
+            // The resource behind the note, kept as an id. A contact's note has no resource author
+            // (the contact wins in AuthorOf too), so it carries none.
+            AuthorExternalId: n.CreatedByContactId is > 0 || n.CreatorResourceId is not > 0
+                ? null
+                : n.CreatorResourceId.ToString())).ToList();
     }
 
     private static string AuthorOf(AtTicketNote note, IReadOnlyDictionary<long, string> resources, IReadOnlyDictionary<long, string> contacts)

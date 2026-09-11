@@ -237,6 +237,7 @@ public sealed class TicketNoteConfig : IEntityTypeConfiguration<TicketNote>
         b.ToTable("ticket_notes");
         b.HasKey(x => x.Id);
         b.Property(x => x.AuthorName).HasMaxLength(200).IsRequired();
+        b.Property(x => x.AuthorExternalId).HasMaxLength(64);
         b.Property(x => x.Body).IsRequired();
         b.HasIndex(x => x.TicketId);
     }

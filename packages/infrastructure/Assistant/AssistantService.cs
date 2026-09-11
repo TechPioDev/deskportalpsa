@@ -4,6 +4,7 @@ using Desk.Application.Assistant;
 using Desk.Application.Common;
 using Desk.Domain.Assistant;
 using Desk.Infrastructure.Persistence;
+using Desk.Infrastructure.Tickets;
 using Microsoft.EntityFrameworkCore;
 
 namespace Desk.Infrastructure.Assistant;
@@ -55,7 +56,8 @@ public sealed class AssistantService(
         var key = (await secrets.ReadAsync(s.CredentialSecretRef, ct)).GetValueOrDefault(KeyName)
             ?? throw new ValidationFailedException("The saved API key could not be read. Re-enter it in Assistant settings.");
 
-        var context = BuildContext(ticket, s.IncludeInternalNotes);
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        var context = BuildContext(ticket, s.IncludeInternalNotes, account);
         if (action == AssistantAction.SimilarTickets)
             context += await SimilarTicketsAsync(ticket, ct);
 
@@ -79,7 +81,7 @@ public sealed class AssistantService(
     /// and their exclusion is stated rather than silent — a summary that quietly omits half the
     /// thread is worse than one that says what it read.
     /// </summary>
-    private static string BuildContext(Desk.Domain.Tickets.Ticket t, bool includeInternal)
+    private static string BuildContext(Desk.Domain.Tickets.Ticket t, bool includeInternal, IntegrationIdentity account)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Title: {t.Title}");
@@ -99,7 +101,8 @@ public sealed class AssistantService(
         {
             var who = n.AuthoredByClient ? "CUSTOMER" : "TECHNICIAN";
             var vis = n.IsPublic ? "" : " [internal]";
-            sb.AppendLine($"- {who} {n.AuthorName}{vis}: {Trim(n.Body, 1500)}");
+            // The thread's own byline, so the model is not told a person wrote what the integration did.
+            sb.AppendLine($"- {who} {account.NoteAuthor(t.PsaConnectionId, n.AuthorExternalId, n.AuthorName)}{vis}: {Trim(n.Body, 1500)}");
         }
         if (!includeInternal && t.Notes.Any(n => !n.IsPublic))
             sb.AppendLine("(internal notes exist on this ticket but were deliberately not shared with you)");

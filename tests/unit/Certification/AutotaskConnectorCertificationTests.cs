@@ -272,6 +272,30 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
             "nothing to shorten, so nothing should be altered");
     }
 
+    /// <summary>
+    /// A note comes back with its author's resource id, not only the name. The name is just what the
+    /// resource is called - and the integration account is called after a real person - so the portal
+    /// can only tell the integration's notes from that person's by the id.
+    /// </summary>
+    [Fact]
+    public async Task A_notes_author_carries_the_resource_id_not_only_its_name()
+    {
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        var ticket = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "t", IdempotencyKey = "k", ExternalCompanyId = SeededOrganizationId,
+        });
+        await c.AddPublicNoteAsync(ticket.ExternalId!,
+            new UnifiedTicketNoteCreateRequest("Rebooted the switch.", IsPublic: true, "k2"));
+
+        var notes = await c.GetNotesAsync(ticket.ExternalId!);
+
+        // The fake stamps creatorResourceID 20 on every note it creates, as Autotask does.
+        notes.Should().ContainSingle(n => n.Body == "Rebooted the switch.")
+            .Which.AuthorExternalId.Should().Be("20");
+    }
+
     protected override string WebhookSecret => Secret;
 
     /// <summary>
