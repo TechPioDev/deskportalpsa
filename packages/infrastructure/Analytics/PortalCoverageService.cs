@@ -1,6 +1,7 @@
 using Desk.Application.Analytics;
 using Desk.Domain.Analytics;
 using Desk.Infrastructure.Persistence;
+using Desk.Infrastructure.Tickets;
 using Microsoft.EntityFrameworkCore;
 
 namespace Desk.Infrastructure.Analytics;
@@ -38,7 +39,7 @@ public sealed class PortalCoverageService(DeskDbContext db) : IPortalCoverageSer
             entriesQuery = entriesQuery.Where(e => e.TechnicianExternalId == tech);
 
         var entries = await entriesQuery
-            .Select(e => new { e.TicketId, e.EntryDate, e.Hours, e.TechnicianExternalId })
+            .Select(e => new { e.TicketId, e.EntryDate, e.Hours, e.TechnicianExternalId, Conn = e.Ticket!.PsaConnectionId })
             .ToListAsync(ct);
 
         // Portal-side activity in the same window, reduced to the pair the corroboration turns on.
@@ -77,8 +78,12 @@ public sealed class PortalCoverageService(DeskDbContext db) : IPortalCoverageSer
             .GroupBy(n => n.ExternalTechnicianId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().ExternalTechnicianName, StringComparer.OrdinalIgnoreCase);
 
+        // No row for the account the portal writes as: it is the whole portal team's time under one
+        // login, not a technician whose coverage means anything. Its entries still count in the
+        // desk-wide totals below, which are about the work, not about who did it.
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
         var rows = entries
-            .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId))
+            .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && !account.IsAccount(e.Conn, e.TechnicianExternalId))
             .GroupBy(e => e.TechnicianExternalId!, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {

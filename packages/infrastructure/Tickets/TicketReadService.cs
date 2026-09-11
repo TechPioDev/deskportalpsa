@@ -61,6 +61,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 t.AssignedAppUserId,
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,
+                t.PsaConnectionId,
             })
             .ToListAsync(ct);
 
@@ -70,10 +71,11 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         var logged = await db.TicketTimeEntries.AsNoTracking()
             .Where(e => e.AppUserId != null || (e.TechnicianExternalId != null && e.TechnicianExternalId != ""))
             .Join(visible, e => e.TicketId, t => t.Id,
-                (e, t) => new { e.TicketId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName })
+                (e, t) => new { e.TicketId, t.PsaConnectionId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName })
             .Distinct()
             .ToListAsync(ct);
         var loggedByTicket = logged.ToLookup(e => e.TicketId);
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
 
         var userIds = rows.Where(r => r.AssignedAppUserId is not null).Select(r => r.AssignedAppUserId!.Value)
             .Concat(logged.Where(e => e.AppUserId is not null).Select(e => e.AppUserId!.Value))
@@ -85,10 +87,12 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
 
         // Provider display names as the sync cached them; the id stands in only where neither did.
         var psaNames = rows
-            .Where(r => !string.IsNullOrEmpty(r.AssignedTechnicianExternalId) && r.AssignedTechnicianName is not null)
+            .Where(r => !string.IsNullOrEmpty(r.AssignedTechnicianExternalId) && r.AssignedTechnicianName is not null
+                && !account.IsAccount(r.PsaConnectionId, r.AssignedTechnicianExternalId))
             .Select(r => (Id: r.AssignedTechnicianExternalId!, Name: r.AssignedTechnicianName!))
             .Concat(logged
-                .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && e.TechnicianName is not null)
+                .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && e.TechnicianName is not null
+                    && !account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId))
                 .Select(e => (Id: e.TechnicianExternalId!, Name: e.TechnicianName!)))
             .GroupBy(p => p.Id.Trim(), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
@@ -102,13 +106,17 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             var people = new List<TicketPersonRef>();
             // Portal holder first, the provider's only where there is none: on a portal-assigned
             // ticket the provider's assignee is the integration account, not a person.
-            if (r.AssignedAppUserId is not null || !string.IsNullOrEmpty(r.AssignedTechnicianExternalId))
+            // ...and the account the portal writes as holds nothing: on the PSA side those are unassigned.
+            if (r.AssignedAppUserId is not null
+                || (!string.IsNullOrEmpty(r.AssignedTechnicianExternalId)
+                    && !account.IsAccount(r.PsaConnectionId, r.AssignedTechnicianExternalId)))
             {
                 var ext = r.AssignedAppUserId is null ? r.AssignedTechnicianExternalId : null;
                 people.Add(new TicketPersonRef(PersonKey.For(r.AssignedAppUserId, ext), NameOf(r.AssignedAppUserId, ext), Holds: true));
             }
             foreach (var e in loggedByTicket[r.Item.Id])
             {
+                if (e.AppUserId is null && account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId)) continue;
                 var ext = e.AppUserId is null ? e.TechnicianExternalId : null;
                 var key = PersonKey.For(e.AppUserId, ext);
                 if (people.All(p => p.Key != key)) people.Add(new TicketPersonRef(key, NameOf(e.AppUserId, ext), Holds: false));

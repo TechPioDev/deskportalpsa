@@ -100,6 +100,35 @@ public class TicketListPeopleTests
     }
 
     [Fact]
+    public async Task The_account_the_portal_writes_as_holds_nothing_but_only_on_its_own_connection()
+    {
+        await using var db = await SeedAsync();
+        db.PsaConnections.Single(c => c.Id == Conn).DefaultTimeEntryResourceId = "api-user";
+        var cw = Guid.NewGuid();
+        db.PsaConnections.Add(new PsaConnection
+        {
+            Id = cw, MspOrganizationId = Org, Name = "CW", Provider = ProviderType.ConnectWisePsa,
+            ApiEndpoint = "https://y", CredentialSecretRef = "mem://y",
+        });
+        var accountHeld = T("account-held", tech: "api-user", techName: "Sudanshu Aggarwal");
+        // The same id on a PSA that does NOT write as it is somebody's real resource.
+        var elsewhere = T("elsewhere", tech: "api-user", techName: "Real Person");
+        elsewhere.PsaConnectionId = cw;
+        db.Tickets.AddRange(accountHeld, elsewhere);
+        await db.SaveChangesAsync();
+        db.TicketTimeEntries.Add(Entry(accountHeld.Id, 1m, psaTech: "api-user"));
+        await db.SaveChangesAsync();
+
+        var list = await Reads(db).ListAllAsync();
+
+        list.Single(t => t.Title == "account-held").People.Should().BeEmpty("the PSA side of it is unassigned");
+        list.Single(t => t.Title == "elsewhere").People!
+            .Should().ContainSingle().Which.Should().Be(new TicketPersonRef(PersonKey.For(null, "api-user"), "Real Person", true));
+        list.SelectMany(t => t.People!).Should().NotContain(p => p.Name == "Sudanshu Aggarwal",
+            "the account's name is not a name source either");
+    }
+
+    [Fact]
     public async Task Every_name_in_People_opens_exactly_the_tickets_it_was_counted_from()
     {
         await using var db = await SeedAsync();

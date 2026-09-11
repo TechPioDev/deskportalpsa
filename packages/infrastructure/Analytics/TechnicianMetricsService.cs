@@ -1,6 +1,7 @@
 using Desk.Application.Analytics;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
+using Desk.Infrastructure.Tickets;
 using Microsoft.EntityFrameworkCore;
 
 namespace Desk.Infrastructure.Analytics;
@@ -12,7 +13,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
     private sealed record Row(
         Guid Id, string? Tech, Guid? AppUserId, string? TechName, DateTimeOffset CreatedAt,
         DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
-        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote);
+        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid Conn);
 
     private async Task<List<Row>> LoadAsync(MetricsFilter f, CancellationToken ct)
     {
@@ -37,7 +38,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             t.AssignedTechnicianName,
             t.PsaCreatedAt ?? t.CreatedAt, t.ResolvedAt, t.ClosedAt, t.SlaDueAt,
             t.TimeWorkedHours, t.BillableHours, t.NonBillableHours,
-            t.Notes.Any(n => n.IsPublic))).ToListAsync(ct);
+            t.Notes.Any(n => n.IsPublic), t.PsaConnectionId)).ToListAsync(ct);
     }
 
     public async Task<TechnicianMetrics> ForTechnicianAsync(MetricsFilter filter, ProductivityWeights weights, CancellationToken ct = default)
@@ -52,9 +53,12 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // every row — grouping by it produced one line called "the API user" containing the whole
         // team's work, and dropped every portal-assigned ticket entirely because its Tech was null.
         var names = await NamesByAppUserAsync(rows, ct);
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
 
         return rows
-            .Where(r => r.AppUserId is not null || r.Tech is not null)
+            // A ticket the PSA shows held by the account the portal writes as is held by nobody, and
+            // goes where every unassigned ticket goes - out of a table of people.
+            .Where(r => r.AppUserId is not null || (r.Tech is not null && !account.IsAccount(r.Conn, r.Tech)))
             .GroupBy(r => r.AppUserId is { } uid ? "u:" + uid : "x:" + r.Tech)
             .Select(g =>
             {
@@ -95,11 +99,17 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             entries = entries.Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.ClientCompanyId == client));
 
         var loggedRaw = await entries
-            .Select(e => new { e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId })
+            .Select(e => new { e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId, Conn = e.Ticket!.PsaConnectionId })
             .ToListAsync(ct);
 
         // Resolution counts come from the tickets themselves, attributed to whoever holds them.
         var rows = (await LoadAsync(filter, ct)).Where(r => r.ResolvedAt is not null).ToList();
+
+        // Work the PSA credits to the account the portal writes as belongs to nobody we can name.
+        // It stays in the day's totals - as Unattributed - rather than vanishing: the hours happened,
+        // only the person is unknown, and a page whose totals shrank would misreport the desk.
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        string? Person(Guid conn, string? ext) => account.IsAccount(conn, ext) ? null : ext;
 
         // Provider display names for the PSA-side rows, taken from the tickets themselves.
         var psaNames = rows
@@ -133,7 +143,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
                      .GroupBy(e => (
                          Day: DateOnly.FromDateTime(e.EntryDate.UtcDateTime.Date),
                          e.AppUserId,
-                         Ext: e.AppUserId is null ? e.TechnicianExternalId : null)))
+                         Ext: e.AppUserId is null ? Person(e.Conn, e.TechnicianExternalId) : null)))
         {
             var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
             buckets[(g.Key.Day, g.Key.AppUserId is { } u ? "u:" + u : "x:" + g.Key.Ext)] = current with
@@ -147,7 +157,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         foreach (var g in rows.GroupBy(r => (
                      Day: DateOnly.FromDateTime(r.ResolvedAt!.Value.UtcDateTime.Date),
                      r.AppUserId,
-                     Ext: r.AppUserId is null ? r.Tech : null)))
+                     Ext: r.AppUserId is null ? Person(r.Conn, r.Tech) : null)))
         {
             var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
             buckets[(g.Key.Day, g.Key.AppUserId is { } u ? "u:" + u : "x:" + g.Key.Ext)] =
