@@ -32,7 +32,7 @@ export default function IntegrationsPage() {
           <SectionHead
             eyebrow="Platforms"
             title="Choose the platform your MSP runs"
-            lead="Every platform gets the same portal, the same sync and the same client experience."
+            lead="Every platform is built on the same portal and the same client experience."
             align="center"
           />
           <Reveal delay={80} className="mt-12"><PsaGrid /></Reveal>

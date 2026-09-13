@@ -23,7 +23,7 @@ export function PsaEcosystem() {
         viewBox="0 0 1000 300"
         className="hidden h-auto w-full lg:block"
         role="img"
-        aria-label={`Desk Portal connects to ${PSA_PLATFORMS.length} PSA platforms: ${PSA_PLATFORMS.map((p) => p.name).join(', ')}.`}
+        aria-label={`Desk Portal is built for ${PSA_PLATFORMS.length} PSA platforms: ${PSA_PLATFORMS.map((p) => p.name).join(', ')}.`}
       >
         {/* Two lines, not one. SVG text does not wrap, and as a single line this subtitle measured
             ~250 units inside a 260-unit box — touching both edges. The break is therefore explicit. */}

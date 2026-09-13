@@ -36,7 +36,7 @@ const INTEGRATIONS = PSA_PLATFORMS.map((p) => ({ href: platformHref(p), label: p
 
 /** Claims made here are true of this build. No badges, counts, or certifications it has not earned. */
 const PROOF = [
-  { icon: RefreshCw, text: `Two-way sync across ${PSA_PLATFORMS.length} PSA platforms` },
+  { icon: RefreshCw, text: 'Two-way sync with your PSA' },
   { icon: ServerCog, text: 'Self-hosted — runs on your infrastructure' },
   { icon: ShieldCheck, text: 'Credentials in a vault, actions in an audit log' },
 ];
