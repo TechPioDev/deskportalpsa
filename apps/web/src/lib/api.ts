@@ -5,7 +5,7 @@ import {
   ConnectionSummarySchema, HealthSchema, JobSchema, AuditEntrySchema, AttachmentSchema,
   TechnicianDaySchema, type TechnicianDay,
   ConnectionFieldsSchema, FieldOptionSchema, type ConnectionFields,
-  MappingRuleSchema, type MappingRule,
+  MappingRuleSchema, type MappingRule, MappingSnapshotStatusSchema, type MappingSnapshotStatus,
   type TicketDetail, type TicketListItem, type Notification, type Profile,
   type TechnicianResponse, type TeamResponse, type TrendPoint,
   type ConnectionSummary, type Health, type Job, type AuditEntry,
@@ -321,6 +321,12 @@ export const api = {
     MappingRuleSchema, { method: 'POST', body: JSON.stringify(body) }),
   deleteMapping: (ruleId: string) =>
     request(`/api/admin/mappings/${ruleId}`, z.unknown(), { method: 'DELETE' }),
+  mappingSnapshotStatus: (provider: number, connectionId: string) =>
+    request(`/api/admin/mappings/versions/status?provider=${provider}&connectionId=${connectionId}`,
+      MappingSnapshotStatusSchema) as Promise<MappingSnapshotStatus>,
+  saveMappingSnapshot: (provider: number, connectionId: string) =>
+    request(`/api/admin/mappings/versions?provider=${provider}&connectionId=${connectionId}`,
+      MappingSnapshotStatusSchema, { method: 'POST' }) as Promise<MappingSnapshotStatus>,
   health: () => request('/api/admin/health', z.array(HealthSchema)) as Promise<Health[]>,
   staffUsers: (params: UserListParams = {}) => {
     const qs = new URLSearchParams();

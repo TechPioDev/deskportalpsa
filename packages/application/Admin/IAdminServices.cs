@@ -63,6 +63,14 @@ public interface IMappingAdminService
     /// <summary>Removes a mapping rule entirely (snapshotted + audited, like any other change).</summary>
     Task DeleteAsync(Guid ruleId, CancellationToken ct = default);
     Task RollbackAsync(Guid versionId, CancellationToken ct = default);
+
+    Task<MappingSnapshotStatusDto> SnapshotStatusAsync(ProviderType provider, Guid? connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Snapshots the live rules on demand (audited). Does nothing when the newest snapshot already
+    /// matches, so a repeated click cannot fill the history with identical versions.
+    /// </summary>
+    Task<MappingSnapshotStatusDto> SaveSnapshotAsync(ProviderType provider, Guid? connectionId, string? note, CancellationToken ct = default);
 }
 
 public interface IJobMonitorService

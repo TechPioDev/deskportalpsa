@@ -130,13 +130,49 @@ public sealed class MappingAdminService(
             new { version.Provider, RolledBackTo = version.Version }, ct);
     }
 
-    private async Task SnapshotAsync(ProviderType provider, Guid? connectionId, string? note, CancellationToken ct)
+    public async Task<MappingSnapshotStatusDto> SnapshotStatusAsync(ProviderType provider, Guid? connectionId, CancellationToken ct = default)
     {
-        var rules = await db.FieldMappings
+        var live = await LiveRulesAsync(provider, connectionId, ct);
+        var latest = await db.FieldMappingVersions.AsNoTracking()
+            .Where(v => v.Provider == provider && v.PsaConnectionId == connectionId)
+            .OrderByDescending(v => v.Version)
+            .FirstOrDefaultAsync(ct);
+        if (latest is null)
+            return new MappingSnapshotStatusDto(null, null, live.Count, 0, live.Count == 0);
+
+        var saved = JsonSerializer.Deserialize<List<SnapshotRule>>(latest.SnapshotJson) ?? [];
+        return new MappingSnapshotStatusDto(latest.Version, latest.CreatedAt, live.Count, saved.Count, SameRules(live, saved));
+    }
+
+    public async Task<MappingSnapshotStatusDto> SaveSnapshotAsync(ProviderType provider, Guid? connectionId, string? note, CancellationToken ct = default)
+    {
+        var before = await SnapshotStatusAsync(provider, connectionId, ct);
+        if (before.MatchesLiveRules && before.LatestVersion is not null)
+            return before;
+
+        await SnapshotAsync(provider, connectionId, string.IsNullOrWhiteSpace(note) ? "Snapshot saved from the mappings page" : note.Trim(), ct);
+        var after = await SnapshotStatusAsync(provider, connectionId, ct);
+        await audit.WriteAsync("mapping.snapshot", "FieldMappingVersion", after.LatestVersion?.ToString(),
+            new { Provider = provider, ConnectionId = connectionId, Version = after.LatestVersion, Rules = after.LiveRules, ReplacedDriftedVersion = before.LatestVersion }, ct);
+        return after;
+    }
+
+    /// <summary>Same rules regardless of order — a snapshot records a set, not a sequence.</summary>
+    private static bool SameRules(IReadOnlyList<SnapshotRule> a, IReadOnlyList<SnapshotRule> b)
+        => a.Count == b.Count
+           && a.Select(r => JsonSerializer.Serialize(r)).Order(StringComparer.Ordinal)
+               .SequenceEqual(b.Select(r => JsonSerializer.Serialize(r)).Order(StringComparer.Ordinal));
+
+    private Task<List<SnapshotRule>> LiveRulesAsync(ProviderType provider, Guid? connectionId, CancellationToken ct)
+        => db.FieldMappings
             .Where(m => m.Provider == provider && m.PsaConnectionId == connectionId)
             .Select(m => new SnapshotRule(m.Scope, m.PsaConnectionId, m.ClientCompanyId, m.QueueOrBoardKey, m.TicketTypeKey,
                 m.PortalField, m.PortalValue, m.ExternalField, m.ExternalValue, m.Direction, m.IsRequired, m.FallbackValue, m.IsActive))
             .ToListAsync(ct);
+
+    private async Task SnapshotAsync(ProviderType provider, Guid? connectionId, string? note, CancellationToken ct)
+    {
+        var rules = await LiveRulesAsync(provider, connectionId, ct);
 
         var nextVersion = 1 + await db.FieldMappingVersions
             .Where(v => v.Provider == provider && v.PsaConnectionId == connectionId)

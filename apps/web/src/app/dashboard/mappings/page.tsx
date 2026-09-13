@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeftRight, Link2, AlertTriangle, RefreshCw, ShieldCheck, CheckCircle2, ChevronDown,
-  FileText, Plus, Pencil, Trash2, Info, ListChecks, Flag, LayoutGrid, FolderClosed, Clock,
+  FileText, Plus, Pencil, Trash2, Info, ListChecks, Flag, LayoutGrid, FolderClosed, Clock, History,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MappingRule } from '@/lib/types';
@@ -54,8 +54,9 @@ const badgeTone: Record<string, string> = {
 };
 const toneFor = (v: string) => badgeTone[v.toUpperCase()] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
 
-function StatCard({ icon: Icon, iconTone, label, value, sub, subTone }: {
+function StatCard({ icon: Icon, iconTone, label, value, sub, subTone, action }: {
   icon: React.ElementType; iconTone: string; label: string; value: React.ReactNode; sub: string; subTone?: string;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -65,6 +66,7 @@ function StatCard({ icon: Icon, iconTone, label, value, sub, subTone }: {
           <div className="text-xs text-[var(--muted)]">{label}</div>
           <div className="text-2xl font-semibold leading-tight">{value}</div>
           <div className={`mt-0.5 text-xs ${subTone ?? 'text-[var(--muted)]'}`}>{sub}</div>
+          {action}
         </div>
       </div>
     </div>
@@ -93,14 +95,27 @@ export default function MappingsPage() {
     queryKey: ['fields', conn?.id], queryFn: () => api.connectionFields(conn!.id), enabled: !!conn, retry: false,
   });
 
+  // Snapshots cover every field of this connection, not just the open tab. Rules saved here snapshot
+  // themselves; this catches the ones changed any other way, which a rollback would otherwise delete.
+  const snapshotKey = ['mapping-snapshot', provider, conn?.id];
+  const { data: snapshot } = useQuery({
+    queryKey: snapshotKey, queryFn: () => api.mappingSnapshotStatus(provider!, conn!.id), enabled: provider != null && !!conn,
+  });
+  const saveSnapshot = useMutation({
+    mutationFn: () => api.saveMappingSnapshot(provider!, conn!.id),
+    onSuccess: (s) => qc.setQueryData(snapshotKey, s),
+  });
+
   const del = useMutation({
     mutationFn: (ruleId: string) => api.deleteMapping(ruleId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['mappings', provider] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['mappings', provider] }); qc.invalidateQueries({ queryKey: snapshotKey }); },
   });
 
   const upsert = useMutation({
     mutationFn: (body: Parameters<typeof api.upsertMapping>[0]) => api.upsertMapping(body, `map ${tab}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['mappings', provider] }); setDraft(null); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mappings', provider] }); qc.invalidateQueries({ queryKey: snapshotKey }); setDraft(null);
+    },
   });
 
   const rows = useMemo<DisplayRow[]>(() => {
@@ -245,8 +260,20 @@ export default function MappingsPage() {
           label="Unmapped Fields" value={rows.length - mapped}
           sub={rows.length - mapped === 0 ? 'Everything is mapped ✓' : 'Needs attention'}
           subTone={rows.length - mapped === 0 ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'} />
-        <StatCard icon={RefreshCw} iconTone="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
-          label="Rule Version" value={<span className="text-lg">v{Math.max(1, ...(mappings ?? []).filter((m) => m.portalField === tab && m.psaConnectionId === (conn?.id ?? '')).map((m) => m.version))}</span>} sub={upsert.isPending ? 'Saving…' : 'Versioned on every change'} />
+        <StatCard icon={History} iconTone="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
+          label="Saved Snapshot"
+          value={<span className="text-lg">{snapshot?.latestVersion != null ? `v${snapshot.latestVersion}` : snapshot ? 'None' : '…'}</span>}
+          sub={!snapshot ? 'Checking…'
+            : snapshot.matchesLiveRules
+              ? `Matches all ${snapshot.liveRules} live rules${snapshot.takenAt ? ` · ${new Date(snapshot.takenAt).toLocaleDateString()}` : ''}`
+              : `Out of date — holds ${snapshot.snapshotRules} of ${snapshot.liveRules} live rules`}
+          subTone={snapshot && !snapshot.matchesLiveRules ? 'text-amber-600 dark:text-amber-400' : undefined}
+          action={snapshot && (!snapshot.matchesLiveRules || saveSnapshot.isError) && (
+            <button onClick={() => saveSnapshot.mutate()} disabled={saveSnapshot.isPending}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
+              <History size={12} /> {saveSnapshot.isPending ? 'Saving…' : saveSnapshot.isError ? 'Save failed — try again' : 'Save snapshot'}
+            </button>
+          )} />
         <StatCard icon={ShieldCheck} iconTone="bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-300"
           label="Mapping Status" value={<span className="text-lg text-green-600 dark:text-green-400">{rows.length > 0 && mapped === rows.length ? 'Healthy' : 'Review'}</span>} sub={rows.length > 0 && mapped === rows.length ? 'No issues detected' : 'Unmapped values remain'} />
       </div>
