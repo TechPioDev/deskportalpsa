@@ -221,6 +221,82 @@ public class AdminTests
         (await h.Db.AuditLog.CountAsync(a => a.Action == "mapping.rolledback")).Should().Be(1);
     }
 
+    private static UpsertMappingInput StatusRule(string portal, string external) => new(
+        null, ProviderType.AutotaskPsa, MappingScope.ProviderDefault, null,
+        "status", portal, "status", external, MappingDirection.Bidirectional, false, null);
+
+    [Fact]
+    public async Task A_rule_changed_outside_the_admin_api_shows_the_snapshot_as_out_of_date()
+    {
+        var (svc, h) = Mappings();
+        await svc.UpsertAsync(StatusRule("IN_PROGRESS", "In Progress"), "v1");
+        (await svc.SnapshotStatusAsync(ProviderType.AutotaskPsa, null)).MatchesLiveRules.Should().BeTrue();
+
+        // What happened on 3 Sep: rules written straight to the database, never versioned.
+        h.Db.FieldMappings.Add(new Desk.Domain.Mapping.FieldMapping
+        {
+            Provider = ProviderType.AutotaskPsa, PortalField = "status", PortalValue = "ON_HOLD", ExternalField = "status", ExternalValue = "Waiting",
+        });
+        await h.Db.SaveChangesAsync();
+
+        var status = await svc.SnapshotStatusAsync(ProviderType.AutotaskPsa, null);
+        status.MatchesLiveRules.Should().BeFalse();
+        (status.LiveRules, status.SnapshotRules).Should().Be((2, 1));
+    }
+
+    [Fact]
+    public async Task Saving_a_snapshot_catches_up_and_is_audited()
+    {
+        var (svc, h) = Mappings();
+        await svc.UpsertAsync(StatusRule("IN_PROGRESS", "In Progress"), "v1");
+        var rule = await h.Db.FieldMappings.SingleAsync();
+        rule.ExternalValue = "Working"; // edited in place, outside the API
+        await h.Db.SaveChangesAsync();
+
+        var after = await svc.SaveSnapshotAsync(ProviderType.AutotaskPsa, null, null);
+
+        after.Should().BeEquivalentTo(new { LatestVersion = 2, MatchesLiveRules = true, LiveRules = 1, SnapshotRules = 1 });
+        (await h.Db.AuditLog.CountAsync(a => a.Action == "mapping.snapshot")).Should().Be(1);
+
+        // And the point of it: rolling back to the new version keeps the edit.
+        var v2 = (await svc.VersionsAsync(ProviderType.AutotaskPsa, null)).Single(v => v.Version == 2);
+        await svc.RollbackAsync(v2.Id);
+        (await h.Db.FieldMappings.SingleAsync()).ExternalValue.Should().Be("Working");
+    }
+
+    [Fact]
+    public async Task Saving_when_the_snapshot_already_matches_adds_no_version()
+    {
+        var (svc, h) = Mappings();
+        await svc.UpsertAsync(StatusRule("IN_PROGRESS", "In Progress"), "v1");
+
+        var result = await svc.SaveSnapshotAsync(ProviderType.AutotaskPsa, null, null);
+
+        result.LatestVersion.Should().Be(1);
+        (await h.Db.FieldMappingVersions.CountAsync()).Should().Be(1);
+        (await h.Db.AuditLog.CountAsync(a => a.Action == "mapping.snapshot")).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_snapshot_matches_whatever_order_its_rules_were_written_in()
+    {
+        // Production's 13 Sep catch-up snapshot was written by SQL: other key spacing, other order.
+        var (svc, h) = Mappings();
+        await svc.UpsertAsync(StatusRule("IN_PROGRESS", "In Progress"), "v1");
+        await svc.UpsertAsync(StatusRule("ON_HOLD", "Waiting"), "v2");
+        var version = await h.Db.FieldMappingVersions.OrderByDescending(v => v.Version).FirstAsync();
+        version.SnapshotJson =
+            "[{\"Scope\" : 1, \"PsaConnectionId\" : null, \"ClientCompanyId\" : null, \"QueueOrBoardKey\" : null, \"TicketTypeKey\" : null, " +
+            "\"PortalField\" : \"status\", \"PortalValue\" : \"ON_HOLD\", \"ExternalField\" : \"status\", \"ExternalValue\" : \"Waiting\", " +
+            "\"Direction\" : 3, \"IsRequired\" : false, \"FallbackValue\" : null, \"IsActive\" : true}, " +
+            "{\"Scope\" : 1, \"PsaConnectionId\" : null, \"ClientCompanyId\" : null, \"QueueOrBoardKey\" : null, \"TicketTypeKey\" : null, " +
+            "\"PortalField\" : \"status\", \"PortalValue\" : \"IN_PROGRESS\", \"ExternalField\" : \"status\", \"ExternalValue\" : \"In Progress\", " +
+            "\"Direction\" : 3, \"IsRequired\" : false, \"FallbackValue\" : null, \"IsActive\" : true}]";
+        await h.Db.SaveChangesAsync();
+
+        (await svc.SnapshotStatusAsync(ProviderType.AutotaskPsa, null)).MatchesLiveRules.Should().BeTrue();
+    }
+
     [Fact]
     public async Task Dead_lettered_job_can_be_reprocessed()
     {

@@ -196,6 +196,16 @@ export const MappingRuleSchema = z.object({
 });
 export type MappingRule = z.infer<typeof MappingRuleSchema>;
 
+/** Whether the newest mapping snapshot still holds the live rules (a rollback restores only what it holds). */
+export const MappingSnapshotStatusSchema = z.object({
+  latestVersion: z.number().nullable(),
+  takenAt: z.string().nullable(),
+  liveRules: z.number(),
+  snapshotRules: z.number(),
+  matchesLiveRules: z.boolean(),
+});
+export type MappingSnapshotStatus = z.infer<typeof MappingSnapshotStatusSchema>;
+
 // value = what the PROVIDER is sent (import filters, queue reassignment).
 // syncValue = what a synced ticket arrives CARRYING, and so the only thing a mapping rule can match.
 // They differ wherever a field is filtered by id and reported by name; older payloads without

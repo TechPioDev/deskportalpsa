@@ -67,6 +67,14 @@ public sealed record UpsertMappingInput(
 
 public sealed record MappingVersionDto(Guid Id, ProviderType Provider, Guid? PsaConnectionId, int Version, string ChangedByUserId, string? ChangeNote, DateTimeOffset CreatedAt);
 
+/// <summary>
+/// Whether the newest snapshot still holds the live rules. It drifts when rules change without
+/// going through the admin API (a database edit, a script) — and a rollback to a drifted snapshot
+/// silently deletes every rule it is missing.
+/// </summary>
+public sealed record MappingSnapshotStatusDto(
+    int? LatestVersion, DateTimeOffset? TakenAt, int LiveRules, int SnapshotRules, bool MatchesLiveRules);
+
 public sealed record JobSummary(
     Guid Id,
     string JobType,

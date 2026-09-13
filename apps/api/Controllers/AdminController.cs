@@ -190,6 +190,16 @@ public sealed class AdminMappingsController(IMappingAdminService svc) : Controll
         await svc.RollbackAsync(versionId, ct);
         return NoContent();
     }
+
+    [HttpGet("versions/status")]
+    [RequirePermission(Permissions.MappingsView)]
+    public async Task<IActionResult> SnapshotStatus([FromQuery] ProviderType provider, [FromQuery] Guid? connectionId, CancellationToken ct)
+        => Ok(await svc.SnapshotStatusAsync(provider, connectionId, ct));
+
+    [HttpPost("versions")]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> SaveSnapshot([FromQuery] ProviderType provider, [FromQuery] Guid? connectionId, [FromQuery] string? note, CancellationToken ct)
+        => Ok(await svc.SaveSnapshotAsync(provider, connectionId, note, ct));
 }
 
 /// <summary>Background job monitor with dead-letter reprocessing.</summary>
