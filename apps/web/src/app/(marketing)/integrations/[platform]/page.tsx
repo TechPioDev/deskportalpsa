@@ -23,7 +23,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   if (!platform) return {};
   return {
     title: `Desk Portal for ${platform.name}`,
-    description: `Give your clients a modern support portal while your technicians keep working in ${platform.name}. Two-way sync, multi-tenant, self-hosted.`,
+    description: platform.hasConnector
+      ? `Give your clients a modern support portal while your technicians keep working in ${platform.name}. Two-way sync, multi-tenant, self-hosted.`
+      : `A modern client support portal, built for MSPs whose technicians work in ${platform.name}. Multi-tenant and self-hosted.`,
     alternates: { canonical: platformHref(platform) },
   };
 }
@@ -36,28 +38,33 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
  * describing a product that does not exist. What differs is the name of the service desk your
  * team keeps working in — which is the whole point of the page.
  *
- * Nothing here states or implies where any platform sits in the build. Do not add a status badge,
- * a launch date, or copy that reads as one.
+ * Nothing here labels where any platform sits in the build. Do not add a status badge, a launch
+ * date, or copy that reads as one. What the page must not do either is promise what is not true:
+ * where no connector ships yet (`hasConnector`), it drops the "connect your environment" steps
+ * and present-tense claims about writing back, and invites a conversation instead.
  */
 export default async function PlatformIntegrationPage({ params }: Params) {
   const platform = findPlatform((await params).platform);
   if (!platform) notFound();
 
   const others = PSA_PLATFORMS.filter((p) => p.id !== platform.id);
+  const live = platform.hasConnector;
 
   return (
     <>
       <PageHero
         eyebrow="Integration"
         title={<>Desk Portal for <span className="text-brand dark:text-brand-soft">{platform.name}</span></>}
-        lead={`Give your clients a modern way to raise requests, follow progress and share files — while your technicians carry on in ${platform.name}. Your service desk stays the system of record.`}
+        lead={live
+          ? `Give your clients a modern way to raise requests, follow progress and share files — while your technicians carry on in ${platform.name}. Your service desk stays the system of record.`
+          : `Desk Portal is built to give your clients a modern way to raise requests, follow progress and share files — while your technicians carry on in ${platform.name}, and it stays the system of record.`}
       >
         <div className="flex flex-wrap items-center gap-3">
           <Link
             href="/book"
             className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3.5 text-sm font-medium text-brand-fg transition-transform hover:-translate-y-0.5"
           >
-            Book a demo <ArrowRight size={15} aria-hidden="true" />
+            {live ? 'Book a demo' : `Talk to us about ${platform.name}`} <ArrowRight size={15} aria-hidden="true" />
           </Link>
           <Link
             href="/integrations"
@@ -116,7 +123,9 @@ export default async function PlatformIntegrationPage({ params }: Params) {
             </Reveal>
             <Reveal delay={160}>
               <FeatureCard icon={ShieldCheck} title="No risk to the record">
-                Every change is written back, so {platform.name} stays the single source of truth.
+                {live
+                  ? <>Every change is written back, so {platform.name} stays the single source of truth.</>
+                  : <>Designed so every change is written back and {platform.name} stays the single source of truth.</>}
               </FeatureCard>
             </Reveal>
           </div>
@@ -128,13 +137,16 @@ export default async function PlatformIntegrationPage({ params }: Params) {
           <SectionHead
             eyebrow="Two-way sync"
             title="Everything stays in step, both directions."
-            lead="Requests, replies, files and status move continuously rather than on demand."
+            lead={live
+              ? 'Requests, replies, files and status move continuously rather than on demand.'
+              : 'How the sync works: requests, replies, files and status move continuously rather than on demand.'}
             align="center"
           />
           <Reveal delay={80} className="mt-10"><SyncLanes /></Reveal>
         </Shell>
       </Band>
 
+      {live ? (
       <Band tone="raised">
         <Shell>
           <SectionHead
@@ -153,6 +165,26 @@ export default async function PlatformIntegrationPage({ params }: Params) {
           </div>
         </Shell>
       </Band>
+      ) : (
+        <Band tone="raised">
+          <Shell>
+            <SectionHead
+              eyebrow="Getting started"
+              title={`Bringing Desk Portal to ${platform.name}`}
+              lead={`Tell us how your team runs ${platform.name} — boards, statuses and the clients you support. That is what shapes the connection, so we start with a conversation rather than a setup wizard.`}
+              align="center"
+            />
+            <div className="mt-8 flex justify-center">
+              <Link
+                href="/book"
+                className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3.5 text-sm font-medium text-brand-fg transition-transform hover:-translate-y-0.5"
+              >
+                Talk to us about {platform.name} <ArrowRight size={15} aria-hidden="true" />
+              </Link>
+            </div>
+          </Shell>
+        </Band>
+      )}
 
       <Band>
         <Shell>
