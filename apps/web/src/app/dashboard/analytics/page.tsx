@@ -59,20 +59,27 @@ export default function Analytics() {
   // reflects the selected range. Resolved is classified by status (tolerating raw PSA values),
   // never inferred as "not open" — unmapped statuses count as open.
   const cutoff = Date.now() - days * 86400_000;
-  const ts = (tickets ?? []).filter((t) => new Date(t.createdAt).getTime() >= cutoff);
+  // Tickets RAISED in the window. createdAt is the day the portal imported a ticket, so after a bulk
+  // import every old ticket looked new; the Tickets list and Client workload already use the raise date.
+  const ts = (tickets ?? []).filter((t) => new Date(t.raisedAt ?? t.createdAt).getTime() >= cutoff);
   const assigned = ts.length;
-  const resolvedCount = ts.filter((t) => isResolvedStatus(t.portalStatus)).length;
-  const open = assigned - resolvedCount;
+  const open = ts.filter((t) => !isResolvedStatus(t.portalStatus)).length;
   const totalResolved = rows.reduce((a, r) => a + r.resolved, 0);
   const slaPct = totalResolved > 0 ? rows.reduce((a, r) => a + r.slaCompliancePct * r.resolved, 0) / totalResolved : 0;
   const score = rows.length ? rows.reduce((a, r) => a + (r.score ?? 0), 0) / rows.length : 0;
   const scoreLabel = score >= 90 ? 'Excellent' : score >= 75 ? 'Good' : score >= 60 ? 'Fair' : 'Needs attention';
 
-  const trendRows = (trend ?? []).slice(-days);
+  // The last N DAYS, not the last N data points: the trend only carries days that had activity, so
+  // slicing by count pulled in dates from before the range.
+  const cutoffDay = new Date(cutoff).toISOString().slice(0, 10);
+  const trendRows = (trend ?? []).filter((p) => p.date >= cutoffDay);
   const labelStep = Math.max(1, Math.ceil(trendRows.length / 8)); // thin x labels on long ranges
   const trendLabels = trendRows.map((p, i) => (i % labelStep === 0 ? shortDate(p.date) : ''));
   const created = trendRows.map((p) => p.created);
   const resolvedSeries = trendRows.map((p) => p.resolved);
+  // Resolutions that landed in the range, counted by resolution date on the server - tickets raised
+  // before the range included. Counting resolved statuses among tickets RAISED in it missed them all.
+  const resolvedCount = resolvedSeries.reduce((a, b) => a + b, 0);
 
   const byPriority = Object.entries(
     ts.reduce<Record<string, number>>((m, t) => { const k = t.portalPriority.toUpperCase(); m[k] = (m[k] ?? 0) + 1; return m; }, {}),
@@ -94,7 +101,7 @@ export default function Analytics() {
     totalResolved > 0
       ? { icon: ShieldCheck, color: '#22c55e', title: `SLA compliance at ${slaPct.toFixed(1)}%`, sub: 'Weighted across resolved tickets' }
       : { icon: ShieldCheck, color: '#94a3b8', title: 'No resolved tickets yet', sub: 'SLA compliance appears after resolutions' },
-    { icon: FolderOpen, color: '#f59e0b', title: `${open} open tickets`, sub: `${resolvedCount} resolved of ${assigned} total` },
+    { icon: FolderOpen, color: '#f59e0b', title: `${open} open tickets`, sub: `${assigned} raised and ${resolvedCount} resolved in this range` },
     top ? { icon: Users, color: '#3b82f6', title: `Top performer: ${top.technicianExternalId}`, sub: `Score ${top.score?.toFixed(1) ?? '—'} · ${top.resolved} resolved` } : null,
     { icon: TrendingUp, color: '#8b5cf6', title: `${created.reduce((a, b) => a + b, 0)} created in this range`, sub: `${resolvedSeries.reduce((a, b) => a + b, 0)} resolved in the same period` },
   ].filter(Boolean) as { icon: React.ElementType; color: string; title: string; sub: string }[];

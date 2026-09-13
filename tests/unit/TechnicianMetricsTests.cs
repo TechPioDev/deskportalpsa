@@ -115,4 +115,17 @@ public class TechnicianMetricsTests
         trend.Sum(p => p.Created).Should().Be(4);   // all four tickets created
         trend.Sum(p => p.Resolved).Should().Be(3);  // A, C, and R2's ticket resolved
     }
+
+    [Fact]
+    public async Task Trend_counts_a_resolution_in_the_window_even_when_the_ticket_was_raised_before_it()
+    {
+        // Ticket C was raised on day 3 and resolved on day 9. A window starting day 8 raised nothing,
+        // but a resolution landed in it - windowing resolutions on the raise date reported zero.
+        var svc = await ServiceAsync(Guid.NewGuid().ToString());
+
+        var trend = await svc.TrendAsync(new MetricsFilter { From = D(8) });
+
+        trend.Sum(p => p.Created).Should().Be(0);
+        trend.Should().ContainSingle(p => p.Resolved > 0).Which.Should().Be(new TrendPoint(new DateOnly(2026, 1, 9), 0, 1));
+    }
 }

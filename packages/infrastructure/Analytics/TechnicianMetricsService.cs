@@ -15,15 +15,29 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
         decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid Conn);
 
-    private async Task<List<Row>> LoadAsync(MetricsFilter f, CancellationToken ct)
+    /// <param name="byResolution">
+    /// Window on WHEN THE TICKET WAS RESOLVED instead of when it was raised, for "resolved in this
+    /// range" figures. On the raise date a ticket raised last month and resolved yesterday never
+    /// counts as a resolution anywhere - so a week of closing out old work reported zero.
+    /// </param>
+    private async Task<List<Row>> LoadAsync(MetricsFilter f, CancellationToken ct, bool byResolution = false)
     {
         // Date filters and ticket age both run off the PSA's raise date, falling back to the row's
         // own timestamp only where the provider gave none. Using the row timestamp as the primary
         // measured from the day the portal IMPORTED the ticket — so a two-month-old ticket looked
         // hours old, and "average resolution time" quietly reported the rollout, not the service.
         var q = db.Tickets.AsNoTracking().AsQueryable();
-        if (f.From is { } from) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) >= from);
-        if (f.To is { } to) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) <= to);
+        if (byResolution)
+        {
+            q = q.Where(t => t.ResolvedAt != null);
+            if (f.From is { } resolvedFrom) q = q.Where(t => t.ResolvedAt >= resolvedFrom);
+            if (f.To is { } resolvedTo) q = q.Where(t => t.ResolvedAt <= resolvedTo);
+        }
+        else
+        {
+            if (f.From is { } from) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) >= from);
+            if (f.To is { } to) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) <= to);
+        }
         if (f.TechnicianExternalId is { } tech) q = q.Where(t => t.AssignedTechnicianExternalId == tech);
         if (f.AppUserId is { } assignee) q = q.Where(t => t.AssignedAppUserId == assignee);
         if (f.ClientCompanyId is { } company) q = q.Where(t => t.ClientCompanyId == company);
@@ -103,7 +117,9 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             .ToListAsync(ct);
 
         // Resolution counts come from the tickets themselves, attributed to whoever holds them.
-        var rows = (await LoadAsync(filter, ct)).Where(r => r.ResolvedAt is not null).ToList();
+        // Counted on the day the resolution landed, so windowed on that day too: a ticket raised before
+        // the range and resolved inside it is a resolution in the range.
+        var rows = await LoadAsync(filter, ct, byResolution: true);
 
         // Work the PSA credits to the account the portal writes as belongs to nobody we can name.
         // It stays in the day's totals - as Unattributed - rather than vanishing: the hours happened,
@@ -181,10 +197,13 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
 
     public async Task<IReadOnlyList<TrendPoint>> TrendAsync(MetricsFilter filter, CancellationToken ct = default)
     {
-        var rows = await LoadAsync(filter, ct);
-        var created = rows.GroupBy(r => DateOnly.FromDateTime(r.CreatedAt.UtcDateTime))
+        // Created on the day a ticket was raised; resolved on the day it was resolved - two windows,
+        // because "resolved this week" includes tickets raised long before the week began.
+        var raised = await LoadAsync(filter, ct);
+        var resolvedRows = await LoadAsync(filter, ct, byResolution: true);
+        var created = raised.GroupBy(r => DateOnly.FromDateTime(r.CreatedAt.UtcDateTime))
             .ToDictionary(g => g.Key, g => g.Count());
-        var resolved = rows.Where(r => r.ResolvedAt is not null)
+        var resolved = resolvedRows
             .GroupBy(r => DateOnly.FromDateTime(r.ResolvedAt!.Value.UtcDateTime))
             .ToDictionary(g => g.Key, g => g.Count());
 

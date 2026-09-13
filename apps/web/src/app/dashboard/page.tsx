@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw, Plus, Calendar, TrendingUp, Clock, ShieldCheck, Plug, Ticket as TicketIcon,
@@ -38,16 +39,18 @@ function Head({ title, right }: { title: string; right?: React.ReactNode }) {
 export default function Overview() {
   const qc = useQueryClient();
   const { data: tickets } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
-  const { data: team } = useQuery({ queryKey: ['team'], queryFn: () => api.teamMetrics() });
-  const { data: trend } = useQuery({ queryKey: ['trend'], queryFn: () => api.trend() });
+  // A real 7-day window behind the "Last 7 days" this page shows. Both queries were unwindowed, so
+  // SLA, the resolved count and the chart all quietly covered every ticket ever held.
+  const fromIso = useMemo(() => new Date(Date.now() - 7 * 86400_000).toISOString(), []);
+  const { data: team } = useQuery({ queryKey: ['team', 'last-7-days'], queryFn: () => api.teamMetrics(fromIso) });
+  const { data: trend } = useQuery({ queryKey: ['trend', 'last-7-days'], queryFn: () => api.trend(fromIso) });
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.health });
   const { data: activity } = useQuery({ queryKey: ['notifications'], queryFn: api.notifications });
 
   const ts = tickets ?? [];
-  // Resolved is classified by status (tolerates raw PSA values on unmapped tickets); everything
-  // else counts as open — never inferred as "not open" from a closed status list.
-  const resolved = ts.filter((t) => isResolvedStatus(t.portalStatus)).length;
-  const open = ts.length - resolved;
+  // Open is a state, not an event: every ticket open right now, whenever it was raised. Classified by
+  // status (tolerates raw PSA values on unmapped tickets) - never inferred from a closed status list.
+  const open = ts.filter((t) => !isResolvedStatus(t.portalStatus)).length;
   const teamRows = team?.team ?? [];
   const totalResolved = teamRows.reduce((a, r) => a + r.resolved, 0) || 1;
   const slaPct = teamRows.length
@@ -55,10 +58,14 @@ export default function Overview() {
     : 0;
   const connections = health ?? [];
 
-  const trendRows = (trend ?? []).slice(-7);
+  // The last 7 DAYS, not the last 7 data points - the trend only carries days that had activity.
+  const cutoffDay = fromIso.slice(0, 10);
+  const trendRows = (trend ?? []).filter((p) => p.date >= cutoffDay);
   const trendLabels = trendRows.map((p) => shortDate(p.date));
   const created = trendRows.map((p) => p.created);
   const resolvedSeries = trendRows.map((p) => p.resolved);
+  // Resolutions in the last 7 days, by resolution date - including tickets raised before the window.
+  const resolved = resolvedSeries.reduce((a, b) => a + b, 0);
 
   const byPriority = Object.entries(
     ts.reduce<Record<string, number>>((m, t) => {
@@ -72,7 +79,7 @@ export default function Overview() {
 
   const stats = [
     { label: 'Open Tickets', value: open, sub: `${ts.length} total`, icon: Inbox, tone: 'blue', spark: created, color: '#3b82f6', href: '/dashboard/tickets?view=open' },
-    { label: 'Resolved', value: resolved, sub: 'this period', icon: CheckCircle2, tone: 'green', spark: resolvedSeries, color: '#22c55e', href: '/dashboard/tickets?view=resolved' },
+    { label: 'Resolved', value: resolved, sub: 'last 7 days', icon: CheckCircle2, tone: 'green', spark: resolvedSeries, color: '#22c55e', href: '/dashboard/tickets?view=resolved' },
     { label: 'SLA Compliance', value: `${slaPct.toFixed(1)}%`, sub: 'weighted across techs', icon: ShieldCheck, tone: 'violet', spark: null, color: '#8b5cf6', href: '/dashboard/analytics' },
     { label: 'Active Connections', value: connections.length, sub: 'monitored', icon: Plug, tone: 'orange', spark: null, color: '#f97316', href: '/dashboard/connections' },
   ];
