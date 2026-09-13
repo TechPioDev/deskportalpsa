@@ -17,5 +17,7 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*'],
+  // The Control Panel too: without it a signed-out visitor got the panel's empty shell first, and
+  // only reached sign-in after the page's own data requests came back 401.
+  matcher: ['/dashboard/:path*', '/control-panel/:path*'],
 };

@@ -93,16 +93,21 @@ export default function Analytics() {
   const maxQueue = Math.max(1, ...byQueue.map((q) => q.value));
 
   const maxResolved = Math.max(1, ...rows.map((r) => r.resolved));
-  const workload = rows.map((r) => ({ name: r.technicianExternalId, pct: Math.round((r.resolved / maxResolved) * 100) }))
+  const workload = rows.map((r) => ({ name: r.technicianName ?? r.technicianExternalId, pct: Math.round((r.resolved / maxResolved) * 100) }))
     .sort((a, b) => b.pct - a.pct);
 
-  const top = rows[0];
+  // Whoever actually resolved the most, SLA breaking ties. rows[0] was the highest score, and with
+  // every score at 0 that was simply whoever came first - so the card named someone with nothing
+  // resolved, by an internal id. No resolutions in the range means no top performer to name.
+  const top = [...rows]
+    .filter((r) => r.resolved > 0)
+    .sort((a, b) => b.resolved - a.resolved || b.slaCompliancePct - a.slaCompliancePct)[0];
   const insights = [
     totalResolved > 0
       ? { icon: ShieldCheck, color: '#22c55e', title: `SLA compliance at ${slaPct.toFixed(1)}%`, sub: 'Weighted across resolved tickets' }
       : { icon: ShieldCheck, color: '#94a3b8', title: 'No resolved tickets yet', sub: 'SLA compliance appears after resolutions' },
     { icon: FolderOpen, color: '#f59e0b', title: `${open} open tickets`, sub: `${assigned} raised and ${resolvedCount} resolved in this range` },
-    top ? { icon: Users, color: '#3b82f6', title: `Top performer: ${top.technicianExternalId}`, sub: `Score ${top.score?.toFixed(1) ?? '—'} · ${top.resolved} resolved` } : null,
+    top ? { icon: Users, color: '#3b82f6', title: `Top performer: ${top.technicianName ?? top.technicianExternalId}`, sub: `${top.resolved} resolved · ${top.slaCompliancePct.toFixed(0)}% within SLA` } : null,
     { icon: TrendingUp, color: '#8b5cf6', title: `${created.reduce((a, b) => a + b, 0)} created in this range`, sub: `${resolvedSeries.reduce((a, b) => a + b, 0)} resolved in the same period` },
   ].filter(Boolean) as { icon: React.ElementType; color: string; title: string; sub: string }[];
 
