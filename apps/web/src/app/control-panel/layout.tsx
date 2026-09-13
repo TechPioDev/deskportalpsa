@@ -6,10 +6,10 @@ import { useQuery } from '@tanstack/react-query';
 import { QueryProvider } from '@/components/QueryProvider';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { UserMenu } from '@/components/UserMenu';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import {
   Rocket, FileText, Users, Server, UserCheck, ArrowUpCircle, Clock, CalendarDays,
-  Megaphone, BarChart3, LayoutDashboard, Lock, Palette, BookOpen, Bell,
+  Megaphone, BarChart3, LayoutDashboard, Lock, Palette, BookOpen, Bell, ShieldAlert,
 } from 'lucide-react';
 
 type Section = {
@@ -48,10 +48,15 @@ export default function ControlPanelLayout({ children }: { children: React.React
 
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { data: caps } = useQuery({ queryKey: ['cp-capabilities'], queryFn: api.cpCapabilities, retry: false });
+  const { data: caps, error: capsError } = useQuery({ queryKey: ['cp-capabilities'], queryFn: api.cpCapabilities, retry: false });
   const allowed = new Set(caps?.sections ?? []);
+  // Every Control Panel endpoint refuses an account that is not a client portal user - MSP staff,
+  // most often. The shell used to ignore that refusal: it showed sections anyway, and each page then
+  // failed in its own words or silently. Say it once, here, and don't mount pages that can't load.
+  const notClientUser = capsError instanceof ApiError && capsError.status === 403;
 
   const renderGroup = (label: string, items: Section[]) => {
+    if (notClientUser) return null;
     // A section is shown when the caller can access it (admins get every key). Until capabilities
     // load we optimistically show the two live CP-1 sections so the panel isn't blank.
     const visible = items.filter((s) => s.always || (caps ? allowed.has(s.key) : s.live));
@@ -115,15 +120,39 @@ function Shell({ children }: { children: React.ReactNode }) {
 
         {/* Mobile nav */}
         <nav aria-label="Primary" className="flex gap-1 overflow-x-auto border-b border-[var(--border)] bg-[var(--surface)] px-2 py-2 md:hidden">
-          {[...MANAGEMENT, ...ACCOUNTS].filter((s) => s.live && (!caps || allowed.has(s.key))).map((s) => (
+          {[...MANAGEMENT, ...ACCOUNTS].filter((s) => !notClientUser && s.live && (!caps || allowed.has(s.key))).map((s) => (
             <Link key={s.key} href={s.href} className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
               <s.icon size={15} /> {s.label}
             </Link>
           ))}
         </nav>
 
-        <main className="flex-1 bg-[var(--bg)] p-4 sm:p-6">{children}</main>
+        {/* Pages wait for capabilities: mounted earlier, a staff account's pages each fired a request
+            that was refused before the shell knew to replace them. */}
+        <main className="flex-1 bg-[var(--bg)] p-4 sm:p-6">
+          {notClientUser ? <NotForThisAccount /> : caps || capsError ? children : null}
+        </main>
       </div>
+    </div>
+  );
+}
+
+/** The one explanation a non-client account gets, in place of pages that would each be refused. */
+function NotForThisAccount() {
+  return (
+    <div className="mx-auto mt-6 max-w-lg rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
+      <h1 className="flex items-center gap-2 text-lg font-semibold">
+        <ShieldAlert size={19} className="text-brand" /> The Control Panel is for your clients
+      </h1>
+      <p className="mt-2 text-sm text-[var(--muted)]">
+        This is where a client&rsquo;s company administrator manages their own portal &mdash; who can raise
+        tickets, ticket instructions, approvers, business hours, holidays and announcements. It opens
+        for client portal accounts, so staff accounts can&rsquo;t use it.
+      </p>
+      <Link href="/dashboard"
+        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg hover:opacity-90">
+        <LayoutDashboard size={15} /> Back to the dashboard
+      </Link>
     </div>
   );
 }
