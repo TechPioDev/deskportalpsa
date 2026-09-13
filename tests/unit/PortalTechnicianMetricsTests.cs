@@ -293,6 +293,21 @@ public class PortalTechnicianMetricsTests
     }
 
     [Fact]
+    public async Task A_resolution_in_the_range_counts_even_when_the_ticket_was_raised_before_it()
+    {
+        // "Tickets resolved per day" is counted on the day the resolution landed. Windowed on the
+        // raise date instead, a ticket raised on day 1 and closed on day 5 vanished from a day 4-6 view.
+        var f = await SetupAsync();
+        f.Db.Value.Tickets.Add(Ticket(f.Basit, psaTech: null, created: 1, resolved: 5));
+        await f.Db.Value.SaveChangesAsync();
+
+        var days = await f.Svc.DailyAsync(new MetricsFilter { From = D(4), To = D(6) });
+
+        days.Should().ContainSingle().Which.Resolved.Should().Be(1);
+        days[0].Date.Should().Be(new DateOnly(2026, 1, 5));
+    }
+
+    [Fact]
     public async Task One_technicians_series_excludes_everyone_else()
     {
         // What the endpoint relies on when someone without the team permission asks for their own

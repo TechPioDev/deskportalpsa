@@ -2,12 +2,16 @@ using Desk.Api.Auth;
 using Desk.Application.Abstractions;
 using Desk.Application.Common;
 using Desk.Application.Tickets;
+using Desk.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Desk.Api.Controllers;
 
-/// <summary>Client-portal notifications + profile. Both are scoped to the caller's client identity.</summary>
+/// <summary>
+/// Notifications and profile. Recent activity serves staff and clients alike, each over the tickets
+/// they may see; notification history stays a client surface; profile belongs to everyone.
+/// </summary>
 [ApiController]
 [Route("api")]
 [Authorize]
@@ -16,9 +20,24 @@ public sealed class PortalController(
     IClientAccessResolver accessResolver,
     ITicketReadService reads) : ControllerBase
 {
+    /// <summary>
+    /// Recent ticket activity for whoever is asking. Staff-first, exactly as the ticket list decides:
+    /// the header bell and the dashboard panels are staff pages, and resolving everyone as a client
+    /// handed every technician and manager a 403 on every page load and an empty bell forever.
+    /// </summary>
     [HttpGet("notifications")]
     public async Task<IActionResult> Notifications(CancellationToken ct)
-        => Ok(await reads.RecentActivityAsync(await AccessAsync(ct), 10, ct));
+    {
+        if (user.HasPermission(Permissions.TicketsViewAll))
+            return Ok(await reads.RecentActivityForStaffAsync(10, ct));
+
+        // A staff member without ticket visibility has no ticket activity to see. That is an empty
+        // feed, not a refusal - the bell asks on every page, and a refusal is an error every time.
+        if (user.UserId is not null)
+            return Ok(Array.Empty<NotificationDto>());
+
+        return Ok(await reads.RecentActivityAsync(await AccessAsync(ct), 10, ct));
+    }
 
     /// <summary>Dated feed of what actually happened on the caller's visible tickets.</summary>
     [HttpGet("notifications/history")]

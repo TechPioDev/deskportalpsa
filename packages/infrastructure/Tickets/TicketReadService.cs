@@ -264,8 +264,20 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             AssignedAppUserName: assignedAppUserName);
     }
 
-    public async Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)
-        => await Visible(access)
+    public Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)
+        => RecentActivityInAsync(Visible(access), take, ct);
+
+    /// <summary>
+    /// The same feed for staff, over exactly the tickets their TicketsViewAll scope reaches. Staff
+    /// pages - the header bell, the recent-activity panels, the Notifications page - all read this
+    /// feed; serving it to clients only left every one of them permanently empty for the people who
+    /// work the tickets.
+    /// </summary>
+    public async Task<IReadOnlyList<NotificationDto>> RecentActivityForStaffAsync(int take = 10, CancellationToken ct = default)
+        => await RecentActivityInAsync(await StaffVisibleAsync(ct), take, ct);
+
+    private static async Task<IReadOnlyList<NotificationDto>> RecentActivityInAsync(IQueryable<Ticket> scope, int take, CancellationToken ct)
+        => await scope
             .AsNoTracking()
             .OrderByDescending(t => t.LastSyncedAt ?? t.CreatedAt)
             .Take(take)
