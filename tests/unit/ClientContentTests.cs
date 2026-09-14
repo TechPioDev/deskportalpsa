@@ -36,7 +36,7 @@ public class ClientContentTests
 
     private sealed class FakeDelivery : IReportDelivery
     {
-        public Task<ReportDeliveryResult> DeliverAsync(string? recipients, string subject, string fileName, string csv, CancellationToken ct = default)
+        public Task<ReportDeliveryResult> DeliverAsync(Guid organizationId, string? recipients, string subject, string fileName, string csv, CancellationToken ct = default)
             => Task.FromResult(new ReportDeliveryResult(false, "test"));
     }
 

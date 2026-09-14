@@ -11,19 +11,41 @@ public sealed record EmailMessage(
     string? HtmlBody = null,
     IReadOnlyList<EmailAttachment>? Attachments = null);
 
+/// <summary>Where an organization's mail goes out from, if anywhere.</summary>
+/// <param name="Source">"organization" (entered in the portal), "server" (the host's environment) or "none".</param>
+public sealed record EmailSenderStatus(bool Configured, string? FromAddress, string Source)
+{
+    public static readonly EmailSenderStatus None = new(false, null, "none");
+}
+
 /// <summary>
-/// Outbound email. Deliberately small: the portal sends reports and a test message, nothing that
-/// needs templates or tracking. When no mail server is configured <see cref="IsConfigured"/> is
-/// false and callers say so rather than pretending a message went out.
+/// Outbound email for one organization. Its own account, entered by its administrator, wins; the
+/// server's environment account is the fallback; with neither, <see cref="StatusAsync"/> says so and
+/// callers report "not configured" rather than pretending a message went out.
+///
+/// The organization is passed explicitly rather than read from the tenant context, because scheduled
+/// reports are sent by the worker from a platform-scoped loop.
 /// </summary>
 public interface IEmailSender
 {
-    bool IsConfigured { get; }
+    Task<EmailSenderStatus> StatusAsync(Guid organizationId, CancellationToken ct = default);
+    Task SendAsync(Guid organizationId, EmailMessage message, CancellationToken ct = default);
+}
 
-    /// <summary>The address messages are sent from, for display. Null when not configured.</summary>
-    string? FromAddress { get; }
+public sealed record EmailSettingsDto(
+    bool HasOwnAccount, string? Host, int Port, string Security, string? Username, bool HasPassword,
+    string? FromAddress, string? FromName, EmailSenderStatus Status);
 
-    Task SendAsync(EmailMessage message, CancellationToken ct = default);
+/// <param name="Password">Null keeps the stored password; an empty string removes it.</param>
+public sealed record EmailSettingsInput(
+    string Host, int Port, string Security, string? Username, string? Password, string FromAddress, string? FromName);
+
+/// <summary>The current organization's mail account. Never returns the password.</summary>
+public interface IEmailSettingsService
+{
+    Task<EmailSettingsDto> GetAsync(CancellationToken ct = default);
+    Task<EmailSettingsDto> SaveAsync(EmailSettingsInput input, CancellationToken ct = default);
+    Task<EmailSettingsDto> RemoveAsync(CancellationToken ct = default);
 }
 
 public static class EmailAddresses

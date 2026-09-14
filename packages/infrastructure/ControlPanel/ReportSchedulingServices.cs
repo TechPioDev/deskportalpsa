@@ -46,7 +46,7 @@ public sealed class ScheduledReportRunner(
                 };
                 db.ReportRuns.Add(run);
 
-                var result = await delivery.DeliverAsync(schedule.Recipients, $"{company} — scheduled report",
+                var result = await delivery.DeliverAsync(schedule.MspOrganizationId, schedule.Recipients, $"{company} — scheduled report",
                     $"{company}-report.csv", csv, ct);
                 run.Delivered = result.Delivered;
                 run.DeliveryNote = result.Note;

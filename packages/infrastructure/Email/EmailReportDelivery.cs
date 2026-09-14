@@ -12,12 +12,12 @@ namespace Desk.Infrastructure.Email;
 /// </summary>
 public sealed class EmailReportDelivery(IEmailSender email, ILogger<EmailReportDelivery> logger) : IReportDelivery
 {
-    public async Task<ReportDeliveryResult> DeliverAsync(string? recipients, string subject, string fileName, string csv, CancellationToken ct = default)
+    public async Task<ReportDeliveryResult> DeliverAsync(Guid organizationId, string? recipients, string subject, string fileName, string csv, CancellationToken ct = default)
     {
         var (valid, invalid) = EmailAddresses.Parse(recipients);
         if (valid.Count == 0 && invalid.Count == 0)
             return new(false, "No recipients set — report available in the portal.");
-        if (!email.IsConfigured)
+        if (!(await email.StatusAsync(organizationId, ct)).Configured)
             return new(false, "Email delivery is not configured; report available for download in the portal.");
         if (valid.Count == 0)
             return new(false, $"No valid email address in recipients ({string.Join(", ", invalid)}); report available in the portal.");
@@ -26,7 +26,7 @@ public sealed class EmailReportDelivery(IEmailSender email, ILogger<EmailReportD
 
         try
         {
-            await email.SendAsync(new EmailMessage(
+            await email.SendAsync(organizationId, new EmailMessage(
                 valid, subject,
                 $"{subject}\n\nThe report is attached as {fileName}. It is also available to download in the portal.\n",
                 Attachments: [new EmailAttachment(fileName, "text/csv", Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv)).ToArray())]), ct);

@@ -80,9 +80,9 @@ public class StaffReportTests
     private sealed class FakeEmail(bool configured = true) : IEmailSender
     {
         public List<EmailMessage> Sent { get; } = [];
-        public bool IsConfigured => configured;
-        public string? FromAddress => "reports@techpio.test";
-        public Task SendAsync(EmailMessage message, CancellationToken ct = default) { Sent.Add(message); return Task.CompletedTask; }
+        public Task<EmailSenderStatus> StatusAsync(Guid organizationId, CancellationToken ct = default)
+            => Task.FromResult(configured ? new EmailSenderStatus(true, "reports@techpio.test", "organization") : EmailSenderStatus.None);
+        public Task SendAsync(Guid organizationId, EmailMessage message, CancellationToken ct = default) { Sent.Add(message); return Task.CompletedTask; }
     }
 
     private sealed record Org(Guid Id, Guid Conn, Guid Client, Guid Ticket, Guid Person);

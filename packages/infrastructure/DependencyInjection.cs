@@ -114,9 +114,18 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.ControlPanel.IAccountSettingsService, Desk.Infrastructure.ControlPanel.AccountSettingsService>();
         // Email is off until the operator sets Email__Smtp__Host and Email__Smtp__From on the server;
         // until then report runs say "not configured" instead of claiming a send.
-        services.AddSingleton(config.GetSection("Email:Smtp").Get<Desk.Infrastructure.Email.SmtpOptions>() ?? new Desk.Infrastructure.Email.SmtpOptions());
-        services.AddSingleton<Desk.Application.Common.IEmailSender, Desk.Infrastructure.Email.SmtpEmailSender>();
-        services.AddSingleton<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.Email.EmailReportDelivery>();
+        // An organization's own account (entered on Integration Health) wins over this server fallback.
+        services.AddSingleton(new Desk.Infrastructure.Email.SmtpOptions
+        {
+            Host = config["Email:Smtp:Host"], Port = config.GetValue("Email:Smtp:Port", 587),
+            Username = config["Email:Smtp:Username"], Password = config["Email:Smtp:Password"],
+            From = config["Email:Smtp:From"], FromName = config["Email:Smtp:FromName"] is { Length: > 0 } n ? n : "Desk Portal",
+            Security = config["Email:Smtp:Security"] is { Length: > 0 } sec ? sec : "StartTls",
+            BlockPrivateHosts = config.GetValue("Connectors:BlockPrivateEgress", false),
+        });
+        services.AddScoped<Desk.Application.Common.IEmailSender, Desk.Infrastructure.Email.SmtpEmailSender>();
+        services.AddScoped<Desk.Application.Common.IEmailSettingsService, Desk.Infrastructure.Email.EmailSettingsService>();
+        services.AddScoped<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.Email.EmailReportDelivery>();
         services.AddScoped<Desk.Application.ControlPanel.IScheduledReportRunner, Desk.Infrastructure.ControlPanel.ScheduledReportRunner>();
         // MSP staff reports (technician productivity, client QBRs)
         services.AddScoped<Desk.Infrastructure.Reporting.TechnicianReportBuilder>();

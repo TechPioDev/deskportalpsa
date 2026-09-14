@@ -15,6 +15,18 @@ import {
 // httpOnly session cookie server-side. No token is ever held in client JavaScript.
 const BFF_BASE = '/api/bff';
 
+/** The organization's own mail account. The password is write-only: `hasPassword` is all that comes back. */
+const EmailSettingsSchema = z.object({
+  hasOwnAccount: z.boolean(), host: z.string().nullable(), port: z.number(), security: z.string(),
+  username: z.string().nullable(), hasPassword: z.boolean(), fromAddress: z.string().nullable(), fromName: z.string().nullable(),
+  status: z.object({ configured: z.boolean(), fromAddress: z.string().nullable(), source: z.string() }),
+});
+export type EmailSettings = z.infer<typeof EmailSettingsSchema>;
+/** `password`: null keeps the stored one, '' removes it. */
+export type EmailSettingsInput = {
+  host: string; port: number; security: string; username: string | null; password: string | null; fromAddress: string; fromName: string | null;
+};
+
 /** Report kind / frequency are enums serialized as numbers by the API. */
 export const REPORT_KIND = { TechnicianProductivity: 0, ClientQbr: 1 } as const;
 export const REPORT_FREQUENCY = { Daily: 0, Weekly: 1, Monthly: 2, Quarterly: 3 } as const;
@@ -370,7 +382,11 @@ export const api = {
     if (companyId) q.set('companyId', companyId);
     return `${BFF_BASE}/api/reports/technician-productivity.pdf?${q}`;
   },
-  emailStatus: () => request('/api/admin/email', z.object({ configured: z.boolean(), from: z.string().nullable() })),
+  emailStatus: () => request('/api/admin/email', z.object({ configured: z.boolean(), from: z.string().nullable(), source: z.string() })),
+  emailSettings: () => request('/api/admin/email/settings', EmailSettingsSchema),
+  saveEmailSettings: (input: EmailSettingsInput) =>
+    request('/api/admin/email/settings', EmailSettingsSchema, { method: 'PUT', body: JSON.stringify(input) }),
+  removeEmailSettings: () => request('/api/admin/email/settings', EmailSettingsSchema, { method: 'DELETE' }),
   sendTestEmail: (to?: string) => request('/api/admin/email/test', z.object({ sent: z.boolean(), message: z.string() }),
     { method: 'POST', body: JSON.stringify({ to: to || null }) }),
   staffUsers: (params: UserListParams = {}) => {

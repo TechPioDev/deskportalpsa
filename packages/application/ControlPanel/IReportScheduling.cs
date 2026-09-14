@@ -10,7 +10,7 @@ public sealed record ReportDeliveryResult(bool Delivered, string? Note);
 /// </summary>
 public interface IReportDelivery
 {
-    Task<ReportDeliveryResult> DeliverAsync(string? recipients, string subject, string fileName, string csv, CancellationToken ct = default);
+    Task<ReportDeliveryResult> DeliverAsync(Guid organizationId, string? recipients, string subject, string fileName, string csv, CancellationToken ct = default);
 }
 
 /// <summary>

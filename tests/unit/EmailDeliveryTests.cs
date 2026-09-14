@@ -13,13 +13,15 @@ namespace Desk.Tests.Unit;
 /// </summary>
 public class EmailDeliveryTests
 {
+    private static readonly Guid Org = Guid.NewGuid();
+
     private sealed class FakeSender(bool configured = true, Exception? fail = null) : IEmailSender
     {
         public List<EmailMessage> Sent { get; } = [];
-        public bool IsConfigured => configured;
-        public string? FromAddress => configured ? "reports@techpio.test" : null;
+        public Task<EmailSenderStatus> StatusAsync(Guid organizationId, CancellationToken ct = default)
+            => Task.FromResult(configured ? new EmailSenderStatus(true, "reports@techpio.test", "organization") : EmailSenderStatus.None);
 
-        public Task SendAsync(EmailMessage message, CancellationToken ct = default)
+        public Task SendAsync(Guid organizationId, EmailMessage message, CancellationToken ct = default)
         {
             if (fail is not null) throw fail;
             Sent.Add(message);
@@ -43,7 +45,7 @@ public class EmailDeliveryTests
     {
         var sender = new FakeSender();
 
-        var result = await Delivery(sender).DeliverAsync("ops@acme.com, it@acme.com", "Acme — scheduled report", "Acme-report.csv", "Metric,Value\nOpen,3");
+        var result = await Delivery(sender).DeliverAsync(Org, "ops@acme.com, it@acme.com", "Acme — scheduled report", "Acme-report.csv", "Metric,Value\nOpen,3");
 
         result.Delivered.Should().BeTrue();
         result.Note.Should().Be("Emailed to 2 recipients.");
@@ -61,7 +63,7 @@ public class EmailDeliveryTests
     {
         var sender = new FakeSender(configured: false);
 
-        var result = await Delivery(sender).DeliverAsync("ops@acme.com", "s", "f.csv", "x");
+        var result = await Delivery(sender).DeliverAsync(Org, "ops@acme.com", "s", "f.csv", "x");
 
         result.Delivered.Should().BeFalse();
         result.Note.Should().Contain("not configured");
@@ -73,7 +75,7 @@ public class EmailDeliveryTests
     {
         var sender = new FakeSender();
 
-        var result = await Delivery(sender).DeliverAsync("ops@acme.com; opsacme.com", "s", "f.csv", "x");
+        var result = await Delivery(sender).DeliverAsync(Org, "ops@acme.com; opsacme.com", "s", "f.csv", "x");
 
         result.Delivered.Should().BeTrue();
         result.Note.Should().Be("Emailed to 1 recipient. Skipped invalid: opsacme.com.");
@@ -84,7 +86,7 @@ public class EmailDeliveryTests
     {
         var sender = new FakeSender(fail: new InvalidOperationException("535 authentication failed"));
 
-        var result = await Delivery(sender).DeliverAsync("ops@acme.com", "s", "f.csv", "x");
+        var result = await Delivery(sender).DeliverAsync(Org, "ops@acme.com", "s", "f.csv", "x");
 
         result.Delivered.Should().BeFalse();
         result.Note.Should().Contain("535 authentication failed").And.Contain("available in the portal");
@@ -93,7 +95,7 @@ public class EmailDeliveryTests
     [Fact]
     public async Task No_recipients_means_portal_only()
     {
-        var result = await Delivery(new FakeSender()).DeliverAsync("  ", "s", "f.csv", "x");
+        var result = await Delivery(new FakeSender()).DeliverAsync(Org, "  ", "s", "f.csv", "x");
 
         result.Should().BeEquivalentTo(new { Delivered = false, Note = "No recipients set — report available in the portal." });
     }
@@ -101,9 +103,7 @@ public class EmailDeliveryTests
     [Fact]
     public void Several_recipients_are_blind_copied_so_no_one_receives_the_others_addresses()
     {
-        var options = new SmtpOptions { Host = "smtp.test", From = "reports@techpio.test" };
-
-        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com", "b@acme.com"], "s", "body"), options);
+        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com", "b@acme.com"], "s", "body"), "reports@techpio.test", "Desk Portal");
 
         mime.To.Mailboxes.Select(m => m.Address).Should().Equal("reports@techpio.test");
         mime.Bcc.Mailboxes.Select(m => m.Address).Should().Equal("a@acme.com", "b@acme.com");
@@ -112,9 +112,7 @@ public class EmailDeliveryTests
     [Fact]
     public void A_single_recipient_is_addressed_directly()
     {
-        var options = new SmtpOptions { Host = "smtp.test", From = "reports@techpio.test" };
-
-        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com"], "s", "body"), options);
+        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com"], "s", "body"), "reports@techpio.test", "Desk Portal");
 
         mime.To.Mailboxes.Select(m => m.Address).Should().Equal("a@acme.com");
         mime.Bcc.Count.Should().Be(0);
