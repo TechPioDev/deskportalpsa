@@ -112,7 +112,11 @@ public static class DependencyInjection
         // Client control panel (CP-1 → CP-4 + reports)
         services.AddScoped<Desk.Application.ControlPanel.IControlPanelService, Desk.Infrastructure.ControlPanel.ControlPanelService>();
         services.AddScoped<Desk.Application.ControlPanel.IAccountSettingsService, Desk.Infrastructure.ControlPanel.AccountSettingsService>();
-        services.AddSingleton<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.ControlPanel.LoggingReportDelivery>();
+        // Email is off until the operator sets Email__Smtp__Host and Email__Smtp__From on the server;
+        // until then report runs say "not configured" instead of claiming a send.
+        services.AddSingleton(config.GetSection("Email:Smtp").Get<Desk.Infrastructure.Email.SmtpOptions>() ?? new Desk.Infrastructure.Email.SmtpOptions());
+        services.AddSingleton<Desk.Application.Common.IEmailSender, Desk.Infrastructure.Email.SmtpEmailSender>();
+        services.AddSingleton<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.Email.EmailReportDelivery>();
         services.AddScoped<Desk.Application.ControlPanel.IScheduledReportRunner, Desk.Infrastructure.ControlPanel.ScheduledReportRunner>();
         services.AddScoped<Desk.Application.ControlPanel.IClientContentService, Desk.Infrastructure.ControlPanel.ClientContentService>();
 

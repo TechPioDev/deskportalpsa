@@ -55,6 +55,15 @@ services:
       Bootstrap__OrganizationName: ${BOOTSTRAP_ORG_NAME:?}
       Bootstrap__OrganizationSlug: ${BOOTSTRAP_ORG_SLUG:?}
       Connectors__BlockPrivateEgress: "true"
+      # Outbound email (scheduled reports). Off while SMTP_HOST is empty. Set these in .env.prod on the
+      # server only — the password never goes into the repository or the portal UI.
+      Email__Smtp__Host: ${SMTP_HOST:-}
+      Email__Smtp__Port: ${SMTP_PORT:-587}
+      Email__Smtp__Security: ${SMTP_SECURITY:-StartTls}
+      Email__Smtp__Username: ${SMTP_USERNAME:-}
+      Email__Smtp__Password: ${SMTP_PASSWORD:-}
+      Email__Smtp__From: ${SMTP_FROM:-}
+      Email__Smtp__FromName: ${SMTP_FROM_NAME:-Desk Portal}
     volumes: ["desk_attachments:/data/attachments"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -70,6 +79,15 @@ services:
       Attachments__SigningKey: ${ATTACHMENT_SIGNING_KEY}
       Attachments__PublicBaseUrl: "https://${PUBLIC_HOST}"
       Sync__PollIntervalMinutes: ${SYNC_POLL_MINUTES:-5}
+      # Outbound email (scheduled reports). Off while SMTP_HOST is empty. Set these in .env.prod on the
+      # server only — the password never goes into the repository or the portal UI.
+      Email__Smtp__Host: ${SMTP_HOST:-}
+      Email__Smtp__Port: ${SMTP_PORT:-587}
+      Email__Smtp__Security: ${SMTP_SECURITY:-StartTls}
+      Email__Smtp__Username: ${SMTP_USERNAME:-}
+      Email__Smtp__Password: ${SMTP_PASSWORD:-}
+      Email__Smtp__From: ${SMTP_FROM:-}
+      Email__Smtp__FromName: ${SMTP_FROM_NAME:-Desk Portal}
     volumes: ["desk_attachments:/data/attachments"]
     depends_on:
       postgres: { condition: service_healthy }

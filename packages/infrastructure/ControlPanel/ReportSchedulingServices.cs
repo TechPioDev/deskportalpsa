@@ -7,24 +7,6 @@ using Microsoft.Extensions.Logging;
 namespace Desk.Infrastructure.ControlPanel;
 
 /// <summary>
-/// Default report delivery: logs and reports "not delivered by email". Reports are always stored for
-/// in-portal download, so scheduling works fully without an email provider. Swap this for an SMTP /
-/// provider-backed implementation (environment-gated) to enable actual email delivery.
-/// </summary>
-public sealed class LoggingReportDelivery(ILogger<LoggingReportDelivery> logger) : IReportDelivery
-{
-    public Task<ReportDeliveryResult> DeliverAsync(string? recipients, string subject, string fileName, string csv, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(recipients))
-            return Task.FromResult(new ReportDeliveryResult(false, "No recipients set — report available in the portal."));
-
-        logger.LogInformation("Scheduled report '{Subject}' ({Bytes} bytes) queued for {Recipients} (email delivery not configured).",
-            subject, csv.Length, recipients);
-        return Task.FromResult(new ReportDeliveryResult(false, "Email delivery is not configured; report available for download in the portal."));
-    }
-}
-
-/// <summary>
 /// Generates + delivers reports for every enabled schedule that is due. Runs under whatever scope the
 /// caller establishes — the worker sets platform scope so this sees schedules across all tenants.
 /// </summary>

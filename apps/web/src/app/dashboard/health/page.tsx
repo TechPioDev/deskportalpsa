@@ -89,6 +89,8 @@ export default function HealthPage() {
         </div>
       </div>
 
+      <EmailDeliveryCard />
+
       {isLoading && <div className="h-40 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]" />}
 
       {(isError || (data && rows.length === 0)) && (
@@ -281,6 +283,52 @@ function UnsyncedPanel() {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Outbound email: whether the server has a mail account, and a one-click proof that it works.
+ * The account itself is set on the server, not here, so it is shown but never editable.
+ */
+function EmailDeliveryCard() {
+  const { data, isError } = useQuery({ queryKey: ['email-status'], queryFn: api.emailStatus, retry: false });
+  const [to, setTo] = useState('');
+  const test = useMutation({ mutationFn: () => api.sendTestEmail(to.trim() || undefined) });
+  if (isError || !data) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+      <span className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${data.configured
+        ? 'bg-green-50 text-green-600 dark:bg-green-950/50 dark:text-green-300'
+        : 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+        <Mail size={17} aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold">Email delivery</div>
+        <div className="text-xs text-[var(--muted)]">
+          {data.configured
+            ? <>Scheduled reports are emailed from <span className="font-medium text-[var(--fg)]">{data.from}</span>.</>
+            : 'Not set up — scheduled reports are saved in the portal but not emailed. The mail account is added on the server.'}
+        </div>
+      </div>
+      {data.configured && (
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); test.mutate(); }}>
+          <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="Your address"
+            aria-label="Send test email to"
+            className="w-52 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-sm outline-none focus:border-brand" />
+          <button type="submit" disabled={test.isPending}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
+            {test.isPending ? 'Sending…' : 'Send test email'}
+          </button>
+          {test.data && (
+            <span role="status" className={`text-xs font-medium ${test.data.sent ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              {test.data.message}
+            </span>
+          )}
+          {test.isError && <span role="status" className="text-xs font-medium text-red-600 dark:text-red-400">Could not reach the server.</span>}
+        </form>
       )}
     </div>
   );
