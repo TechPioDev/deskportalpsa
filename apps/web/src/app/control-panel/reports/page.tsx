@@ -93,7 +93,7 @@ export default function ReportsPage() {
               </button>
             </div>
             <div className="flex items-start gap-2 px-5 pt-3 text-xs text-[var(--faint)]">
-              <Info size={13} className="mt-0.5 shrink-0" /> <p>Reports generate automatically and appear in History below for download. Email delivery is added when your provider is configured.</p>
+              <Info size={13} className="mt-0.5 shrink-0" /> <p>Reports generate automatically and appear in History below. They are also emailed to the recipients once email is set up for the portal.</p>
             </div>
             <div className="divide-y divide-[var(--border)]">
               {schedules?.length === 0 && !draft && <div className="px-5 py-6 text-center text-sm text-[var(--muted)]">No schedules yet.</div>}

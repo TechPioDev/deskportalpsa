@@ -480,6 +480,36 @@ public sealed class ReportScheduleConfig : IEntityTypeConfiguration<ReportSchedu
     }
 }
 
+public sealed class StaffReportScheduleConfig : IEntityTypeConfiguration<Desk.Domain.Reporting.StaffReportSchedule>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Reporting.StaffReportSchedule> b)
+    {
+        b.ToTable("staff_report_schedules");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Recipients).HasMaxLength(2000);
+        b.HasIndex(x => new { x.IsEnabled, x.NextRunAt });
+        b.HasOne<ClientCompany>().WithMany().HasForeignKey(x => x.ClientCompanyId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class StaffReportRunConfig : IEntityTypeConfiguration<Desk.Domain.Reporting.StaffReportRun>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Reporting.StaffReportRun> b)
+    {
+        b.ToTable("staff_report_runs");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Title).HasMaxLength(300).IsRequired();
+        b.Property(x => x.Summary).HasMaxLength(500);
+        b.Property(x => x.DeliveryNote).HasMaxLength(500);
+        b.HasIndex(x => x.GeneratedAt);
+        // A deleted schedule keeps its history: the runs were sent, and what was sent stays downloadable.
+        b.HasOne<Desk.Domain.Reporting.StaffReportSchedule>().WithMany()
+            .HasForeignKey(x => x.StaffReportScheduleId).OnDelete(DeleteBehavior.SetNull);
+        b.HasOne<ClientCompany>().WithMany().HasForeignKey(x => x.ClientCompanyId).OnDelete(DeleteBehavior.SetNull);
+    }
+}
+
 public sealed class ReportRunConfig : IEntityTypeConfiguration<ReportRun>
 {
     public void Configure(EntityTypeBuilder<ReportRun> b)
