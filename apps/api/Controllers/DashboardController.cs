@@ -124,9 +124,10 @@ public sealed class DashboardController(
         var rows = await metrics.TeamAsync(q.ToFilter(), q.ToWeights(), ct);
         var sb = new StringBuilder();
         sb.AppendLine("# " + ProductivityScore.Disclaimer);
-        sb.AppendLine("TechnicianExternalId,Resolved,SlaCompliancePct,ProductivityScore");
+        sb.AppendLine("Technician,TechnicianExternalId,Resolved,SlaCompliancePct,ProductivityScore");
         foreach (var r in rows)
             sb.AppendLine(string.Join(',',
+                Csv(r.TechnicianName ?? r.TechnicianExternalId),
                 Csv(r.TechnicianExternalId),
                 r.Resolved.ToString(CultureInfo.InvariantCulture),
                 r.SlaCompliancePct.ToString(CultureInfo.InvariantCulture),

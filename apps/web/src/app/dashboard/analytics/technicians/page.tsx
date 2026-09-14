@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { Suspense, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Clock, CheckCircle2, Users, Gauge, Info, Building2 } from 'lucide-react';
+import { Clock, CheckCircle2, Users, Gauge, Info, Building2, Download } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { TechnicianDay } from '@/lib/types';
 import { BarChart, LineChart } from '@/components/charts';
+import { PERIODS, periodRange, describeRange, type PeriodKey } from '@/lib/periods';
 
 /**
  * Hours and output per technician.
@@ -17,12 +18,6 @@ import { BarChart, LineChart } from '@/components/charts';
  * first view in the product that works for a technician with no PSA account — every figure here is
  * attributed through the portal identity, which is the only one most of this team has.
  */
-
-const PRESETS = [
-  { label: 'Last 7 days', days: 7 },
-  { label: 'Last 30 days', days: 30 },
-  { label: 'Last 90 days', days: 90 },
-] as const;
 
 function isoDay(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -64,16 +59,19 @@ function TechnicianProductivity() {
   const urlFrom = params.get('from');
   const urlTo = params.get('to');
 
-  const [days, setDays] = useState<number>(30);
+  const [period, setPeriod] = useState<PeriodKey>('30d');
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(
     urlFrom && urlTo ? { from: urlFrom.slice(0, 10), to: urlTo.slice(0, 10) } : null);
 
   const range = useMemo(() => {
     if (custom) return { from: `${custom.from}T00:00:00Z`, to: `${custom.to}T23:59:59Z` };
-    const to = new Date();
-    const from = new Date(Date.now() - days * 86400_000);
+    const { from, to } = periodRange(period);
     return { from: from.toISOString(), to: to.toISOString() };
-  }, [custom, days]);
+  }, [custom, period]);
+  const rangeLabel = custom
+    ? describeRange(new Date(`${custom.from}T00:00:00`), new Date(`${custom.to}T00:00:00`))
+    : describeRange(new Date(range.from), new Date(range.to));
+  const periodLabel = custom ? 'Custom range' : PERIODS.find((p) => p.key === period)!.label;
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['daily', range.from, range.to, companyId],
@@ -133,13 +131,13 @@ function TechnicianProductivity() {
         <div>
           <h1 className="text-xl font-semibold">Technician productivity</h1>
           <p className="text-sm text-[var(--muted)]">
-            Hours logged and tickets resolved, per person, for the window you choose.
+            Hours logged and tickets resolved, per person · <span className="tabular-nums">{rangeLabel}</span>
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <select
-            value={custom ? 'custom' : String(days)}
+            value={custom ? 'custom' : period}
             onChange={(e) => {
               if (e.target.value === 'custom') {
                 const to = new Date();
@@ -147,13 +145,13 @@ function TechnicianProductivity() {
                 setCustom({ from: isoDay(from), to: isoDay(to) });
               } else {
                 setCustom(null);
-                setDays(Number(e.target.value));
+                setPeriod(e.target.value as PeriodKey);
               }
             }}
             aria-label="Date range"
             className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-brand"
           >
-            {PRESETS.map((p) => <option key={p.days} value={p.days}>{p.label}</option>)}
+            {PERIODS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
             <option value="custom">Custom range…</option>
           </select>
 
@@ -222,7 +220,17 @@ function TechnicianProductivity() {
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <h2 className="text-sm font-semibold">By technician</h2>
-          <span className="text-xs text-[var(--muted)]">Sorted by hours logged</span>
+          <span className="flex items-center gap-3">
+            <span className="text-xs text-[var(--muted)]">Sorted by hours logged</span>
+            {perTech.length > 0 && (
+              <button
+                onClick={() => downloadCsv(perTech, { period: periodLabel, range: rangeLabel, client: companyId ? (companyName || 'one client') : null })}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]"
+              >
+                <Download size={13} aria-hidden="true" /> Download CSV
+              </button>
+            )}
+          </span>
         </div>
 
         {perTech.length === 0 ? (
@@ -280,6 +288,35 @@ function TechnicianProductivity() {
       </p>
     </div>
   );
+}
+
+/**
+ * Exactly the table on screen, by name — the file goes into spreadsheets and QBR decks, where an id
+ * means nothing. The period travels in the file so a copy forwarded on its own still says what it covers.
+ */
+function downloadCsv(rows: PerTech[], meta: { period: string; range: string; client: string | null }) {
+  const cell = (v: string | number) => {
+    const s = String(v);
+    // Quote anything that could split a column, and neutralise a leading formula character so a
+    // name like "=HYPERLINK(...)" opens as text rather than running in Excel.
+    const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
+    return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  };
+  const lines = [
+    [`Technician productivity`, meta.period, meta.range, meta.client ? `Client: ${meta.client}` : 'All clients'].map(cell).join(','),
+    ['Technician', 'Hours', 'Billable hours', 'Resolved', 'Tickets touched', 'Hours per ticket', 'Active days'].join(','),
+    ...rows.map((t) => [
+      t.name, t.hours.toFixed(2), t.billableHours.toFixed(2), t.resolved, t.touched,
+      t.touched > 0 ? (t.hours / t.touched).toFixed(2) : '', t.days,
+    ].map(cell).join(',')),
+  ];
+  // BOM first: without it Excel reads UTF-8 as Latin-1 and mangles any accented name.
+  const blob = new Blob([String.fromCharCode(0xfeff) + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `technician-productivity-${meta.period.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function Tile({ icon: Icon, label, value, sub }: {
