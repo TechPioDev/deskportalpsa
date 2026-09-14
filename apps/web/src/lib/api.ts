@@ -328,6 +328,9 @@ export const api = {
     request(`/api/admin/mappings/versions?provider=${provider}&connectionId=${connectionId}`,
       MappingSnapshotStatusSchema, { method: 'POST' }) as Promise<MappingSnapshotStatus>,
   health: () => request('/api/admin/health', z.array(HealthSchema)) as Promise<Health[]>,
+  emailStatus: () => request('/api/admin/email', z.object({ configured: z.boolean(), from: z.string().nullable() })),
+  sendTestEmail: (to?: string) => request('/api/admin/email/test', z.object({ sent: z.boolean(), message: z.string() }),
+    { method: 'POST', body: JSON.stringify({ to: to || null }) }),
   staffUsers: (params: UserListParams = {}) => {
     const qs = new URLSearchParams();
     if (params.search) qs.set('search', params.search);
