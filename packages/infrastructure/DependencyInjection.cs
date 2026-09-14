@@ -118,6 +118,12 @@ public static class DependencyInjection
         services.AddSingleton<Desk.Application.Common.IEmailSender, Desk.Infrastructure.Email.SmtpEmailSender>();
         services.AddSingleton<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.Email.EmailReportDelivery>();
         services.AddScoped<Desk.Application.ControlPanel.IScheduledReportRunner, Desk.Infrastructure.ControlPanel.ScheduledReportRunner>();
+        // MSP staff reports (technician productivity, client QBRs)
+        services.AddScoped<Desk.Infrastructure.Reporting.TechnicianReportBuilder>();
+        services.AddScoped<Desk.Infrastructure.Reporting.IStaffReportContent, Desk.Infrastructure.Reporting.StaffReportContent>();
+        services.AddScoped<Desk.Infrastructure.Reporting.StaffReportGenerator>();
+        services.AddScoped<Desk.Application.Reporting.IStaffReportService, Desk.Infrastructure.Reporting.StaffReportService>();
+        services.AddSingleton<Desk.Application.Reporting.IStaffReportRunner, Desk.Infrastructure.Reporting.StaffReportRunner>();
         services.AddScoped<Desk.Application.ControlPanel.IClientContentService, Desk.Infrastructure.ControlPanel.ClientContentService>();
 
         // Analytics (Phase 7)

@@ -20,5 +20,11 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="MailKit" />
+    <PackageReference Include="PDFsharp-MigraDoc" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Report PDFs embed their own font: the Linux containers have none installed. SIL OFL 1.1. -->
+    <EmbeddedResource Include="Reporting\Fonts\SourceSans3-Regular.ttf" LogicalName="Desk.Fonts.SourceSans3-Regular.ttf" />
+    <EmbeddedResource Include="Reporting\Fonts\SourceSans3-Bold.ttf" LogicalName="Desk.Fonts.SourceSans3-Bold.ttf" />
   </ItemGroup>
 </Project>

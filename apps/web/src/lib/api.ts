@@ -15,6 +15,29 @@ import {
 // httpOnly session cookie server-side. No token is ever held in client JavaScript.
 const BFF_BASE = '/api/bff';
 
+/** Report kind / frequency are enums serialized as numbers by the API. */
+export const REPORT_KIND = { TechnicianProductivity: 0, ClientQbr: 1 } as const;
+export const REPORT_FREQUENCY = { Daily: 0, Weekly: 1, Monthly: 2, Quarterly: 3 } as const;
+
+const StaffReportScheduleSchema = z.object({
+  id: z.string(), name: z.string(), kind: z.number(), frequency: z.number(),
+  clientCompanyId: z.string().nullable(), clientName: z.string().nullable(),
+  recipients: z.string().nullable(), isEnabled: z.boolean(),
+  lastRunAt: z.string().nullable(), nextRunAt: z.string(),
+});
+export type StaffReportSchedule = z.infer<typeof StaffReportScheduleSchema>;
+export type StaffReportScheduleInput = {
+  id?: string | null; name: string; kind: number; frequency: number;
+  clientCompanyId: string | null; recipients: string; isEnabled: boolean;
+};
+
+const StaffReportRunSchema = z.object({
+  id: z.string(), scheduleId: z.string().nullable(), kind: z.number(), title: z.string(), summary: z.string(),
+  periodStart: z.string(), periodEnd: z.string(), generatedAt: z.string(),
+  delivered: z.boolean(), deliveryNote: z.string().nullable(),
+});
+export type StaffReportRun = z.infer<typeof StaffReportRunSchema>;
+
 async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BFF_BASE}${path}`, {
     ...init,
@@ -328,6 +351,23 @@ export const api = {
     request(`/api/admin/mappings/versions?provider=${provider}&connectionId=${connectionId}`,
       MappingSnapshotStatusSchema, { method: 'POST' }) as Promise<MappingSnapshotStatus>,
   health: () => request('/api/admin/health', z.array(HealthSchema)) as Promise<Health[]>,
+  // MSP staff reports: scheduled technician productivity (and client QBRs), emailed as PDF + CSV.
+  reportSettings: () => request('/api/reports/settings', z.object({ timeZone: z.string() })),
+  saveReportSettings: (timeZone: string) =>
+    request('/api/reports/settings', z.object({ timeZone: z.string() }), { method: 'PUT', body: JSON.stringify({ timeZone }) }),
+  reportClients: () => request('/api/reports/clients', z.array(z.object({ id: z.string(), name: z.string() }))),
+  staffReportSchedules: () => request('/api/reports/schedules', z.array(StaffReportScheduleSchema)),
+  saveStaffReportSchedule: (input: StaffReportScheduleInput) =>
+    request('/api/reports/schedules', StaffReportScheduleSchema, { method: 'POST', body: JSON.stringify(input) }),
+  deleteStaffReportSchedule: (id: string) => request(`/api/reports/schedules/${id}`, z.void(), { method: 'DELETE' }),
+  runStaffReport: (id: string) => request(`/api/reports/schedules/${id}/run`, StaffReportRunSchema, { method: 'POST' }),
+  staffReportRuns: () => request('/api/reports/runs?take=50', z.array(StaffReportRunSchema)),
+  staffReportFileUrl: (id: string, format: 'pdf' | 'csv') => `${BFF_BASE}/api/reports/runs/${id}/${format}`,
+  technicianPdfUrl: (fromIso: string, toIso: string, label: string, companyId?: string) => {
+    const q = new URLSearchParams({ from: fromIso, to: toIso, label });
+    if (companyId) q.set('companyId', companyId);
+    return `${BFF_BASE}/api/reports/technician-productivity.pdf?${q}`;
+  },
   emailStatus: () => request('/api/admin/email', z.object({ configured: z.boolean(), from: z.string().nullable() })),
   sendTestEmail: (to?: string) => request('/api/admin/email/test', z.object({ sent: z.boolean(), message: z.string() }),
     { method: 'POST', body: JSON.stringify({ to: to || null }) }),

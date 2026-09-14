@@ -79,6 +79,9 @@ function TechnicianProductivity() {
   });
 
   const rows: TechnicianDay[] = useMemo(() => data ?? [], [data]);
+  // The PDF is a team report (it names everyone), so only offer it to people who can see the team.
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
+  const canExportTeamPdf = !!me?.permissions?.includes('productivity.team.view');
 
   // Per technician, across the whole window.
   const perTech = useMemo(() => {
@@ -229,6 +232,14 @@ function TechnicianProductivity() {
               >
                 <Download size={13} aria-hidden="true" /> Download CSV
               </button>
+            )}
+            {perTech.length > 0 && canExportTeamPdf && (
+              <a
+                href={api.technicianPdfUrl(range.from, range.to, periodLabel, companyId ?? undefined)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]"
+              >
+                <Download size={13} aria-hidden="true" /> PDF
+              </a>
             )}
           </span>
         </div>

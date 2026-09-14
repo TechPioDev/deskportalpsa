@@ -60,6 +60,8 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<FaqArticle> FaqArticles => Set<FaqArticle>();
     public DbSet<ReportSchedule> ReportSchedules => Set<ReportSchedule>();
     public DbSet<ReportRun> ReportRuns => Set<ReportRun>();
+    public DbSet<Desk.Domain.Reporting.StaffReportSchedule> StaffReportSchedules => Set<Desk.Domain.Reporting.StaffReportSchedule>();
+    public DbSet<Desk.Domain.Reporting.StaffReportRun> StaffReportRuns => Set<Desk.Domain.Reporting.StaffReportRun>();
     public DbSet<Desk.Domain.Marketing.Enquiry> Enquiries => Set<Desk.Domain.Marketing.Enquiry>();
 
     // Encrypted PSA-credential storage — infrastructure plumbing, not a domain concept, so it is
