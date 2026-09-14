@@ -363,6 +363,8 @@ export const api = {
   runStaffReport: (id: string) => request(`/api/reports/schedules/${id}/run`, StaffReportRunSchema, { method: 'POST' }),
   staffReportRuns: () => request('/api/reports/runs?take=50', z.array(StaffReportRunSchema)),
   staffReportFileUrl: (id: string, format: 'pdf' | 'csv') => `${BFF_BASE}/api/reports/runs/${id}/${format}`,
+  clientQbrPdfUrl: (companyId: string, year: number, quarter: number) =>
+    `${BFF_BASE}/api/reports/qbr.pdf?${new URLSearchParams({ companyId, year: String(year), quarter: String(quarter) })}`,
   technicianPdfUrl: (fromIso: string, toIso: string, label: string, companyId?: string) => {
     const q = new URLSearchParams({ from: fromIso, to: toIso, label });
     if (companyId) q.set('companyId', companyId);

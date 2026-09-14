@@ -120,6 +120,7 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.ControlPanel.IScheduledReportRunner, Desk.Infrastructure.ControlPanel.ScheduledReportRunner>();
         // MSP staff reports (technician productivity, client QBRs)
         services.AddScoped<Desk.Infrastructure.Reporting.TechnicianReportBuilder>();
+        services.AddScoped<Desk.Infrastructure.Reporting.ClientQbrBuilder>();
         services.AddScoped<Desk.Infrastructure.Reporting.IStaffReportContent, Desk.Infrastructure.Reporting.StaffReportContent>();
         services.AddScoped<Desk.Infrastructure.Reporting.StaffReportGenerator>();
         services.AddScoped<Desk.Application.Reporting.IStaffReportService, Desk.Infrastructure.Reporting.StaffReportService>();

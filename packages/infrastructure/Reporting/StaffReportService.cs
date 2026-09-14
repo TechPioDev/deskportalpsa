@@ -54,6 +54,7 @@ public sealed class StaffReportService(
     IAuditWriter audit,
     TimeProvider clock,
     TechnicianReportBuilder builder,
+    ClientQbrBuilder qbrs,
     StaffReportGenerator generator) : IStaffReportService
 {
     private Guid Org => tenant.OrganizationId ?? throw new TenantScopeMissingException();
@@ -171,6 +172,14 @@ public sealed class StaffReportService(
             : ($"{baseName}.csv", "text/csv", Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(run.Csv)).ToArray());
     }
 
+    public async Task<(string FileName, byte[] Content)> ClientQbrPdfAsync(Guid clientCompanyId, int year, int quarter, CancellationToken ct = default)
+    {
+        if (quarter is < 1 or > 4 || year is < 2000 or > 2100) throw new ValidationFailedException("Choose a quarter from 1 to 4.");
+        var start = new DateOnly(year, (quarter - 1) * 3 + 1, 1);
+        var q = await qbrs.BuildAsync(Org, clientCompanyId, StaffReportFrequency.Quarterly, start, start.AddMonths(3).AddDays(-1), ct);
+        return ($"{StaffReportGenerator.FileBase(q.Title)}.pdf", ClientQbrRenderer.ToPdf(q));
+    }
+
     public async Task<(string FileName, byte[] Content)> TechnicianPdfAsync(DateTimeOffset from, DateTimeOffset to, Guid? clientCompanyId, string label, CancellationToken ct = default)
     {
         if (to < from) throw new ValidationFailedException("The end of the range is before its start.");
@@ -283,7 +292,7 @@ public interface IStaffReportContent
         DateOnly start, DateOnly end, string label, CancellationToken ct);
 }
 
-public sealed class StaffReportContent(TechnicianReportBuilder technicianReports) : IStaffReportContent
+public sealed class StaffReportContent(TechnicianReportBuilder technicianReports, ClientQbrBuilder qbrs) : IStaffReportContent
 {
     public async Task<RenderedStaffReport> RenderAsync(StaffReportSchedule schedule, DateTimeOffset from, DateTimeOffset to,
         DateOnly start, DateOnly end, string label, CancellationToken ct)
@@ -302,6 +311,18 @@ public sealed class StaffReportContent(TechnicianReportBuilder technicianReports
                 if (r.Technicians.Count > 15) text.AppendLine($"  … and {r.Technicians.Count - 15} more in the attached report.");
                 text.AppendLine().AppendLine($"The full report is attached as PDF and CSV. Schedule: {schedule.Name}.");
                 return new RenderedStaffReport(r.Title, r.Summary, TechnicianReportRenderer.ToCsv(r), TechnicianReportRenderer.ToPdf(r), text.ToString());
+            }
+            case StaffReportKind.ClientQbr:
+            {
+                var clientId = schedule.ClientCompanyId ?? throw new ValidationFailedException("A business review needs a client.");
+                var q = await qbrs.BuildAsync(schedule.MspOrganizationId, clientId, schedule.Frequency, start, end, ct);
+                var text = new StringBuilder()
+                    .AppendLine(q.Title).AppendLine()
+                    .AppendLine($"{q.Current.Raised} tickets raised ({q.Previous.Raised} in {q.PreviousLabel}), {q.Current.Resolved} resolved, {q.Current.OpenAtEnd} open at the end.")
+                    .AppendLine($"{q.Current.Hours:0.##} hours worked, {q.Current.BillableHours:0.##} billable.")
+                    .AppendLine(q.Current.SlaPct is { } sla ? $"{sla:0.#}% resolved within SLA ({q.Current.WithinSla} of {q.Current.SlaEligible})." : "No resolved ticket carried an SLA target.")
+                    .AppendLine().AppendLine($"The full review is attached as PDF and CSV. Schedule: {schedule.Name}.");
+                return new RenderedStaffReport(q.Title, q.Summary, ClientQbrRenderer.ToCsv(q), ClientQbrRenderer.ToPdf(q), text.ToString());
             }
             default:
                 throw new ValidationFailedException("This report type is not available yet.");

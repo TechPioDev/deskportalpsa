@@ -134,6 +134,7 @@ public class StaffReportTests
             sp.GetRequiredService<TenantContext>(), clock));
         services.AddScoped<ITechnicianMetricsService>(sp => new TechnicianMetricsService(sp.GetRequiredService<DeskDbContext>(), new ProductivityScorer(), clock));
         services.AddScoped<TechnicianReportBuilder>();
+        services.AddScoped<ClientQbrBuilder>();
         services.AddScoped<IStaffReportContent, StaffReportContent>();
         services.AddScoped<StaffReportGenerator>();
         services.AddSingleton<IStaffReportRunner, StaffReportRunner>();
@@ -284,5 +285,104 @@ public class StaffReportTests
         // A name that starts like a formula stays text in the CSV.
         TechnicianReportRenderer.ToCsv(busy with { Technicians = [new TechnicianReportRow("=cmd", 1, 1, 0, 1, 1)] })
             .Should().Contain("'=cmd,1,1,0,1,1,1");
+    }
+
+    // ---- client business review ----------------------------------------------------------------
+
+    private static Ticket QbrTicket(Org org, Guid client, string raised, string? resolved, string? slaDue,
+        string priority = "NORMAL", string? category = null, string reference = "T", string status = "NEW") => new()
+    {
+        MspOrganizationId = org.Id, PsaConnectionId = org.Conn, Provider = ProviderType.AutotaskPsa, ClientCompanyId = client,
+        ExternalTicketId = reference, RequesterName = "R", RequesterEmail = "r@x.test", Title = "Ticket " + reference,
+        PortalStatus = status, PortalPriority = priority, PortalCategory = category,
+        CreatedAt = D(raised), PsaCreatedAt = D(raised),
+        ResolvedAt = resolved is null ? null : D(resolved), SlaDueAt = slaDue is null ? null : D(slaDue),
+    };
+
+    [Fact]
+    public async Task A_business_review_counts_the_quarter_against_the_one_before_for_that_client_only()
+    {
+        var (sp, _, clock, dbName) = Services();
+        clock.Advance(DateTimeOffset.Parse("2026-10-01T02:00Z") - clock.GetUtcNow()); // the quarter has closed
+        var platform = TestDbContextFactory.ForPlatform(dbName);
+        var org = await SeedOrgAsync(platform, "Techpio", "Basit Lone", 0m);
+        var c = org.Client;
+        var other = new ClientCompany { MspOrganizationId = org.Id, PsaConnectionId = org.Conn, Name = "Other", ExternalCompanyId = "2" };
+        platform.Add(other);
+        var q3a = QbrTicket(org, c, "2026-07-02", "2026-07-03", "2026-07-04", "HIGH", "Email", "Q3-A", "RESOLVED");     // within SLA
+        var q3b = QbrTicket(org, c, "2026-08-10", "2026-08-20", "2026-08-12", "NORMAL", "Email", "Q3-B", "RESOLVED");   // late
+        var q3open = QbrTicket(org, c, "2026-09-01", null, null, "CRITICAL", "Network", "Q3-C");                         // open at end
+        var carried = QbrTicket(org, c, "2026-06-20", "2026-07-15", null, "NORMAL", null, "Q2-D", "RESOLVED");         // raised Q2, resolved Q3
+        var q2 = QbrTicket(org, c, "2026-05-05", "2026-05-06", "2026-05-07", "LOW", "Hardware", "Q2-E", "RESOLVED");
+        var notMine = QbrTicket(org, other.Id, "2026-07-10", "2026-07-11", "2026-07-12", reference: "X");
+        platform.AddRange(q3a, q3b, q3open, carried, q2, notMine,
+            Time(org.Id, q3a.Id, org.Person, "2026-07-02", 2m),
+            Time(org.Id, q3b.Id, org.Person, "2026-08-11", 3m),
+            Time(org.Id, q2.Id, org.Person, "2026-05-05", 1m),
+            Time(org.Id, notMine.Id, org.Person, "2026-07-10", 50m));
+        await platform.SaveChangesAsync();
+
+        using var scope = sp.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ISettableTenantContext>().SetTenant(org.Id);
+        var qbr = await scope.ServiceProvider.GetRequiredService<ClientQbrBuilder>()
+            .BuildAsync(org.Id, c, StaffReportFrequency.Quarterly, new DateOnly(2026, 7, 1), new DateOnly(2026, 9, 30), default);
+
+        qbr.Title.Should().Be("Business review — Techpio Client — Q3 2026");
+        qbr.PreviousLabel.Should().Be("Q2 2026");
+        // SeedOrgAsync's own ticket (raised 3 Aug, resolved 20 Aug, no SLA) is this client's too, and so
+        // are its two 9h entries at noon UTC on 31 Jul and 1 Sep - both inside Q3 in India. The other
+        // client's 50h are not.
+        qbr.Current.Should().BeEquivalentTo(new { Raised = 4, Resolved = 4, OpenAtEnd = 1, Hours = 23m, SlaEligible = 2, WithinSla = 1 });
+        qbr.Current.SlaPct.Should().Be(50);
+        qbr.Previous.Should().BeEquivalentTo(new { Raised = 2, Resolved = 1, OpenAtEnd = 1, Hours = 1m, SlaEligible = 1, WithinSla = 1 });
+        qbr.Months.Select(m => (m.Month.Month, m.Raised, m.Resolved)).Should().Equal((7, 1, 2), (8, 2, 2), (9, 1, 0));
+        qbr.ByCategory.Should().ContainEquivalentOf(new QbrCount("Email", 2));
+        qbr.OldestOpen.Select(o => o.Reference).Should().Equal("Q3-C");
+        qbr.OldestOpen.Single().Priority.Should().Be("Critical");
+        qbr.ByPriority.Select(p => p.Label).Should().Equal("Critical", "High", "Normal"); // by severity, not count
+
+        var pdf = ClientQbrRenderer.ToPdf(qbr);
+        pdf.Take(4).Should().Equal("%PDF"u8.ToArray());
+        ClientQbrRenderer.ToCsv(qbr).Should().Contain("Resolved within SLA %,50,100");
+    }
+
+    [Fact]
+    public async Task A_scheduled_business_review_is_emailed_as_a_quarter_for_its_client()
+    {
+        var (sp, email, clock, dbName) = Services();
+        var platform = TestDbContextFactory.ForPlatform(dbName);
+        var org = await SeedOrgAsync(platform, "Techpio", "Basit Lone", 1m);
+        platform.StaffReportSchedules.Add(new StaffReportSchedule
+        {
+            MspOrganizationId = org.Id, Name = "Client QBR", Kind = StaffReportKind.ClientQbr, Frequency = StaffReportFrequency.Quarterly,
+            ClientCompanyId = org.Client, Recipients = "am@techpio.test", NextRunAt = DateTimeOffset.Parse("2026-10-01T01:30Z"),
+        });
+        await platform.SaveChangesAsync();
+        clock.Advance(DateTimeOffset.Parse("2026-10-01T02:00Z") - clock.GetUtcNow());
+
+        (await sp.GetRequiredService<IStaffReportRunner>().RunDueAsync()).Should().Be(1);
+
+        var message = email.Sent.Single();
+        message.Subject.Should().Be("Business review — Techpio Client — Q3 2026");
+        message.Attachments!.Select(a => a.FileName).Should().Equal(
+            "business-review-techpio-client-q3-2026.pdf", "business-review-techpio-client-q3-2026.csv");
+    }
+
+    [Fact]
+    public async Task A_quarter_still_running_says_so_and_ages_tickets_to_today()
+    {
+        var (sp, _, _, dbName) = Services(); // clock: 1 Sep 2026
+        var platform = TestDbContextFactory.ForPlatform(dbName);
+        var org = await SeedOrgAsync(platform, "Techpio", "Basit Lone", 0m);
+        platform.Add(QbrTicket(org, org.Client, "2026-08-02", null, null, reference: "OPEN"));
+        await platform.SaveChangesAsync();
+
+        using var scope = sp.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ISettableTenantContext>().SetTenant(org.Id);
+        var qbr = await scope.ServiceProvider.GetRequiredService<ClientQbrBuilder>()
+            .BuildAsync(org.Id, org.Client, StaffReportFrequency.Quarterly, new DateOnly(2026, 7, 1), new DateOnly(2026, 9, 30), default);
+
+        qbr.PeriodLabel.Should().Be("Q3 2026 (so far)");
+        qbr.OldestOpen.Single().AgeDays.Should().Be(29); // 2 Aug 06:00 to 1 Sep 02:00, not to 30 Sep
     }
 }

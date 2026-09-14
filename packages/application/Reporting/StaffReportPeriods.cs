@@ -69,6 +69,25 @@ public static class StaffReportPeriods
         }
     }
 
+    /// <summary>The period of the same length immediately before [start, end].</summary>
+    public static (DateOnly Start, DateOnly End) Previous(StaffReportFrequency frequency, DateOnly start) => frequency switch
+    {
+        StaffReportFrequency.Daily => (start.AddDays(-1), start.AddDays(-1)),
+        StaffReportFrequency.Weekly => (start.AddDays(-7), start.AddDays(-1)),
+        StaffReportFrequency.Monthly => (start.AddMonths(-1), start.AddDays(-1)),
+        _ => (start.AddMonths(-3), start.AddDays(-1)),
+    };
+
+    /// <summary>The frequency whose period is [start, end], so an ad-hoc range can still be labelled and compared.</summary>
+    public static StaffReportFrequency Infer(DateOnly start, DateOnly end)
+    {
+        var days = end.DayNumber - start.DayNumber + 1;
+        return days <= 1 ? StaffReportFrequency.Daily
+            : days <= 7 ? StaffReportFrequency.Weekly
+            : start.Day == 1 && end == start.AddMonths(1).AddDays(-1) ? StaffReportFrequency.Monthly
+            : StaffReportFrequency.Quarterly;
+    }
+
     /// <summary>UTC bounds of a local-date period: from local midnight of the first day to the end of the last.</summary>
     public static (DateTimeOffset From, DateTimeOffset To) UtcBounds(DateOnly start, DateOnly end, TimeZoneInfo zone)
         => (LocalMidnight(start, zone), LocalMidnight(end.AddDays(1), zone).AddTicks(-1));
