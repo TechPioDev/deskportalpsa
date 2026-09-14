@@ -58,6 +58,13 @@ public sealed class StaffReportsController(IStaffReportService reports) : Contro
         return File(content, type, name);
     }
 
+    [HttpGet("qbr.pdf")]
+    public async Task<IActionResult> ClientQbrPdf([FromQuery] Guid companyId, [FromQuery] int year, [FromQuery] int quarter, CancellationToken ct)
+    {
+        var (name, content) = await reports.ClientQbrPdfAsync(companyId, year, quarter, ct);
+        return File(content, "application/pdf", name);
+    }
+
     [HttpGet("technician-productivity.pdf")]
     public async Task<IActionResult> TechnicianPdf(
         [FromQuery] DateTimeOffset from, [FromQuery] DateTimeOffset to, [FromQuery] Guid? companyId, [FromQuery] string? label, CancellationToken ct)

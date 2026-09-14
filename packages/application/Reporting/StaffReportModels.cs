@@ -70,6 +70,9 @@ public interface IStaffReportService
     Task<IReadOnlyList<StaffReportRunDto>> RunsAsync(int take, CancellationToken ct = default);
     Task<(string FileName, string ContentType, byte[] Content)> RunFileAsync(Guid runId, string format, CancellationToken ct = default);
 
+    /// <summary>A business review of one client for a past quarter (year + 1..4), on demand.</summary>
+    Task<(string FileName, byte[] Content)> ClientQbrPdfAsync(Guid clientCompanyId, int year, int quarter, CancellationToken ct = default);
+
     /// <summary>A PDF of an arbitrary range, for the Technician hours page's download button.</summary>
     Task<(string FileName, byte[] Content)> TechnicianPdfAsync(DateTimeOffset from, DateTimeOffset to, Guid? clientCompanyId, string label, CancellationToken ct = default);
 }

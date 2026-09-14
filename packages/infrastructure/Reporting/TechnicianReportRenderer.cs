@@ -43,7 +43,7 @@ public static class TechnicianReportRenderer
     /// Quoted where needed, and a leading formula character neutralised — technician names come from
     /// the PSA, and a name beginning "=" would otherwise run as a formula when the file is opened.
     /// </summary>
-    private static string Cell(object? value)
+    internal static string Cell(object? value)
     {
         var s = value switch
         {
@@ -58,12 +58,12 @@ public static class TechnicianReportRenderer
 
     // ---------------------------------------------------------------------------------------------
 
-    private const string Font = "Source Sans 3";
-    private static readonly Color Ink = new(0x1f, 0x29, 0x37);
-    private static readonly Color Muted = new(0x6b, 0x72, 0x80);
-    private static readonly Color Rule = new(0xe5, 0xe7, 0xeb);
-    private static readonly Color Band = new(0xf3, 0xf4, 0xf6);
-    private static readonly Color Accent = new(0x1d, 0x4e, 0xd8);
+    internal const string Font = "Source Sans 3";
+    internal static readonly Color Ink = new(0x1f, 0x29, 0x37);
+    internal static readonly Color Muted = new(0x6b, 0x72, 0x80);
+    internal static readonly Color Rule = new(0xe5, 0xe7, 0xeb);
+    internal static readonly Color Band = new(0xf3, 0xf4, 0xf6);
+    internal static readonly Color Accent = new(0x1d, 0x4e, 0xd8);
 
     public static byte[] ToPdf(TechnicianReport r)
     {
@@ -172,9 +172,9 @@ public static class TechnicianReportRenderer
         return ms.ToArray();
     }
 
-    private static string Hrs(decimal h) => h.ToString("0.##", Inv);
+    internal static string Hrs(decimal h) => h.ToString("0.##", Inv);
 
-    private static void Heading(Section s, string text)
+    internal static void Heading(Section s, string text)
     {
         var p = s.AddParagraph(text);
         p.Format.Font.Size = 11.5;
@@ -184,7 +184,7 @@ public static class TechnicianReportRenderer
         p.Format.KeepWithNext = true;
     }
 
-    private static Table DataTable(Section s, (string Header, double Cm, bool Right)[] columns)
+    internal static Table DataTable(Section s, (string Header, double Cm, bool Right)[] columns)
     {
         var t = s.AddTable();
         t.Borders.Visible = false;
@@ -208,7 +208,7 @@ public static class TechnicianReportRenderer
         return t;
     }
 
-    private static void DataRow(Table t, bool shaded, bool total, params string[] cells)
+    internal static void DataRow(Table t, bool shaded, bool total, params string[] cells)
     {
         var row = t.AddRow();
         row.TopPadding = row.BottomPadding = 2.5;

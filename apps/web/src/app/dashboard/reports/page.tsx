@@ -23,6 +23,11 @@ const FREQUENCIES: { value: number; label: string; covers: string }[] = [
   { value: REPORT_FREQUENCY.Quarterly, label: 'Quarterly', covers: 'last quarter' },
 ];
 
+const KINDS: { value: number; label: string }[] = [
+  { value: REPORT_KIND.TechnicianProductivity, label: 'Technician productivity' },
+  { value: REPORT_KIND.ClientQbr, label: 'Client business review (QBR)' },
+];
+
 const empty: StaffReportScheduleInput = {
   name: '', kind: REPORT_KIND.TechnicianProductivity, frequency: REPORT_FREQUENCY.Monthly,
   clientCompanyId: null, recipients: '', isEnabled: true,
@@ -54,7 +59,7 @@ export default function StaffReportsPage() {
         <div>
           <h1 className="flex items-center gap-2 text-xl font-semibold"><FileBarChart size={20} className="text-brand" /> Scheduled reports</h1>
           <p className="text-sm text-[var(--muted)]">
-            Technician productivity, sent as PDF and CSV at 07:00 for the period that just closed.
+            Technician productivity and client business reviews, sent as PDF and CSV at 07:00 for the period that just closed.
           </p>
         </div>
         <TimeZoneControl zone={zone} />
@@ -104,6 +109,8 @@ export default function StaffReportsPage() {
         </div>
       </section>
 
+      <QbrNow clients={clients ?? []} />
+
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
         <h2 className="flex items-center gap-2 border-b border-[var(--border)] px-5 py-3.5 text-sm font-semibold"><History size={16} className="text-brand" /> Sent and generated</h2>
         <div className="divide-y divide-[var(--border)]">
@@ -129,7 +136,7 @@ function ScheduleRow({ s, zone, running, onRun, onEdit, onDelete }: {
           {!s.isEnabled && <span className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--faint)]">Paused</span>}
         </div>
         <div className="mt-0.5 text-xs text-[var(--muted)]">
-          {freq?.label} · covers {freq?.covers} · {s.clientName ?? 'all clients'} · {s.recipients ? s.recipients : 'no recipients (portal only)'}
+          {KINDS.find((k) => k.value === s.kind)?.label} · {freq?.label}, covers {freq?.covers} · {s.clientName ?? 'all clients'} · {s.recipients ? s.recipients : 'no recipients (portal only)'}
         </div>
         {s.isEnabled && (
           <div className="mt-0.5 text-xs text-[var(--faint)]">
@@ -155,6 +162,7 @@ function Editor({ initial, clients, saving, onCancel, onSave }: {
 }) {
   const [v, setV] = useState(initial);
   const freq = FREQUENCIES.find((f) => f.value === v.frequency)!;
+  const isQbr = v.kind === REPORT_KIND.ClientQbr;
   const field = 'w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand';
   return (
     <form className="grid gap-3 bg-[var(--bg)]/40 px-5 py-4 sm:grid-cols-2"
@@ -164,15 +172,29 @@ function Editor({ initial, clients, saving, onCancel, onSave }: {
         <input required value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="Monthly technician report" className={field} />
       </label>
       <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+        Report
+        <select value={v.kind}
+          onChange={(e) => {
+            const kind = Number(e.target.value);
+            // A business review is for one client and is normally quarterly; start it there.
+            setV(kind === REPORT_KIND.ClientQbr
+              ? { ...v, kind, frequency: REPORT_FREQUENCY.Quarterly, clientCompanyId: v.clientCompanyId ?? clients[0]?.id ?? null }
+              : { ...v, kind });
+          }}
+          className={field}>
+          {KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+        </select>
+      </label>
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
         How often
         <select value={v.frequency} onChange={(e) => setV({ ...v, frequency: Number(e.target.value) })} className={field}>
           {FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label} — {f.covers}</option>)}
         </select>
       </label>
       <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
-        Clients
-        <select value={v.clientCompanyId ?? ''} onChange={(e) => setV({ ...v, clientCompanyId: e.target.value || null })} className={field}>
-          <option value="">All clients</option>
+        {isQbr ? 'Client' : 'Clients'}
+        <select required={isQbr} value={v.clientCompanyId ?? ''} onChange={(e) => setV({ ...v, clientCompanyId: e.target.value || null })} className={field}>
+          {!isQbr && <option value="">All clients</option>}
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       </label>
@@ -197,6 +219,48 @@ function Editor({ initial, clients, saving, onCancel, onSave }: {
         </span>
       </div>
     </form>
+  );
+}
+
+/** A business review for any client and recent quarter, without scheduling anything. */
+function QbrNow({ clients }: { clients: { id: string; name: string }[] }) {
+  const quarters = useMemo(() => {
+    const now = new Date();
+    let y = now.getFullYear();
+    let q = Math.floor(now.getMonth() / 3) + 1;
+    const list: { year: number; quarter: number; label: string }[] = [];
+    for (let i = 0; i < 6; i++) {
+      // Quarter in progress first, marked as such, then the completed ones before it.
+      list.push({ year: y, quarter: q, label: `Q${q} ${y}${i === 0 ? ' (so far)' : ''}` });
+      q -= 1;
+      if (q === 0) { q = 4; y -= 1; }
+    }
+    return list;
+  }, []);
+  const [client, setClient] = useState('');
+  const [pick, setPick] = useState(1);
+  const chosen = quarters[pick];
+  const clientId = client || clients[0]?.id;
+  if (clients.length === 0) return null;
+  const field = 'rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand';
+
+  return (
+    <section className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-5 py-4">
+      <div className="min-w-0 flex-1">
+        <h2 className="text-sm font-semibold">Business review now</h2>
+        <p className="text-xs text-[var(--muted)]">A client&rsquo;s quarter against the one before — tickets, SLA, hours, who did the work — as a PDF.</p>
+      </div>
+      <select aria-label="Client" value={clientId} onChange={(e) => setClient(e.target.value)} className={field}>
+        {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      <select aria-label="Quarter" value={pick} onChange={(e) => setPick(Number(e.target.value))} className={field}>
+        {quarters.map((q, i) => <option key={q.label} value={i}>{q.label}</option>)}
+      </select>
+      <a href={api.clientQbrPdfUrl(clientId!, chosen.year, chosen.quarter)}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg hover:opacity-90">
+        <Download size={14} aria-hidden="true" /> Download PDF
+      </a>
+    </section>
   );
 }
 
