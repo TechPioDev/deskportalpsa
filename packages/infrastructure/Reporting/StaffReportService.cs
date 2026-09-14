@@ -251,12 +251,12 @@ public sealed class StaffReportGenerator(
     {
         var (valid, _) = EmailAddresses.Parse(schedule.Recipients);
         if (valid.Count == 0) return (false, "No recipients set — report available in the portal.");
-        if (!email.IsConfigured) return (false, "Email delivery is not configured; report available for download in the portal.");
+        if (!(await email.StatusAsync(schedule.MspOrganizationId, ct)).Configured) return (false, "Email delivery is not configured; report available for download in the portal.");
 
         try
         {
             var fileBase = FileBase(rendered.Title);
-            await email.SendAsync(new EmailMessage(valid, rendered.Title, rendered.EmailText,
+            await email.SendAsync(schedule.MspOrganizationId, new EmailMessage(valid, rendered.Title, rendered.EmailText,
                 Attachments:
                 [
                     new EmailAttachment($"{fileBase}.pdf", "application/pdf", rendered.Pdf),

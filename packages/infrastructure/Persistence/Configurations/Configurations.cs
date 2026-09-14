@@ -480,6 +480,22 @@ public sealed class ReportScheduleConfig : IEntityTypeConfiguration<ReportSchedu
     }
 }
 
+public sealed class OrganizationEmailSettingsConfig : IEntityTypeConfiguration<OrganizationEmailSettings>
+{
+    public void Configure(EntityTypeBuilder<OrganizationEmailSettings> b)
+    {
+        b.ToTable("organization_email_settings");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Host).HasMaxLength(253).IsRequired();
+        b.Property(x => x.Security).HasMaxLength(20).IsRequired();
+        b.Property(x => x.Username).HasMaxLength(320);
+        b.Property(x => x.PasswordSecretRef).HasMaxLength(200);
+        b.Property(x => x.FromAddress).HasMaxLength(320).IsRequired();
+        b.Property(x => x.FromName).HasMaxLength(100).IsRequired();
+        b.HasIndex(x => x.MspOrganizationId).IsUnique(); // one account per organization
+    }
+}
+
 public sealed class StaffReportScheduleConfig : IEntityTypeConfiguration<Desk.Domain.Reporting.StaffReportSchedule>
 {
     public void Configure(EntityTypeBuilder<Desk.Domain.Reporting.StaffReportSchedule> b)

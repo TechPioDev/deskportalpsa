@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
-import { api, type UnsyncedTicket } from '@/lib/api';
+import { api, type EmailSettingsInput, type UnsyncedTicket } from '@/lib/api';
 import type { Health } from '@/lib/types';
 
 const PROVIDER: Record<number, { name: string; abbr: string; color: string }> = {
@@ -289,47 +289,175 @@ function UnsyncedPanel() {
 }
 
 /**
- * Outbound email: whether the server has a mail account, and a one-click proof that it works.
- * The account itself is set on the server, not here, so it is shown but never editable.
+ * Outbound email: whether it works, the mail account itself for organization admins, and a
+ * one-click proof. The password is write-only - the form never receives it back.
  */
 function EmailDeliveryCard() {
+  const qc = useQueryClient();
   const { data, isError } = useQuery({ queryKey: ['email-status'], queryFn: api.emailStatus, retry: false });
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
+  const canManage = !!me?.permissions?.includes('org.manage');
+  const [editing, setEditing] = useState(false);
   const [to, setTo] = useState('');
   const test = useMutation({ mutationFn: () => api.sendTestEmail(to.trim() || undefined) });
   if (isError || !data) return null;
 
+  const statusText = data.configured
+    ? <>Scheduled reports are emailed from <span className="font-medium text-[var(--fg)]">{data.from}</span>
+        {data.source === 'server' ? ' (the server default account)' : ''}.</>
+    : canManage
+      ? 'Not set up — scheduled reports are saved in the portal but not emailed. Add your mail account to start sending.'
+      : 'Not set up — scheduled reports are saved in the portal but not emailed. An organization admin can add the mail account here.';
+
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-      <span className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${data.configured
-        ? 'bg-green-50 text-green-600 dark:bg-green-950/50 dark:text-green-300'
-        : 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300'}`}>
-        <Mail size={17} aria-hidden="true" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold">Email delivery</div>
-        <div className="text-xs text-[var(--muted)]">
-          {data.configured
-            ? <>Scheduled reports are emailed from <span className="font-medium text-[var(--fg)]">{data.from}</span>.</>
-            : 'Not set up — scheduled reports are saved in the portal but not emailed. The mail account is added on the server.'}
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
+        <span className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${data.configured
+          ? 'bg-green-50 text-green-600 dark:bg-green-950/50 dark:text-green-300'
+          : 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+          <Mail size={17} aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">Email delivery</div>
+          <div className="text-xs text-[var(--muted)]">{statusText}</div>
         </div>
-      </div>
-      {data.configured && (
-        <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); test.mutate(); }}>
-          <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="Your address"
-            aria-label="Send test email to"
-            className="w-52 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-sm outline-none focus:border-brand" />
-          <button type="submit" disabled={test.isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
-            {test.isPending ? 'Sending…' : 'Send test email'}
+        {data.configured && canManage && !editing && (
+          <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); test.mutate(); }}>
+            <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="Your address"
+              aria-label="Send test email to"
+              className="w-52 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-sm outline-none focus:border-brand" />
+            <button type="submit" disabled={test.isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg)] disabled:opacity-60">
+              {test.isPending ? 'Sending…' : 'Send test email'}
+            </button>
+          </form>
+        )}
+        {canManage && !editing && (
+          <button onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-fg hover:opacity-90">
+            {data.source === 'organization' ? 'Edit mail settings' : 'Set up email'}
           </button>
-          {test.data && (
-            <span role="status" className={`text-xs font-medium ${test.data.sent ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-              {test.data.message}
-            </span>
-          )}
-          {test.isError && <span role="status" className="text-xs font-medium text-red-600 dark:text-red-400">Could not reach the server.</span>}
-        </form>
+        )}
+        {(test.data || test.isError) && !editing && (
+          <span role="status" className={`w-full text-xs font-medium ${test.data?.sent ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+            {test.data?.message ?? 'Could not reach the server.'}
+          </span>
+        )}
+      </div>
+      {editing && (
+        <EmailSettingsForm
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); test.reset(); qc.invalidateQueries({ queryKey: ['email-status'] }); }} />
       )}
     </div>
+  );
+}
+
+const MAIL_PRESETS: { label: string; host: string; port: number; security: string; hint: string }[] = [
+  { label: 'Microsoft 365', host: 'smtp.office365.com', port: 587, security: 'StartTls',
+    hint: 'Use a licensed mailbox with Authenticated SMTP turned on (Microsoft 365 admin center → Users → the mailbox → Mail → Manage email apps). If sign-in is refused, Microsoft may have switched off password sign-in for your tenant — use a sending service instead.' },
+  { label: 'Google Workspace', host: 'smtp.gmail.com', port: 587, security: 'StartTls',
+    hint: 'Use the mailbox address as the username and a Google app password (needs 2-Step Verification), not the normal password.' },
+  { label: 'SendGrid', host: 'smtp.sendgrid.net', port: 587, security: 'StartTls',
+    hint: 'The username is the word apikey and the password is your SendGrid API key. The From address must be a verified sender.' },
+  { label: 'Other', host: '', port: 587, security: 'StartTls', hint: 'Your provider SMTP server name, port and login.' },
+];
+
+function EmailSettingsForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const { data: current, isLoading } = useQuery({ queryKey: ['email-settings'], queryFn: api.emailSettings, retry: false });
+  const qc = useQueryClient();
+  const [v, setV] = useState<EmailSettingsInput | null>(null);
+  const [preset, setPreset] = useState(0);
+  const form: EmailSettingsInput = v ?? {
+    host: current?.host ?? MAIL_PRESETS[0].host, port: current?.port ?? 587, security: current?.security ?? 'StartTls',
+    username: current?.username ?? '', password: null, fromAddress: current?.fromAddress ?? '', fromName: current?.fromName ?? 'Desk Portal',
+  };
+  const set = (patch: Partial<EmailSettingsInput>) => setV({ ...form, ...patch });
+  const save = useMutation({
+    mutationFn: () => api.saveEmailSettings({ ...form, username: form.username?.trim() || null, password: form.password || null }),
+    onSuccess: (s) => { qc.setQueryData(['email-settings'], s); onSaved(); },
+  });
+  const remove = useMutation({
+    mutationFn: api.removeEmailSettings,
+    onSuccess: (s) => { qc.setQueryData(['email-settings'], s); onSaved(); },
+  });
+  const field = 'w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand';
+
+  if (isLoading) return <p className="border-t border-[var(--border)] px-4 py-4 text-sm text-[var(--muted)]">Loading…</p>;
+
+  return (
+    <form className="grid gap-3 border-t border-[var(--border)] px-4 py-4 sm:grid-cols-2"
+      onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <div className="flex flex-wrap gap-1.5 sm:col-span-2" role="group" aria-label="Mail provider">
+        {MAIL_PRESETS.map((p, i) => (
+          <button key={p.label} type="button"
+            onClick={() => { setPreset(i); if (p.host) set({ host: p.host, port: p.port, security: p.security }); }}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${preset === i ? 'border-brand bg-brand-tint text-brand dark:bg-brand/20' : 'border-[var(--border)] text-[var(--muted)] hover:bg-[var(--bg)]'}`}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-[var(--muted)] sm:col-span-2">{MAIL_PRESETS[preset].hint}</p>
+
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+        Mail server (SMTP)
+        <input required value={form.host} onChange={(e) => set({ host: e.target.value })} placeholder="smtp.office365.com" className={field} />
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+          Port
+          <input required type="number" min={1} max={65535} value={form.port} onChange={(e) => set({ port: Number(e.target.value) })} className={field} />
+        </label>
+        <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+          Security
+          <select value={form.security} onChange={(e) => set({ security: e.target.value })} className={field}>
+            <option value="StartTls">STARTTLS (587)</option>
+            <option value="SslOnConnect">SSL/TLS (465)</option>
+            <option value="None">None (local relay only)</option>
+          </select>
+        </label>
+      </div>
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+        Username
+        <input value={form.username ?? ''} onChange={(e) => set({ username: e.target.value })} placeholder="reports@yourmsp.com" autoComplete="off" className={field} />
+      </label>
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+        Password
+        <input type="password" value={form.password ?? ''} onChange={(e) => set({ password: e.target.value })}
+          placeholder={current?.hasPassword ? 'Saved — leave blank to keep it' : 'Password or API key'} autoComplete="new-password" className={field} />
+      </label>
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+        Send from (address)
+        <input required type="email" value={form.fromAddress} onChange={(e) => set({ fromAddress: e.target.value })} placeholder="reports@yourmsp.com" className={field} />
+      </label>
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+        Send from (name)
+        <input value={form.fromName ?? ''} onChange={(e) => set({ fromName: e.target.value })} placeholder="Desk Portal" className={field} />
+      </label>
+
+      <p className="text-xs text-[var(--faint)] sm:col-span-2">
+        The password is stored encrypted and is never shown again. After saving, use Send test email to confirm it works.
+      </p>
+      {(save.isError || remove.isError) && (
+        <p className="text-sm text-red-600 dark:text-red-400 sm:col-span-2">
+          {((save.error ?? remove.error) as Error).message}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
+        {current?.hasOwnAccount && (
+          <button type="button" disabled={remove.isPending}
+            onClick={() => { if (window.confirm('Remove this mail account? Reports will stop being emailed unless the server has a default account.')) remove.mutate(); }}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40">
+            Remove account
+          </button>
+        )}
+        <span className="ml-auto flex gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg)]">Cancel</button>
+          <button type="submit" disabled={save.isPending} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
+            {save.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </span>
+      </div>
+    </form>
   );
 }

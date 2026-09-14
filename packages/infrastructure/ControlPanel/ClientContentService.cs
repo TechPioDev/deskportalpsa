@@ -222,7 +222,7 @@ public sealed class ClientContentService(DeskDbContext db, IAuditWriter audit, T
         };
         db.ReportRuns.Add(run);
 
-        var result = await delivery.DeliverAsync(schedule.Recipients, $"{company} — scheduled report", FileName(company, now), csv, ct);
+        var result = await delivery.DeliverAsync(schedule.MspOrganizationId, schedule.Recipients, $"{company} — scheduled report", FileName(company, now), csv, ct);
         run.Delivered = result.Delivered;
         run.DeliveryNote = result.Note;
 
