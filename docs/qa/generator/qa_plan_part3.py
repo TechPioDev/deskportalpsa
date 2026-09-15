@@ -215,9 +215,9 @@ mod("14. Attachments",
       "Delete an attachment in the PSA and sync.",
       "It is removed from the portal.",
       "SQL on attachments."),
-     ("ATT-08", "Multipart upload to Autotask",
-      "Attach a file that must be pushed to Autotask.",
-      "Sent as multipart, not JSON (the real API rejects JSON with 415).",
+     ("ATT-08", "Attachment upload format per PSA",
+      "Attach a file on an Autotask ticket, then on a ConnectWise ticket.",
+      "Autotask: JSON body to Tickets/{id}/Attachments with the file base64 in data. ConnectWise: multipart/form-data (its API rejects JSON with 415). Both appear in the PSA with the original file name.",
       "Worker log + PSA UI."),
     ])
 

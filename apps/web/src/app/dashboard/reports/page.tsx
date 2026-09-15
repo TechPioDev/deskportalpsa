@@ -68,7 +68,7 @@ export default function StaffReportsPage() {
       {email && !email.configured && (
         <p className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           <Mail size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-          <span>Email is not set up yet, so reports are generated and kept below but not sent. Once the mail account is added on the server, they go out automatically.</span>
+          <span>Email is not set up yet, so reports are generated and kept below but not sent. Add the mail account under <a href="/dashboard/health" className="font-medium underline">Integration Health → Email delivery</a> and they go out automatically.</span>
         </p>
       )}
 
