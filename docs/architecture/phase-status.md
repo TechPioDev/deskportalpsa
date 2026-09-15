@@ -24,7 +24,7 @@
 | Tenant context + global query filter | ✅ | `DeskDbContext`, 6 isolation tests pass |
 | Keycloak OIDC auth on API | ✅ | `Program.cs` JwtBearer + realm import |
 | Permission-claim authorization (7 roles) | ✅ | `PermissionPolicyProvider`, RBAC tests pass |
-| Vault-backed secret provider abstraction | ✅ | `ISecretStore` + `VaultSecretStore` |
+| Secret provider abstraction | ✅ | `ISecretStore`; production uses `EncryptedDbSecretStore` (Vault dev-mode lost secrets on restart and was retired) |
 | Serilog structured logging + correlation id + RFC-7807 | ✅ | middleware trio |
 | CI (build, test, secret scan, dep scan) | ✅ authored | `.github/workflows/ci.yml` |
 | Health + Swagger | ✅ | `/health`, `/health/ready`, Swagger (dev) |
@@ -113,14 +113,18 @@ render (connection form shows Vault-secrets note + masked Secret field), 0 conso
 **Verified locally:** .NET Release clean, **136/136 unit tests green** (+15 egress classifier, +4 cross-tenant);
 security review = no critical/high in code; live load/DR/pen-test gates documented as pending a stack.
 
+**Current state (15 Sep 2026):** live at piomanage.com; 685 unit tests green in CI. Since the phases above:
+scheduled staff reports (PDF + CSV), client business reviews, organization email settings, mapping
+snapshots, and an endpoint-authorization test across every controller.
+
 ## Provider readiness matrix
 
 Statuses: Planned · API Research · Foundation · In Progress · Integration Testing · QA · Limited · **Production Ready** · Blocked · Unsupported.
 
 | Wave | Provider | Status |
 |---|---|---|
-| 1 | ConnectWise PSA | **Ready for Integration Testing** (connector complete; certified vs fake server; needs a live instance) |
-| 1 | Datto Autotask PSA | **Ready for Integration Testing** (connector + sync engine complete; certified vs fake server; needs a live sandbox) |
+| 1 | ConnectWise PSA | **Limited** — live on piomanage.com against the ConnectWise *staging* sandbox; a board status must have Closed ticked for closure dates to sync |
+| 1 | Datto Autotask PSA | **Production** — live on piomanage.com with real tickets, notes, attachments, time entries and field mappings |
 | 2 | HaloPSA | Planned |
 | 2 | Syncro | Planned |
 | 2 | SuperOps | Planned |
