@@ -152,6 +152,10 @@ public sealed class MockConnector : IServiceManagementConnector
         => _techs.Add(new ExternalTechnician(externalId, email, name, isActive));
 
     /// <summary>Seed a contact for the company-scoped recipient tests.</summary>
+    /// <summary>Sets who a ticket is for, as the PSA would report it on a read.</summary>
+    public void SetTicketContact(string ticketId, string? name, string? email)
+        => _tickets[ticketId] = _tickets[ticketId] with { RequesterName = name, RequesterEmail = email };
+
     public void AddContact(string externalId, string email, string name, bool isActive = true)
         => _contacts.Add(new ExternalContact(externalId, email, name, isActive));
 

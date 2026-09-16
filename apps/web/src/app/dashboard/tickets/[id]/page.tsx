@@ -330,7 +330,16 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // mistake. A public reply is offered only when it would reach someone - a PSA contact with an
   // address, or the client portal user who raised the ticket. Clients only ever reply publicly.
   const [replyMode, setReplyMode] = useState<'internal' | 'public'>('internal');
-  const canReplyPublicly = ticket?.hasReachableContact ?? false;
+  // A ticket the sync has not revisited since contacts began to be captured asks the PSA once,
+  // when a technician opens it, instead of hiding Public reply on a ticket that does have a contact.
+  const { data: liveContact } = useQuery({
+    queryKey: ['ticket-contact', id],
+    queryFn: () => api.refreshTicketContact(id),
+    enabled: isStaff && !!ticket && !ticket.hasReachableContact,
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const canReplyPublicly = (ticket?.hasReachableContact || liveContact?.hasReachableContact) ?? false;
   const replyInternal = isStaff && (replyMode === 'internal' || !canReplyPublicly);
   const setReplyInternal = (internal: boolean) => setReplyMode(internal ? 'internal' : 'public');
   // The composer lives in a dialog now; this only controls visibility, never the draft.
