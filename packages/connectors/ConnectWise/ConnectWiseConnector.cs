@@ -37,7 +37,7 @@ public sealed class ConnectWiseConnector(
         Task.FromResult(new ProviderCapabilities
         {
             SupportsTicketCreate = true, SupportsTicketUpdate = true, SupportsTicketDelete = false,
-            SupportsPublicNotes = true, SupportsPrivateNotes = true, SupportsNoteEmailRecipients = true,
+            SupportsPublicNotes = true, SupportsPrivateNotes = true, SupportsNoteEmailRecipients = false,
             SupportsAttachments = true, SupportsAttachmentDownload = true, SupportsAttachmentSweep = false,
             SupportsTimeEntries = true, SupportsAssets = true, SupportsContracts = true,
             SupportsHolidayCalendars = true,
@@ -300,27 +300,21 @@ public sealed class ConnectWiseConnector(
 
     public async Task<CreateNoteResult> AddPublicNoteAsync(string ticketId, UnifiedTicketNoteCreateRequest note, CancellationToken ct = default)
     {
-        // Recipients only ride on a PUBLIC note. Copying anyone on an internal note would be the
-        // one mistake this system must never make, so the flags are pinned off rather than merely
-        // left unset by the caller.
-        var cc = note.IsPublic
-            ? note.EmailCc.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-            : [];
-        var emailContact = note.IsPublic && note.EmailContact;
-
+        // ServiceNote has NO recipient fields. emailContactFlag / emailCcFlag / emailCc belong to CW's
+        // time entries; sent on a note, CW rejects the whole request ("Could not find member
+        // 'emailContactFlag' on object of type 'ServiceNote'"), which failed every note - internal
+        // ones included, because the fields went out on all of them. Only real ServiceNote members
+        // are sent now, and the certification fake refuses anything else so this cannot come back.
+        //
+        // Who is emailed is decided by CW's own notification rules for the board, triggered by
+        // processNotifications - on a public reply only. An internal note must never notify anyone.
         var body = new
         {
             text = note.Body,
             detailDescriptionFlag = true,
             internalAnalysisFlag = !note.IsPublic, // public notes are not flagged internal
             customerUpdatedFlag = note.IsPublic,
-            // ConnectWise sends the mail, not the portal. processNotifications gates the whole
-            // thing: without it CW stores the addresses and emails nobody, which looks identical to
-            // success from here.
-            processNotifications = emailContact || cc.Count > 0,
-            emailContactFlag = emailContact,
-            emailCcFlag = cc.Count > 0,
-            emailCc = cc.Count > 0 ? string.Join(",", cc) : null,
+            processNotifications = note.IsPublic,
         };
         var created = await SendAsync<CwTicketNote>(HttpMethod.Post, $"service/tickets/{ticketId}/notes", body, ct);
         return new CreateNoteResult(true, created!.Id.ToString(), null);

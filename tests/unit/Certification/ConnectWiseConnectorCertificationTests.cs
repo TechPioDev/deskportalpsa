@@ -30,6 +30,28 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
 
     protected override IServiceManagementConnector CreateConnector() => Build(new FakeConnectWiseServer(Clock));
 
+    [Fact]
+    public async Task Notes_post_with_only_real_ServiceNote_members_and_only_a_public_reply_notifies()
+    {
+        // Reported from production: "Could not find member 'emailContactFlag' on object of type
+        // 'ServiceNote'" on an internal note. The recipient fields went out on every note, so every
+        // note - internal or public - was refused. The fake now refuses unknown members as CW does.
+        var server = new FakeConnectWiseServer(Clock);
+        var c = Build(server);
+        var t = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Issue with the ACER", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "acer" });
+
+        var internalNote = await c.AddPublicNoteAsync(t.ExternalId!,
+            new UnifiedTicketNoteCreateRequest("The above task is done.", IsPublic: false, "k1") { EmailContact = true, EmailCc = ["cc@acme.test"] });
+        var reply = await c.AddPublicNoteAsync(t.ExternalId!,
+            new UnifiedTicketNoteCreateRequest("Fixed - please confirm.", IsPublic: true, "k2") { EmailContact = true, EmailCc = ["cc@acme.test"] });
+
+        internalNote.Success.Should().BeTrue();
+        reply.Success.Should().BeTrue();
+        server.Notes.Single(n => (string?)n["text"] == "The above task is done.")["processNotifications"].Should().Be(false);
+        server.Notes.Single(n => (string?)n["text"] == "Fixed - please confirm.")["processNotifications"].Should().Be(true);
+        (await c.GetCapabilitiesAsync()).SupportsNoteEmailRecipients.Should().BeFalse("ServiceNote cannot carry recipients");
+    }
+
     /// <summary>
     /// The value discovery offers has to be the value tickets arrive carrying.
     ///
