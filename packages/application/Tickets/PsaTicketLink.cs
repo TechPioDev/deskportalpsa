@@ -17,7 +17,12 @@ namespace Desk.Application.Tickets;
 /// </summary>
 public static class PsaTicketLink
 {
-    public static string? For(ProviderType provider, string? apiEndpoint, string? externalTicketId)
+    /// <param name="tenantIdentifier">
+    /// The connection's tenant identifier. ConnectWise's web router refuses a record link without
+    /// the company name ("Cannot route blank company name"), so for ConnectWise this is required and
+    /// no link is built without it. Autotask needs nothing beyond the zone in the endpoint.
+    /// </param>
+    public static string? For(ProviderType provider, string? apiEndpoint, string? externalTicketId, string? tenantIdentifier = null)
     {
         if (string.IsNullOrWhiteSpace(apiEndpoint) || string.IsNullOrWhiteSpace(externalTicketId))
             return null;
@@ -30,7 +35,7 @@ public static class PsaTicketLink
 
         return provider switch
         {
-            ProviderType.ConnectWisePsa => ConnectWise(api, id),
+            ProviderType.ConnectWisePsa => ConnectWise(api, id, tenantIdentifier),
             ProviderType.AutotaskPsa => Autotask(api, id),
             _ => null,
         };
@@ -41,8 +46,9 @@ public static class PsaTicketLink
     /// api-na.myconnectwise.net -> na.myconnectwise.net. A self-hosted instance serves both from
     /// one host, so an endpoint with no prefix is used unchanged.
     /// </summary>
-    private static string? ConnectWise(Uri api, string id)
+    private static string? ConnectWise(Uri api, string id, string? companyName)
     {
+        if (string.IsNullOrWhiteSpace(companyName)) return null;
         var host = api.Host.StartsWith("api-", StringComparison.OrdinalIgnoreCase)
             ? api.Host[4..]
             : api.Host;
@@ -56,7 +62,7 @@ public static class PsaTicketLink
         if (release is null) return null;
 
         return $"https://{host}/{release}/services/system_io/router/openrecord.rails" +
-               $"?recordType=ServiceFV&recid={id}";
+               $"?recordType=ServiceFV&recid={id}&companyName={Uri.EscapeDataString(companyName.Trim())}";
     }
 
     /// <summary>

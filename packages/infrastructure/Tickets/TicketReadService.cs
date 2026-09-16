@@ -187,11 +187,11 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         var connection = await db.PsaConnections
             .AsNoTracking()
             .Where(p => p.Id == ticket.PsaConnectionId)
-            .Select(p => new { p.Name, p.ApiEndpoint })
+            .Select(p => new { p.Name, p.ApiEndpoint, p.TenantIdentifier })
             .FirstOrDefaultAsync(ct);
         var connectionName = connection?.Name;
         // Built from the endpoint we already have — no credentials, so no vault call to render.
-        var externalUrl = PsaTicketLink.For(ticket.Provider, connection?.ApiEndpoint, ticket.ExternalTicketId);
+        var externalUrl = PsaTicketLink.For(ticket.Provider, connection?.ApiEndpoint, ticket.ExternalTicketId, connection?.TenantIdentifier);
 
         // Ticket service instructions the client configured: the account-specific override if set,
         // otherwise the organization-wide default. Surfaced so technicians see them on the ticket.

@@ -83,7 +83,10 @@ public sealed class ConnectionAdminService(
             Name = input.Name,
             Provider = input.Provider,
             ApiEndpoint = input.ApiEndpoint,
-            TenantIdentifier = input.TenantIdentifier,
+            // ConnectWise's company id is both a credential and the name its web links route by.
+            // Defaulted from the credentials so an administrator who leaves the box empty still
+            // gets working "open in ConnectWise" links.
+            TenantIdentifier = TenantIdentifierFor(input.Provider, input.TenantIdentifier, input.Credentials),
             CredentialSecretRef = secretRef,
             TimeZone = input.TimeZone ?? "UTC",
             LogoUrl = NormaliseLogoUrl(input.LogoUrl),
@@ -280,6 +283,15 @@ public sealed class ConnectionAdminService(
         return uri.Scheme is "http" or "https" ? uri.ToString() : null;
     }
 
+    private static string? TenantIdentifierFor(ProviderType provider, string? entered, IReadOnlyDictionary<string, string>? credentials)
+    {
+        if (!string.IsNullOrWhiteSpace(entered)) return entered.Trim();
+        if (provider == ProviderType.ConnectWisePsa && credentials is not null
+            && credentials.TryGetValue("CompanyId", out var companyId) && !string.IsNullOrWhiteSpace(companyId))
+            return companyId.Trim();
+        return null;
+    }
+
     public async Task<ConnectionSummary> UpdateAsync(Guid connectionId, UpdateConnectionInput input, CancellationToken ct = default)
     {
         var connection = await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == connectionId, ct)
@@ -287,7 +299,7 @@ public sealed class ConnectionAdminService(
 
         connection.Name = input.Name;
         connection.ApiEndpoint = input.ApiEndpoint;
-        connection.TenantIdentifier = input.TenantIdentifier;
+        connection.TenantIdentifier = TenantIdentifierFor(connection.Provider, input.TenantIdentifier, input.Credentials) ?? connection.TenantIdentifier;
         connection.TimeZone = input.TimeZone ?? connection.TimeZone;
         connection.LogoUrl = NormaliseLogoUrl(input.LogoUrl);
         connection.IsEnabled = input.IsEnabled;
