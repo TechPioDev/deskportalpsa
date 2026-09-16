@@ -143,6 +143,7 @@ public sealed class AutotaskConnector(
 
         var items = result?.Items ?? [];
         await PrimeCompanyNamesAsync(items.Select(i => i.CompanyId), ct);
+        await PrimeContactsAsync(items.Select(i => i.ContactId ?? 0), ct);
         var mapped = new List<UnifiedTicket>(items.Count);
         foreach (var item in items) mapped.Add(await ToUnifiedAsync(item, ct));
 
@@ -154,7 +155,9 @@ public sealed class AutotaskConnector(
     public async Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
     {
         var item = await GetByIdAsync<AtTicket>("Tickets", ticketId, ct);
-        return item is null ? null : await ToUnifiedAsync(item, ct);
+        if (item is null) return null;
+        await PrimeContactsAsync([item.ContactId ?? 0], ct);
+        return await ToUnifiedAsync(item, ct);
     }
 
     public async Task<CreateTicketResult> CreateTicketAsync(UnifiedTicketCreateRequest ticket, CancellationToken ct = default)
@@ -772,6 +775,7 @@ public sealed class AutotaskConnector(
     // Company id -> name, for the lifetime of this connector. Autotask reports companies only by
     // id on a ticket, and a sync run sees the same handful of companies across hundreds of tickets.
     private readonly Dictionary<long, string> _companyNames = [];
+    private readonly Dictionary<long, (string Name, string? Email)> _contacts = [];
 
     /// <summary>
     /// Resolves the names for a page's companies in ONE request, before the page is projected.
@@ -801,6 +805,23 @@ public sealed class AutotaskConnector(
         {
             // Left unresolved on purpose — see the summary above.
         }
+    }
+
+    /// <summary>
+    /// Ticket contacts for a page, in one query. Only an id rides on an Autotask ticket, so without
+    /// this no ticket knew who it was for. Best effort like company names: an unreadable contact
+    /// leaves the ticket without one rather than failing the sync.
+    /// </summary>
+    private async Task PrimeContactsAsync(IEnumerable<long> contactIds, CancellationToken ct)
+    {
+        var wanted = contactIds.Where(id => id > 0 && !_contacts.ContainsKey(id)).Distinct().ToArray();
+        if (wanted.Length == 0) return;
+        try
+        {
+            foreach (var c in await QueryAsync<AtContact>("Contacts", [Filter("id", "in", wanted)], wanted.Length, ct))
+                _contacts[c.Id] = ($"{c.FirstName} {c.LastName}".Trim(), string.IsNullOrWhiteSpace(c.EmailAddress) ? null : c.EmailAddress.Trim());
+        }
+        catch (ConnectorException) { /* left unresolved, as for company names */ }
     }
 
     private async Task<string?> LabelForAsync(string field, string? id, CancellationToken ct)
@@ -1022,6 +1043,8 @@ public sealed class AutotaskConnector(
         // like data rather than an error. Null when unknown, so the caller keeps its own fallback
         // instead of being handed a guess.
         CompanyName = _companyNames.GetValueOrDefault(t.CompanyId),
+        RequesterName = t.ContactId is { } cn && _contacts.TryGetValue(cn, out var nameOf) && nameOf.Name.Length > 0 ? nameOf.Name : null,
+        RequesterEmail = t.ContactId is { } ce && _contacts.TryGetValue(ce, out var emailOf) ? emailOf.Email : null,
         CreatedAt = t.CreateDate,
         ModifiedAt = t.LastActivityDate,
         ResolvedAt = t.ResolvedDateTime,

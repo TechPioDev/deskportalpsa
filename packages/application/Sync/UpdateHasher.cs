@@ -38,7 +38,8 @@ public static class UpdateHasher
     public static string ForTicketState(
         string? status, string? priority, string? category, string? title, string? description,
         DateTimeOffset? resolvedAt, DateTimeOffset? closedAt, DateTimeOffset? slaDueAt,
-        DateTimeOffset? psaCreatedAt = null, string? queueOrBoard = null)
+        DateTimeOffset? psaCreatedAt = null, string? queueOrBoard = null,
+        string? contactName = null, string? contactEmail = null)
         => Compute(new Dictionary<string, string?>
         {
             ["status"] = status,
@@ -61,5 +62,8 @@ public static class UpdateHasher
             // hash, those rows short-circuit as "unchanged" and the new field never reaches a single
             // existing ticket — the import looks correct and the column stays empty forever.
             ["psaCreatedAt"] = psaCreatedAt?.ToString("O"),
+            // Same reason: the contact started being captured after every ticket was imported.
+            ["contactName"] = contactName,
+            ["contactEmail"] = contactEmail,
         });
 }

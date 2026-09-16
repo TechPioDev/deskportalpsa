@@ -261,7 +261,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             AssignedTechnicianName: psaAssigneeIsAccount ? null : ticket.AssignedTechnicianName,
             ExternalTicketUrl: externalUrl,
             AssignedAppUserId: ticket.AssignedAppUserId,
-            AssignedAppUserName: assignedAppUserName);
+            AssignedAppUserName: assignedAppUserName,
+            ContactName: Desk.Domain.Tickets.TicketContact.Name(ticket),
+            HasReachableContact: Desk.Domain.Tickets.TicketContact.IsReachable(ticket));
     }
 
     public Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)

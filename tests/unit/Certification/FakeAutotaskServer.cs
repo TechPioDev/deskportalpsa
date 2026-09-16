@@ -188,6 +188,10 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         return null;
     }
 
+    /// <summary>Points a ticket at a contact, as a ticket raised by that customer carries contactID.</summary>
+    public void SetTicketContact(long ticketId, long contactId)
+        => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["contactID"] = contactId;
+
     private HttpResponseMessage CreateTicketChecked(string body)
     {
         var input = Parse(body);

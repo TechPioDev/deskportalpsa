@@ -869,6 +869,8 @@ public sealed class ConnectWiseConnector(
         AssignedTechnicianExternalId = t.Owner?.Id.ToString(),
         RequesterExternalId = t.Company?.Id.ToString(),
         CompanyName = t.Company?.Name,
+        RequesterName = string.IsNullOrWhiteSpace(t.ContactName) ? t.Contact?.Name : t.ContactName,
+        RequesterEmail = string.IsNullOrWhiteSpace(t.ContactEmailAddress) ? null : t.ContactEmailAddress.Trim(),
         ModifiedAt = t.LastUpdated ?? t.Info?.LastUpdated,
         // Was never mapped: without it the portal recorded its own import date as the ticket's age.
         CreatedAt = t.RaisedAt,

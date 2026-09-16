@@ -86,7 +86,11 @@ public sealed record TicketDetailDto(
     // above and frequently the only true one: work done by a portal-only technician reaches the
     // PSA under the integration's identity, so the field above names the API user or nobody.
     Guid? AssignedAppUserId = null,
-    string? AssignedAppUserName = null);
+    string? AssignedAppUserName = null,
+    // Who the ticket is for, and whether a public reply would reach anyone: a PSA contact with an
+    // address, or the client portal user who raised it. The address itself is not sent.
+    string? ContactName = null,
+    bool HasReachableContact = false);
 
 public sealed record AttachmentDto(
     Guid Id,

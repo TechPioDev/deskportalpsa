@@ -90,6 +90,8 @@ internal sealed class AtTicket
     [JsonPropertyName("queueID")] [JsonConverter(typeof(FlexibleStringConverter))] public string? QueueId { get; set; }
     [JsonPropertyName("ticketCategory")] [JsonConverter(typeof(FlexibleStringConverter))] public string? Category { get; set; }
     [JsonPropertyName("companyID")] public long CompanyId { get; set; }
+    // The customer contact the ticket is for; only the id rides on the ticket.
+    [JsonPropertyName("contactID")] public long? ContactId { get; set; }
     [JsonPropertyName("assignedResourceID")] [JsonConverter(typeof(FlexibleStringConverter))] public string? AssignedResourceId { get; set; }
     [JsonPropertyName("createDate")] public DateTimeOffset? CreateDate { get; set; }
     [JsonPropertyName("lastActivityDate")] public DateTimeOffset? LastActivityDate { get; set; }

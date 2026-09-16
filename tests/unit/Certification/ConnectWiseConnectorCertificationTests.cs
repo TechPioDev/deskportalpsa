@@ -31,6 +31,31 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
     protected override IServiceManagementConnector CreateConnector() => Build(new FakeConnectWiseServer(Clock));
 
     [Fact]
+    public async Task A_ticket_carries_its_contact_as_ConnectWise_sends_it_inline()
+    {
+        var server = new FakeConnectWiseServer(Clock);
+        server.SeedTicket(new Dictionary<string, object?>
+        {
+            ["summary"] = "Issue with the ACER",
+            ["board"] = new Dictionary<string, object?> { ["id"] = 1L, ["name"] = "Service Desk" },
+            ["contact"] = new Dictionary<string, object?> { ["id"] = 7L, ["name"] = "Priya Nair" },
+            ["contactName"] = "Priya Nair",
+            ["contactEmailAddress"] = "priya@acme.test",
+        });
+        server.SeedTicket(new Dictionary<string, object?>
+        {
+            ["summary"] = "Backup job failed",
+            ["board"] = new Dictionary<string, object?> { ["id"] = 1L, ["name"] = "Service Desk" },
+        });
+
+        var page = await Build(server).GetTicketsAsync(new TicketFilter());
+
+        var acer = page.Items.Single(t => t.Title == "Issue with the ACER");
+        (acer.RequesterName, acer.RequesterEmail).Should().Be(("Priya Nair", "priya@acme.test"));
+        page.Items.Single(t => t.Title == "Backup job failed").RequesterEmail.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Notes_post_with_only_real_ServiceNote_members_and_only_a_public_reply_notifies()
     {
         // Reported from production: "Could not find member 'emailContactFlag' on object of type

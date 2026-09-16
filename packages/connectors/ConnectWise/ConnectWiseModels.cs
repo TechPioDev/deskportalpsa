@@ -58,6 +58,10 @@ internal sealed class CwTicket
     [JsonPropertyName("type")] public CwRef? Type { get; set; }
     [JsonPropertyName("company")] public CwRef? Company { get; set; }
     [JsonPropertyName("owner")] public CwRef? Owner { get; set; }
+    // The customer contact the ticket is for. CW sends the name and address inline beside the ref.
+    [JsonPropertyName("contact")] public CwRef? Contact { get; set; }
+    [JsonPropertyName("contactName")] public string? ContactName { get; set; }
+    [JsonPropertyName("contactEmailAddress")] public string? ContactEmailAddress { get; set; }
     [JsonPropertyName("lastUpdated")] public DateTimeOffset? LastUpdated { get; set; }
     [JsonPropertyName("dateResolved")] public DateTimeOffset? DateResolved { get; set; }
     // When the ticket was raised. Distinct from the portal's own row-creation timestamp, which is
