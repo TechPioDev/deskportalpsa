@@ -56,3 +56,9 @@ desk-local-files/
 # Python bytecode (docs/qa generator)
 __pycache__/
 *.pyc
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+apps/web/.playwright/
