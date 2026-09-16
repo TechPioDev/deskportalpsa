@@ -170,6 +170,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ body, isPublic, emailContact: recipients?.emailContact, emailCc: recipients?.emailCc }),
     }),
+  refreshTicketContact: (id: string) =>
+    request(`/api/tickets/${id}/contact/refresh`, z.object({ hasReachableContact: z.boolean() }), { method: 'POST' }),
   ticketRecipients: (id: string) =>
     request(`/api/tickets/${id}/recipients`, z.object({
       companyName: z.string(),

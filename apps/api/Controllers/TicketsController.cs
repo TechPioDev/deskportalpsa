@@ -91,6 +91,14 @@ public sealed class TicketsController(
         return Ok(await commands.ListReplyRecipientsAsync(uid, id, ct));
     }
 
+    [HttpPost("{id:guid}/contact/refresh")]
+    [RequirePermission(Permissions.TicketsViewAll)]
+    public async Task<IActionResult> RefreshContact(Guid id, CancellationToken ct)
+    {
+        if (user.UserId is not { } uid) throw new ForbiddenException("Staff only.");
+        return Ok(new { hasReachableContact = await commands.RefreshContactAsync(uid, id, ct) });
+    }
+
     // Resolves the client identity or refuses the request — staff use the dashboard endpoints instead.
     private async Task<ClientAccess> AccessAsync(CancellationToken ct)
         => await accessResolver.ResolveAsync(user.Subject ?? "", ct)

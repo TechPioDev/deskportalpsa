@@ -56,4 +56,11 @@ public interface ITicketCommandService
     /// <summary>Who a public reply on this ticket can go to, and whether the provider lets the
     /// caller choose. Same resolution the write validates against.</summary>
     Task<ReplyRecipientsDto> ListReplyRecipientsAsync(Guid appUserId, Guid ticketId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads the ticket's contact live from the PSA and stores it; returns whether a public reply
+    /// would now reach someone. For tickets the scheduled sync has not revisited since contacts
+    /// began to be captured - it only re-reads recently active tickets.
+    /// </summary>
+    Task<bool> RefreshContactAsync(Guid appUserId, Guid ticketId, CancellationToken ct = default);
 }

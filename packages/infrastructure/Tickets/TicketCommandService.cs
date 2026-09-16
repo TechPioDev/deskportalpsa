@@ -38,6 +38,31 @@ public sealed class TicketCommandService(
     /// allow-list the write enforces resolve through the same call, so they cannot drift into a
     /// state where the UI offers an address the API then refuses (or worse, accepts).
     /// </summary>
+    public async Task<bool> RefreshContactAsync(Guid appUserId, Guid ticketId, CancellationToken ct = default)
+    {
+        var ticket = await scopeQuery.FindAsync(db.Tickets, ticketId, appUserId, Permissions.TicketsAddPublicNote, ct)
+            ?? throw new NotFoundException("Ticket");
+        if (Desk.Domain.Tickets.TicketContact.IsReachable(ticket) || string.IsNullOrWhiteSpace(ticket.ExternalTicketId))
+            return Desk.Domain.Tickets.TicketContact.IsReachable(ticket);
+
+        try
+        {
+            var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+            var live = await connector.GetTicketAsync(ticket.ExternalTicketId, ct);
+            if (live is not null && !string.IsNullOrWhiteSpace(live.RequesterEmail))
+            {
+                ticket.RequesterEmail = live.RequesterEmail;
+                if (!string.IsNullOrWhiteSpace(live.RequesterName)) ticket.RequesterName = live.RequesterName;
+                await db.SaveChangesAsync(ct);
+            }
+        }
+        catch (ConnectorException)
+        {
+            // The PSA could not answer: the ticket simply stays without a known contact, as before.
+        }
+        return Desk.Domain.Tickets.TicketContact.IsReachable(ticket);
+    }
+
     public async Task<ReplyRecipientsDto> ListReplyRecipientsAsync(Guid appUserId, Guid ticketId, CancellationToken ct = default)
     {
         var ticket = await scopeQuery.FindAsync(db.Tickets, ticketId, appUserId, Permissions.TicketsAddPublicNote, ct)

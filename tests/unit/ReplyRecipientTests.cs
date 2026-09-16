@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Desk.Application.Common;
 using Desk.Application.Mapping;
 using Desk.Application.Tickets;
@@ -131,5 +132,28 @@ public class ReplyRecipientTests
             "a deactivated contact is not someone to copy");
         list.Contacts.Should().OnlyContain(c => c.Email.EndsWith("@acme.test"),
             "the list is this ticket's customer, and nobody else");
+    }
+
+    [Fact]
+    public async Task Opening_a_ticket_with_no_known_contact_asks_the_PSA_and_keeps_the_answer()
+    {
+        // The sync only re-reads recently active tickets, so an older ticket learns its contact
+        // when a technician opens it - otherwise Public reply stays hidden on a ticket that has one.
+        var clock = new TestClock();
+        await using var db = await SeedAsync();
+        var (svc, psa) = Build(db, clock);
+        var created = await svc.CreateAsync(Access(), new CreateTicketInput("Outlook down", null, null, null, null));
+        var row = await db.Tickets.SingleAsync(t => t.Id == created.Id);
+        row.RequesterUserId = null; row.RequesterEmail = "unknown@unknown"; row.RequesterName = "Unknown";
+        await db.SaveChangesAsync();
+
+        psa.SetTicketContact(row.ExternalTicketId!, null, null);
+        (await svc.RefreshContactAsync(Guid.NewGuid(), created.Id)).Should().BeFalse("the PSA names nobody yet");
+
+        psa.SetTicketContact(row.ExternalTicketId!, "Priya Nair", "priya@acme.test");
+        (await svc.RefreshContactAsync(Guid.NewGuid(), created.Id)).Should().BeTrue();
+
+        var stored = await db.Tickets.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        (stored.RequesterName, stored.RequesterEmail).Should().Be(("Priya Nair", "priya@acme.test"));
     }
 }
