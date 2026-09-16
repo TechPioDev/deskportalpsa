@@ -123,9 +123,9 @@ public record UnifiedTicketNote(
 public record UnifiedTicketNoteCreateRequest(string Body, bool IsPublic, string IdempotencyKey)
 {
     /// <summary>
-    /// Email the ticket's own contact, where the provider lets the caller decide. ConnectWise does
-    /// (emailContactFlag); Autotask does not expose recipients on a note at all and decides from
-    /// its own workflow rules, so this is ignored there rather than quietly half-honoured.
+    /// Email the ticket's own contact, where the provider lets the caller decide. Neither
+    /// ConnectWise nor Autotask exposes recipients on a note - both decide from their own rules - so
+    /// both connectors ignore this rather than quietly half-honour it.
     /// Check <see cref="ProviderCapabilities.SupportsNoteEmailRecipients"/> before offering it.
     /// </summary>
     public bool EmailContact { get; init; }

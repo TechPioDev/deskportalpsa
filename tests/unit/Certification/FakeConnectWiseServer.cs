@@ -45,6 +45,9 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
     private readonly List<Dictionary<string, object?>> _tickets = [];
     private readonly List<Dictionary<string, object?>> _notes = [];
 
+    /// <summary>Notes as the server stored them, for assertions on what the connector actually sent.</summary>
+    public IReadOnlyList<IReadOnlyDictionary<string, object?>> Notes => _notes;
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         if (ForceStatus is { } forced) return Resp(forced, ForceBody ?? "{\"code\":\"forced\"}");
@@ -82,7 +85,7 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
         if (path.Contains("/notes"))
         {
             var ticketId = ExtractTicketId(path);
-            if (request.Method == HttpMethod.Post) return Ok(CreateNote(ticketId, body));
+            if (request.Method == HttpMethod.Post) return CreateNote(ticketId, body);
             return Arr("[" + string.Join(",", _notes.Where(n => (long)n["ticketID"]! == ticketId).Select(Serialize)) + "]");
         }
 
@@ -220,10 +223,24 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
         return Ok(Serialize(ticket));
     }
 
-    private string CreateNote(long ticketId, string body)
+    /// <summary>The members CW's ServiceNote actually has. Anything else, CW refuses outright.</summary>
+    private static readonly HashSet<string> ServiceNoteMembers = new(StringComparer.Ordinal)
+    {
+        "id", "ticketId", "text", "detailDescriptionFlag", "internalAnalysisFlag", "resolutionFlag", "issueFlag",
+        "member", "contact", "customerUpdatedFlag", "processNotifications", "dateCreated", "createdBy",
+        "internalFlag", "externalFlag", "_info",
+    };
+
+    private HttpResponseMessage CreateNote(long ticketId, string body)
     {
         using var doc = JsonDocument.Parse(body);
         var r = doc.RootElement;
+        // As strict as the real API: an unknown member fails the whole request. The fake accepting
+        // emailContactFlag is how a note body that CW rejects on every call shipped green.
+        foreach (var p in r.EnumerateObject())
+            if (!ServiceNoteMembers.Contains(p.Name))
+                return Resp(HttpStatusCode.BadRequest,
+                    $"{{\"code\":\"InvalidObject\",\"message\":\"Could not find member '{p.Name}' on object of type 'ServiceNote'.\"}}");
         var note = new Dictionary<string, object?>
         {
             ["id"] = ++_seq,
@@ -232,12 +249,13 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
             ["internalAnalysisFlag"] = r.TryGetProperty("internalAnalysisFlag", out var f) && f.GetBoolean(),
             ["detailDescriptionFlag"] = true,
             ["customerUpdatedFlag"] = r.TryGetProperty("customerUpdatedFlag", out var c) && c.GetBoolean(),
+            ["processNotifications"] = r.TryGetProperty("processNotifications", out var pn) && pn.GetBoolean(),
             ["dateCreated"] = clock.GetUtcNow().ToString("o"),
             // CW stamps the authenticated member on notes it accepts.
             ["member"] = new Dictionary<string, object?> { ["id"] = 20L, ["name"] = "Tech One" },
         };
         _notes.Add(note);
-        return Serialize(note);
+        return Ok(Serialize(note));
     }
 
     private IEnumerable<Dictionary<string, object?>> FilterTickets(string? conditions)

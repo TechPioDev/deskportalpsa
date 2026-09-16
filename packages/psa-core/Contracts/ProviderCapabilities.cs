@@ -24,9 +24,9 @@ public record ProviderCapabilities
     public bool SupportsPrivateNotes { get; init; }
 
     /// <summary>
-    /// Whether the caller can choose who a public note is emailed to. ConnectWise takes recipients
-    /// on the note itself (emailContactFlag / emailCc); Autotask's TicketNote entity has no
-    /// recipient fields — it notifies from its own workflow rules off the ticket's contact. The
+    /// Whether the caller can choose who a public note is emailed to. Neither real provider allows
+    /// it: ConnectWise's ServiceNote has no recipient fields (it notifies by board rules when
+    /// processNotifications is set) and Autotask's TicketNote notifies from its workflow rules. The
     /// portal sends no mail of its own either way, so where this is false the UI must state who the
     /// provider will notify rather than offer a choice it cannot honour.
     /// </summary>
