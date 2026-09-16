@@ -61,8 +61,11 @@ public static class PsaTicketLink
             .FirstOrDefault(s => s.StartsWith("v", StringComparison.OrdinalIgnoreCase) && s.Contains("release"));
         if (release is null) return null;
 
-        return $"https://{host}/{release}/services/system_io/router/openrecord.rails" +
-               $"?recordType=ServiceFV&recid={id}&companyName={Uri.EscapeDataString(companyName.Trim())}";
+        // The service-ticket request route, the form ConnectWise publishes for linking to a ticket.
+        // The generic openrecord router looked equivalent but answers "Invalid Token" from a plain
+        // link: it expects a token minted by the ConnectWise UI itself.
+        return $"https://{host}/{release}/services/system_io/Service/fv_sr100_request.rails" +
+               $"?service_recid={id}&companyName={Uri.EscapeDataString(companyName.Trim())}";
     }
 
     /// <summary>
