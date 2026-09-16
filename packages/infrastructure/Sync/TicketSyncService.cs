@@ -48,7 +48,9 @@ public sealed class TicketSyncService(
 
         var hash = UpdateHasher.ForTicketState(
             portalStatus, portalPriority, portalCategory, incoming.Title, incoming.Description,
-            incoming.ResolvedAt, incoming.ClosedAt, incoming.SlaDueAt, incoming.CreatedAt, portalQueue);
+            incoming.ResolvedAt, incoming.ClosedAt, incoming.SlaDueAt, incoming.CreatedAt, portalQueue,
+            string.IsNullOrWhiteSpace(incoming.RequesterName) ? null : incoming.RequesterName,
+            string.IsNullOrWhiteSpace(incoming.RequesterEmail) ? null : incoming.RequesterEmail);
 
         var existing = await db.Tickets.FirstOrDefaultAsync(
             t => t.PsaConnectionId == psaConnectionId && t.ExternalTicketId == incoming.ExternalId, ct);
@@ -84,6 +86,11 @@ public sealed class TicketSyncService(
 
         ticket.Title = incoming.Title;
         ticket.Description = incoming.Description;
+        // The ticket's contact, refreshed on every sync: a contact changed in the PSA is who a public
+        // reply now goes to. Only overwritten when the provider names one, so a portal-raised
+        // ticket's requester is not wiped by a provider that sends no contact.
+        if (!string.IsNullOrWhiteSpace(incoming.RequesterEmail)) ticket.RequesterEmail = incoming.RequesterEmail;
+        if (!string.IsNullOrWhiteSpace(incoming.RequesterName)) ticket.RequesterName = incoming.RequesterName;
         ticket.PortalStatus = portalStatus;
         ticket.PsaStatus = incoming.Status;
         ticket.PortalPriority = portalPriority;

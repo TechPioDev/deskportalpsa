@@ -76,6 +76,8 @@ export const TicketDetailSchema = z.object({
   assignedAppUserId: z.string().nullable().default(null),
   assignedAppUserName: z.string().nullable().default(null),
   externalTicketUrl: z.string().nullable().default(null),
+  contactName: z.string().nullable().default(null),
+  hasReachableContact: z.boolean().default(false),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

@@ -236,7 +236,8 @@ public class TicketSyncTests
         // would pass while echo suppression was broken, which is exactly what it did.
         var portalHash = UpdateHasher.ForTicketState(
             status: "1", priority: "1", category: null, title: "Printer", description: null,
-            resolvedAt: null, closedAt: null, slaDueAt: null);
+            resolvedAt: null, closedAt: null, slaDueAt: null,
+            contactName: "Acme", contactEmail: "a@acme.test");
         await events.TryRegisterAsync(new SyncEventRegistration
         {
             MspOrganizationId = Org, PsaConnectionId = Conn, TicketId = ticket.Id,
@@ -247,5 +248,49 @@ public class TicketSyncTests
         // The provider now echoes that same change back — must be skipped.
         var outcome = await svc.UpsertFromProviderAsync(Conn, Incoming("500", "Printer", "1"), []);
         outcome.Should().Be(TicketSyncOutcome.SkippedEcho);
+    }
+
+    [Fact]
+    public async Task A_ticket_imported_before_contacts_were_captured_gains_its_contact_on_the_next_sync()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var clock = new TestClock();
+        await using var db = await SeedConnectionAsync(dbName);
+        var svc = Service(db, clock, new SyncEventStore(db, clock));
+
+        // As every existing ticket was stored: placeholders, because the connector sent no contact.
+        await svc.UpsertFromProviderAsync(Conn, Incoming("600", "VPN down", "5") with { RequesterName = null, RequesterEmail = null }, []);
+        var before = await db.Tickets.SingleAsync();
+        Desk.Domain.Tickets.TicketContact.IsReachable(before).Should().BeFalse();
+
+        // Nothing else about the ticket changes - only the contact now arrives. Without the contact
+        // in the update hash this would short-circuit as "unchanged" and never be stored.
+        var outcome = await svc.UpsertFromProviderAsync(Conn, Incoming("600", "VPN down", "5") with { RequesterName = "Priya Nair", RequesterEmail = "priya@acme.test" }, []);
+
+        outcome.Should().Be(TicketSyncOutcome.Updated);
+        var after = await db.Tickets.AsNoTracking().SingleAsync();
+        (after.RequesterName, after.RequesterEmail).Should().Be(("Priya Nair", "priya@acme.test"));
+        Desk.Domain.Tickets.TicketContact.IsReachable(after).Should().BeTrue();
+
+        // And a later sync that names nobody does not wipe the contact already known.
+        await svc.UpsertFromProviderAsync(Conn, Incoming("600", "VPN down", "1") with { RequesterName = null, RequesterEmail = null }, []);
+        (await db.Tickets.AsNoTracking().SingleAsync()).RequesterEmail.Should().Be("priya@acme.test");
+    }
+
+    [Theory]
+    [InlineData("unknown@unknown", false, false)]
+    [InlineData("", false, false)]
+    [InlineData("not-an-address", false, false)]
+    [InlineData("priya@acme.test", false, true)]
+    [InlineData("unknown@unknown", true, true)] // raised by a client portal user, who reads replies here
+    public void A_public_reply_is_offered_only_when_someone_would_receive_it(string email, bool raisedInPortal, bool reachable)
+    {
+        var t = new Desk.Domain.Tickets.Ticket
+        {
+            RequesterName = "Unknown", RequesterEmail = email, Title = "t",
+            RequesterUserId = raisedInPortal ? Guid.NewGuid() : null,
+        };
+
+        Desk.Domain.Tickets.TicketContact.IsReachable(t).Should().Be(reachable);
     }
 }

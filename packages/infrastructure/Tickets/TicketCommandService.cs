@@ -324,7 +324,10 @@ public sealed class TicketCommandService(
 
     private static string HashOf(Ticket t) => UpdateHasher.ForTicketState(
         t.PortalStatus, t.PortalPriority, t.PortalCategory, t.Title, t.Description,
-        t.ResolvedAt, t.ClosedAt, t.SlaDueAt, t.PsaCreatedAt, t.QueueOrBoard);
+        t.ResolvedAt, t.ClosedAt, t.SlaDueAt, t.PsaCreatedAt, t.QueueOrBoard,
+        // As the sync hashes them: the provider's contact, or nothing where only a placeholder is held,
+        // so the portal's own write still recognises itself when it comes back.
+        TicketContact.Name(t), TicketContact.Email(t));
 
     private Task RecordPortalEventAsync(Guid org, Guid connId, Ticket ticket, string idemKey, string eventType, CancellationToken ct)
         => syncEvents.TryRegisterAsync(new SyncEventRegistration

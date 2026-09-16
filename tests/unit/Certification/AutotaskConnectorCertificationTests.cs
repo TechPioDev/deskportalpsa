@@ -30,6 +30,26 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
 
     protected override IServiceManagementConnector CreateConnector() => Build(new FakeAutotaskServer(Clock));
 
+    [Fact]
+    public async Task A_ticket_carries_its_contact_resolved_from_the_contact_id()
+    {
+        // Only contactID rides on an Autotask ticket. Without resolving it no ticket knew who it was
+        // for, and the portal could not tell whether a public reply would reach anyone.
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        var withContact = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Mailbox full", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c1" });
+        var withoutContact = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Monitoring alert", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c2" });
+        server.SetTicketContact(long.Parse(withContact.ExternalId!), 10);
+
+        var page = await c.GetTicketsAsync(new TicketFilter());
+        var a = page.Items.Single(t => t.ExternalId == withContact.ExternalId);
+        var b = page.Items.Single(t => t.ExternalId == withoutContact.ExternalId);
+
+        (a.RequesterName, a.RequesterEmail).Should().Be(("Acme User", "user@acme.test"));
+        (b.RequesterName, b.RequesterEmail).Should().Be(((string?)null, (string?)null));
+        (await c.GetTicketAsync(withContact.ExternalId!))!.RequesterEmail.Should().Be("user@acme.test");
+    }
+
     protected override IServiceManagementConnector CreateFailingConnector(ConnectorFailureKind kind)
     {
         var status = kind switch

@@ -326,7 +326,13 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // Clients reply too — this is the one composer capability they keep, so it is gated on the
   // note permission rather than on being staff.
   const canReply = me?.permissions.includes('tickets.note.public.add') ?? false;
-  const [replyInternal, setReplyInternal] = useState(false);
+  // Staff start on an internal note: it is the more common entry, and the safer one to post by
+  // mistake. A public reply is offered only when it would reach someone - a PSA contact with an
+  // address, or the client portal user who raised the ticket. Clients only ever reply publicly.
+  const [replyMode, setReplyMode] = useState<'internal' | 'public'>('internal');
+  const canReplyPublicly = ticket?.hasReachableContact ?? false;
+  const replyInternal = isStaff && (replyMode === 'internal' || !canReplyPublicly);
+  const setReplyInternal = (internal: boolean) => setReplyMode(internal ? 'internal' : 'public');
   // The composer lives in a dialog now; this only controls visibility, never the draft.
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyStatus, setReplyStatus] = useState('');
@@ -1114,16 +1120,25 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 {isStaff && (
                   <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-4 py-2">
                     <div className="flex overflow-hidden rounded-lg border border-[var(--border)] text-xs font-medium">
-                      <button type="button" onClick={() => setReplyInternal(false)}
-                        className={`px-2.5 py-1 ${!replyInternal ? 'bg-brand text-brand-fg' : 'bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--fg)]'}`}>
-                        Public reply
-                      </button>
                       <button type="button" onClick={() => setReplyInternal(true)}
                         title="Visible to your team and pushed to the PSA as an internal note — never shown to the client"
                         className={`px-2.5 py-1 ${replyInternal ? 'bg-amber-500 text-white' : 'bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--fg)]'}`}>
                         Internal note
                       </button>
+                      {canReplyPublicly && (
+                        <button type="button" onClick={() => setReplyInternal(false)}
+                          title={ticket.contactName ? `Sent to the client — ${ticket.contactName}` : 'Sent to the client'}
+                          className={`px-2.5 py-1 ${!replyInternal ? 'bg-brand text-brand-fg' : 'bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--fg)]'}`}>
+                          Public reply
+                        </button>
+                      )}
                     </div>
+                    {!canReplyPublicly && (
+                      <span className="text-xs text-[var(--faint)]"
+                        title="Add a contact with an email address to this ticket in the PSA to reply to the client">
+                        No contact on this ticket — internal notes only
+                      </span>
+                    )}
                     <span className="min-w-0 flex-1" />
                     <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
                       Set status
