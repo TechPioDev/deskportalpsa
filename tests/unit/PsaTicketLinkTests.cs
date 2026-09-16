@@ -16,19 +16,20 @@ public class PsaTicketLinkTests
     public void ConnectWise_points_at_the_web_router_on_the_matching_site()
     {
         var url = PsaTicketLink.For(
-            ProviderType.ConnectWisePsa, "https://api-na.myconnectwise.net/v4_6_release/apis/3.0/", "548");
+            ProviderType.ConnectWisePsa, "https://api-na.myconnectwise.net/v4_6_release/apis/3.0/", "548", "acme-msp");
 
         // The API host is the "api-" prefixed twin of the UI host, and the router lives under the
-        // same release segment the endpoint names.
+        // same release segment the endpoint names. The company name is what the router routes by:
+        // without it ConnectWise answers "Cannot route blank company name".
         url.Should().Be(
-            "https://na.myconnectwise.net/v4_6_release/services/system_io/router/openrecord.rails?recordType=ServiceFV&recid=548");
+            "https://na.myconnectwise.net/v4_6_release/services/system_io/router/openrecord.rails?recordType=ServiceFV&recid=548&companyName=acme-msp");
     }
 
     [Fact]
     public void A_self_hosted_ConnectWise_serves_both_from_one_host()
     {
         var url = PsaTicketLink.For(
-            ProviderType.ConnectWisePsa, "https://psa.example.com/v4_6_release/apis/3.0/", "17");
+            ProviderType.ConnectWisePsa, "https://psa.example.com/v4_6_release/apis/3.0/", "17", "acme");
 
         url.Should().StartWith("https://psa.example.com/v4_6_release/services/system_io/router/");
     }
@@ -62,6 +63,16 @@ public class PsaTicketLinkTests
     public void Nothing_is_built_without_both_an_endpoint_and_a_ticket_id(string? endpoint, string? id)
     {
         PsaTicketLink.For(ProviderType.AutotaskPsa, endpoint, id).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public void ConnectWise_without_a_company_name_yields_no_link_rather_than_one_that_cannot_route(string? company)
+    {
+        // Reported from production: the link opened "Cannot route blank company name".
+        PsaTicketLink.For(ProviderType.ConnectWisePsa, "https://api-na.myconnectwise.net/v4_6_release/apis/3.0/", "553", company)
+            .Should().BeNull();
     }
 
     [Fact]
