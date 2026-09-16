@@ -22,7 +22,7 @@ public class PsaTicketLinkTests
         // same release segment the endpoint names. The company name is what the router routes by:
         // without it ConnectWise answers "Cannot route blank company name".
         url.Should().Be(
-            "https://na.myconnectwise.net/v4_6_release/services/system_io/router/openrecord.rails?recordType=ServiceFV&recid=548&companyName=acme-msp");
+            "https://na.myconnectwise.net/v4_6_release/services/system_io/Service/fv_sr100_request.rails?service_recid=548&companyName=acme-msp");
     }
 
     [Fact]
@@ -31,7 +31,7 @@ public class PsaTicketLinkTests
         var url = PsaTicketLink.For(
             ProviderType.ConnectWisePsa, "https://psa.example.com/v4_6_release/apis/3.0/", "17", "acme");
 
-        url.Should().StartWith("https://psa.example.com/v4_6_release/services/system_io/router/");
+        url.Should().StartWith("https://psa.example.com/v4_6_release/services/system_io/Service/fv_sr100_request.rails");
     }
 
     [Fact]
