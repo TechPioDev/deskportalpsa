@@ -59,7 +59,12 @@ public sealed class SmtpEmailSender(DeskDbContext db, ISecretStore secrets, Smtp
 
         using var smtp = new SmtpClient { Timeout = 30_000 };
         await smtp.ConnectAsync(account.Host, account.Port, SecurityFor(account.Security), ct);
-        if (!string.IsNullOrEmpty(account.Username))
+        // Sign in only where the server offers it. A Microsoft 365 "direct send" endpoint
+        // (<domain>.mail.protection.outlook.com:25) accepts mail for its own domain with no login and
+        // advertises no AUTH; insisting on one failed every send with "does not support
+        // authentication" whenever a username had been saved. Whether unauthenticated mail is
+        // accepted remains the server's decision, and its refusal is reported as it was before.
+        if (!string.IsNullOrEmpty(account.Username) && smtp.Capabilities.HasFlag(SmtpCapabilities.Authentication))
             await smtp.AuthenticateAsync(account.Username, account.Password ?? "", ct);
         await smtp.SendAsync(Build(message, account.From, account.FromName), ct);
         await smtp.DisconnectAsync(true, ct);
