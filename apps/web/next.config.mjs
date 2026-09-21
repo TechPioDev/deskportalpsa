@@ -2,7 +2,9 @@
  * Content Security Policy.
  *
  * Everything this app loads is same-origin — fonts are self-hosted at build time by next/font,
- * and nothing is pulled from a CDN — so the only awkward parts are the two 'unsafe-inline's.
+ * and nothing is pulled from a CDN — with one named exception: the PioTrack chat widget on the
+ * public pages, which loads its script from, and talks to, PIOTRACK below and nowhere else.
+ * Beyond that the only awkward parts are the two 'unsafe-inline's.
  *
  * script-src needs it because the App Router streams its payload through dozens of inline
  * <script> blocks per page. The alternative is a per-request nonce from middleware, which works
@@ -19,13 +21,15 @@
  * script and leaves a dead page, and this cannot be proven safe from outside a logged-in
  * session. Set CSP_ENFORCE=true once the console is clean through the dashboard.
  */
+const PIOTRACK = 'https://piotrack.com:5050';
+
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline' ${PIOTRACK}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self'",
-  "connect-src 'self'",
+  `connect-src 'self' ${PIOTRACK}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
