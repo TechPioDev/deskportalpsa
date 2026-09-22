@@ -34,11 +34,14 @@ public interface IEmailSender
 
 public sealed record EmailSettingsDto(
     bool HasOwnAccount, string? Host, int Port, string Security, string? Username, bool HasPassword,
-    string? FromAddress, string? FromName, EmailSenderStatus Status);
+    string? FromAddress, string? FromName, EmailSenderStatus Status,
+    string Method = "Smtp", string? GraphTenantId = null, string? GraphClientId = null);
 
-/// <param name="Password">Null keeps the stored password; an empty string removes it.</param>
+/// <param name="Password">Null keeps the stored password (or, for Graph, the client secret); an empty string removes it.</param>
+/// <param name="Method">"Smtp" (default) or "Graph". For Graph, Host/Port/Security/Username are ignored.</param>
 public sealed record EmailSettingsInput(
-    string Host, int Port, string Security, string? Username, string? Password, string FromAddress, string? FromName);
+    string Host, int Port, string Security, string? Username, string? Password, string FromAddress, string? FromName,
+    string? Method = null, string? GraphTenantId = null, string? GraphClientId = null);
 
 /// <summary>The current organization's mail account. Never returns the password.</summary>
 public interface IEmailSettingsService

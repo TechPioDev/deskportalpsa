@@ -496,28 +496,43 @@ function EmailDeliveryCard() {
   );
 }
 
-const MAIL_PRESETS: { label: string; host: string; port: number; security: string; hint: string }[] = [
-  { label: 'Microsoft 365', host: 'smtp.office365.com', port: 587, security: 'StartTls',
-    hint: 'Use a licensed mailbox with Authenticated SMTP turned on (Microsoft 365 admin center → Users → the mailbox → Mail → Manage email apps). If sign-in is refused, Microsoft may have switched off password sign-in for your tenant — use a sending service instead.' },
-  { label: 'Google Workspace', host: 'smtp.gmail.com', port: 587, security: 'StartTls',
+const MAIL_PRESETS: { label: string; method: 'Smtp' | 'Graph'; host: string; port: number; security: string; hint: string }[] = [
+  { label: 'Microsoft 365', method: 'Graph', host: '', port: 443, security: 'SslOnConnect',
+    hint: 'Recommended for Microsoft 365. Sends through Microsoft Graph from a real mailbox, so reports do not land in Junk and no mailbox password is needed. In Microsoft Entra admin center → App registrations → New registration, then: API permissions → Add → Microsoft Graph → Application permissions → Mail.Send → Grant admin consent; Certificates & secrets → New client secret (copy its Value). Enter the Directory (tenant) ID and Application (client) ID from the app’s Overview page.' },
+  { label: 'Microsoft 365 (SMTP)', method: 'Smtp', host: 'smtp.office365.com', port: 587, security: 'StartTls',
+    hint: 'Password sign-in over SMTP. Microsoft is switching this off for many tenants; if sign-in is refused, use Microsoft 365 above instead.' },
+  { label: 'Google Workspace', method: 'Smtp', host: 'smtp.gmail.com', port: 587, security: 'StartTls',
     hint: 'Use the mailbox address as the username and a Google app password (needs 2-Step Verification), not the normal password.' },
-  { label: 'SendGrid', host: 'smtp.sendgrid.net', port: 587, security: 'StartTls',
+  { label: 'SendGrid', method: 'Smtp', host: 'smtp.sendgrid.net', port: 587, security: 'StartTls',
     hint: 'The username is the word apikey and the password is your SendGrid API key. The From address must be a verified sender.' },
-  { label: 'Other', host: '', port: 587, security: 'StartTls', hint: 'Your provider SMTP server name, port and login.' },
+  { label: 'Other', method: 'Smtp', host: '', port: 587, security: 'StartTls', hint: 'Your provider SMTP server name, port and login.' },
 ];
 
 function EmailSettingsForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const { data: current, isLoading } = useQuery({ queryKey: ['email-settings'], queryFn: api.emailSettings, retry: false });
   const qc = useQueryClient();
   const [v, setV] = useState<EmailSettingsInput | null>(null);
-  const [preset, setPreset] = useState(0);
+  const [presetChoice, setPreset] = useState<number | null>(null);
+  const savedGraph = current?.method === 'Graph';
+  // With nothing chosen yet, open on what is saved: Graph for a Graph account, else the SMTP preset.
+  const preset = presetChoice ?? (savedGraph || !current?.hasOwnAccount ? 0 : 1);
+  const graph = MAIL_PRESETS[preset].method === 'Graph';
   const form: EmailSettingsInput = v ?? {
-    host: current?.host ?? MAIL_PRESETS[0].host, port: current?.port ?? 587, security: current?.security ?? 'StartTls',
-    username: current?.username ?? '', password: null, fromAddress: current?.fromAddress ?? '', fromName: current?.fromName ?? 'Desk Portal',
+    host: current?.hasOwnAccount && !savedGraph ? current.host ?? '' : MAIL_PRESETS[1].host,
+    port: current?.hasOwnAccount && !savedGraph ? current.port : 587,
+    security: current?.hasOwnAccount && !savedGraph ? current.security : 'StartTls',
+    username: savedGraph ? '' : current?.username ?? '', password: null,
+    fromAddress: current?.fromAddress ?? '', fromName: current?.fromName ?? 'Desk Portal',
+    graphTenantId: current?.graphTenantId ?? '', graphClientId: current?.graphClientId ?? '',
   };
   const set = (patch: Partial<EmailSettingsInput>) => setV({ ...form, ...patch });
   const save = useMutation({
-    mutationFn: () => api.saveEmailSettings({ ...form, username: form.username?.trim() || null, password: form.password || null }),
+    mutationFn: () => api.saveEmailSettings({
+      ...form,
+      method: graph ? 'Graph' : 'Smtp',
+      username: graph ? null : form.username?.trim() || null,
+      password: form.password || null,
+    }),
     onSuccess: (s) => { qc.setQueryData(['email-settings'], s); onSaved(); },
   });
   const remove = useMutation({
@@ -525,6 +540,8 @@ function EmailSettingsForm({ onClose, onSaved }: { onClose: () => void; onSaved:
     onSuccess: (s) => { qc.setQueryData(['email-settings'], s); onSaved(); },
   });
   const field = 'w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand';
+  // A stored secret only carries over within the same method: an SMTP password is not a client secret.
+  const secretSaved = !!current?.hasPassword && savedGraph === graph;
 
   if (isLoading) return <p className="border-t border-[var(--border)] px-4 py-4 text-sm text-[var(--muted)]">Loading…</p>;
 
@@ -533,44 +550,73 @@ function EmailSettingsForm({ onClose, onSaved }: { onClose: () => void; onSaved:
       onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
       <div className="flex flex-wrap gap-1.5 sm:col-span-2" role="group" aria-label="Mail provider">
         {MAIL_PRESETS.map((p, i) => (
-          <button key={p.label} type="button"
-            onClick={() => { setPreset(i); if (p.host) set({ host: p.host, port: p.port, security: p.security }); }}
+          <button key={p.label} type="button" aria-pressed={preset === i}
+            onClick={() => {
+              setPreset(i);
+              // A client secret typed for Graph must not travel into the SMTP password box, or back.
+              const clear = p.method !== MAIL_PRESETS[preset].method ? { password: null } : {};
+              set({ ...clear, ...(p.method === 'Smtp' && p.host ? { host: p.host, port: p.port, security: p.security } : {}) });
+            }}
             className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${preset === i ? 'border-brand bg-brand-tint text-brand dark:bg-brand/20' : 'border-[var(--border)] text-[var(--muted)] hover:bg-[var(--bg)]'}`}>
             {p.label}
           </button>
         ))}
       </div>
-      <p className="text-xs text-[var(--muted)] sm:col-span-2">{MAIL_PRESETS[preset].hint}</p>
+      <p className="text-xs leading-relaxed text-[var(--muted)] sm:col-span-2">{MAIL_PRESETS[preset].hint}</p>
+
+      {graph ? (
+        <>
+          <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+            Directory (tenant) ID
+            <input required value={form.graphTenantId ?? ''} onChange={(e) => set({ graphTenantId: e.target.value })}
+              placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" spellCheck={false} className={`${field} font-mono`} />
+          </label>
+          <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+            Application (client) ID
+            <input required value={form.graphClientId ?? ''} onChange={(e) => set({ graphClientId: e.target.value })}
+              placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" spellCheck={false} className={`${field} font-mono`} />
+          </label>
+          <label className="space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2">
+            Client secret (Value)
+            <input type="password" value={form.password ?? ''} onChange={(e) => set({ password: e.target.value })}
+              placeholder={secretSaved ? 'Saved — leave blank to keep it' : 'The secret’s Value, not its Secret ID'}
+              autoComplete="new-password" className={field} />
+          </label>
+        </>
+      ) : (
+        <>
+          <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+            Mail server (SMTP)
+            <input required value={form.host} onChange={(e) => set({ host: e.target.value })} placeholder="smtp.office365.com" className={field} />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+              Port
+              <input required type="number" min={1} max={65535} value={form.port} onChange={(e) => set({ port: Number(e.target.value) })} className={field} />
+            </label>
+            <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+              Security
+              <select value={form.security} onChange={(e) => set({ security: e.target.value })} className={field}>
+                <option value="StartTls">STARTTLS (587)</option>
+                <option value="SslOnConnect">SSL/TLS (465)</option>
+                <option value="None">None (local relay only)</option>
+              </select>
+            </label>
+          </div>
+          <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+            Username
+            <input value={form.username ?? ''} onChange={(e) => set({ username: e.target.value })} placeholder="reports@yourmsp.com" autoComplete="off" className={field} />
+          </label>
+          <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+            Password
+            <input type="password" value={form.password ?? ''} onChange={(e) => set({ password: e.target.value })}
+              placeholder={secretSaved ? 'Saved — leave blank to keep it' : 'Password or API key'} autoComplete="new-password" className={field} />
+          </label>
+        </>
+      )}
 
       <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
-        Mail server (SMTP)
-        <input required value={form.host} onChange={(e) => set({ host: e.target.value })} placeholder="smtp.office365.com" className={field} />
-      </label>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
-          Port
-          <input required type="number" min={1} max={65535} value={form.port} onChange={(e) => set({ port: Number(e.target.value) })} className={field} />
-        </label>
-        <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
-          Security
-          <select value={form.security} onChange={(e) => set({ security: e.target.value })} className={field}>
-            <option value="StartTls">STARTTLS (587)</option>
-            <option value="SslOnConnect">SSL/TLS (465)</option>
-            <option value="None">None (local relay only)</option>
-          </select>
-        </label>
-      </div>
-      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
-        Username
-        <input value={form.username ?? ''} onChange={(e) => set({ username: e.target.value })} placeholder="reports@yourmsp.com" autoComplete="off" className={field} />
-      </label>
-      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
-        Password
-        <input type="password" value={form.password ?? ''} onChange={(e) => set({ password: e.target.value })}
-          placeholder={current?.hasPassword ? 'Saved — leave blank to keep it' : 'Password or API key'} autoComplete="new-password" className={field} />
-      </label>
-      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
-        Send from (address)
+        {graph ? 'Send from (mailbox)' : 'Send from (address)'}
         <input required type="email" value={form.fromAddress} onChange={(e) => set({ fromAddress: e.target.value })} placeholder="reports@yourmsp.com" className={field} />
       </label>
       <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
@@ -579,10 +625,12 @@ function EmailSettingsForm({ onClose, onSaved }: { onClose: () => void; onSaved:
       </label>
 
       <p className="text-xs text-[var(--faint)] sm:col-span-2">
-        The password is stored encrypted and is never shown again. After saving, use Send test email to confirm it works.
+        {graph
+          ? 'The mailbox must exist in that tenant (a shared mailbox works). The secret is stored encrypted and never shown again. After saving, use Send test email to confirm it works.'
+          : 'The password is stored encrypted and is never shown again. After saving, use Send test email to confirm it works.'}
       </p>
       {(save.isError || remove.isError) && (
-        <p className="text-sm text-red-600 dark:text-red-400 sm:col-span-2">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400 sm:col-span-2">
           {((save.error ?? remove.error) as Error).message}
         </p>
       )}

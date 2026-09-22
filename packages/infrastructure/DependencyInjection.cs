@@ -78,6 +78,8 @@ public static class DependencyInjection
         // Sync engine + real connectors (Phases 4-5)
         services.AddScoped<ITicketSyncService, TicketSyncService>();
         services.AddHttpClient();
+        // Microsoft 365 mail (token + sendMail). Fixed Microsoft hosts, so no egress guard is needed.
+        services.AddHttpClient(Email.GraphMailSender.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
         services.AddScoped<IConnectorFactory, AutotaskConnectorFactory>();
         services.AddScoped<IConnectorFactory, ConnectWiseConnectorFactory>();
 

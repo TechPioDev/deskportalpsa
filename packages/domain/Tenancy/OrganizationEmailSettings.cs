@@ -9,6 +9,16 @@ namespace Desk.Domain.Tenancy;
 /// </summary>
 public class OrganizationEmailSettings : TenantEntity
 {
+    /// <summary>
+    /// "Smtp" (a mail server and optional login) or "Graph" (Microsoft 365 through the Graph API with an
+    /// app registration: tenant, client id, and the client secret in the secret store where the SMTP
+    /// password would be). Graph exists because Microsoft is retiring password SMTP sign-in, and direct
+    /// send from an unlisted server lands in Junk.
+    /// </summary>
+    public string Method { get; set; } = "Smtp";
+    public string? GraphTenantId { get; set; }
+    public string? GraphClientId { get; set; }
+
     public required string Host { get; set; }
     public int Port { get; set; } = 587;
 
