@@ -26,6 +26,8 @@ services:
       timeout: 3s
       retries: 12
     restart: unless-stopped
+    # Rotated: without a cap a container's log grows until the disk is full.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
@@ -50,6 +52,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
+    # Rotated: without a cap a container's log grows until the disk is full.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   api:
     build: { context: ../.., dockerfile: apps/api/Dockerfile }
@@ -82,6 +86,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
+    # Rotated: without a cap a container's log grows until the disk is full.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   worker:
     build: { context: ../.., dockerfile: apps/worker/Dockerfile }
@@ -106,9 +112,16 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
+    # Rotated: without a cap a container's log grows until the disk is full.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   web:
-    build: { context: ../.., dockerfile: apps/web/Dockerfile }
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Report-only until proven; set CSP_ENFORCE=true in .env.prod to enforce (a rebuild applies it).
+        CSP_ENFORCE: ${CSP_ENFORCE:-false}
     environment:
       KEYCLOAK_ISSUER: "https://auth.${PUBLIC_HOST}/realms/desk"
       KEYCLOAK_CLIENT_ID: desk-web
@@ -117,6 +130,8 @@ services:
       DESK_API_BASE: "http://api:5080"
     depends_on: [api]
     restart: unless-stopped
+    # Rotated: without a cap a container's log grows until the disk is full.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   # Public exposure WITHOUT a VPS or open ports: a Cloudflare Tunnel running inside the compose
   # network, reaching web/keycloak by service name. Enable with: --profile tunnel
@@ -129,6 +144,8 @@ services:
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${TUNNEL_TOKEN:-}"]
     depends_on: [web, keycloak]
     restart: unless-stopped
+    # Rotated: without a cap a container's log grows until the disk is full.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   caddy:
     image: caddy:2-alpine
@@ -142,6 +159,8 @@ services:
       PUBLIC_HOST: ${PUBLIC_HOST}
     depends_on: [web, keycloak]
     restart: unless-stopped
+    # Rotated: without a cap a container's log grows until the disk is full.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
 volumes:
   desk_pg:

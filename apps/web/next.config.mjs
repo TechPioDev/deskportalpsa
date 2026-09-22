@@ -23,9 +23,14 @@
  */
 const PIOTRACK = 'https://piotrack.com:5050';
 
+// `next dev` runs its hot-reload runtime through eval; a production build never does. Allowing it
+// only in development keeps the shipped policy strict while letting the dev server and the browser
+// tests run with CSP_ENFORCE=true - which is how a policy change is proven before it ships.
+const devEval = process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : '';
+
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' ${PIOTRACK}`,
+  `script-src 'self' 'unsafe-inline'${devEval} ${PIOTRACK}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self'",

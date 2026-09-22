@@ -40,14 +40,15 @@ export default function LoginPage() {
               Enter portal
             </Link>
           ) : (
-            <form action="/api/auth/login" method="get" className="mt-6">
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2.5 font-medium text-brand-fg transition-opacity hover:opacity-90"
-              >
-                <LogIn size={16} aria-hidden="true" /> Continue with SSO
-              </button>
-            </form>
+            // A link, not a form: /api/auth/login answers with a redirect to the sign-in host, and a
+            // form submission that lands off-origin is what the CSP's form-action refuses. The only
+            // violation the report-only policy ever recorded was this button.
+            <a
+              href="/api/auth/login"
+              className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2.5 font-medium text-brand-fg transition-opacity hover:opacity-90"
+            >
+              <LogIn size={16} aria-hidden="true" /> Continue with SSO
+            </a>
           )}
 
           <p className="mt-6 text-center text-xs leading-relaxed text-[var(--muted)]">
