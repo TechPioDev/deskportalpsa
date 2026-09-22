@@ -58,7 +58,7 @@ internal sealed class AtCompany
 {
     [JsonPropertyName("id")] public long Id { get; set; }
     [JsonPropertyName("companyName")] public string? CompanyName { get; set; }
-    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; }
 }
 
 internal sealed class AtContact
@@ -68,7 +68,7 @@ internal sealed class AtContact
     [JsonPropertyName("emailAddress")] public string? EmailAddress { get; set; }
     [JsonPropertyName("firstName")] public string? FirstName { get; set; }
     [JsonPropertyName("lastName")] public string? LastName { get; set; }
-    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; }
 }
 
 internal sealed class AtResource
@@ -77,7 +77,7 @@ internal sealed class AtResource
     [JsonPropertyName("email")] public string? Email { get; set; }
     [JsonPropertyName("firstName")] public string? FirstName { get; set; }
     [JsonPropertyName("lastName")] public string? LastName { get; set; }
-    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; }
 }
 
 internal sealed class AtTicket
@@ -151,7 +151,7 @@ internal sealed class AtPicklistValue
 {
     [JsonPropertyName("value")] public string? Value { get; set; }
     [JsonPropertyName("label")] public string? Label { get; set; }
-    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; }
 }
 
 internal sealed class AtTicketAttachment
@@ -193,14 +193,14 @@ internal sealed class AtResourceRole
     [JsonPropertyName("resourceID")] public long ResourceId { get; set; }
     [JsonPropertyName("roleID")] public long RoleId { get; set; }
     [JsonPropertyName("queueID")] public long? QueueId { get; set; }
-    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; }
 }
 
 internal sealed class AtRole
 {
     [JsonPropertyName("id")] public long Id { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
-    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; }
 }
 
 internal sealed class AtBillingCode
@@ -208,6 +208,6 @@ internal sealed class AtBillingCode
     [JsonPropertyName("id")] public long Id { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
     [JsonPropertyName("description")] public string? Description { get; set; }
-    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; }
     [JsonPropertyName("useType")] public int? UseType { get; set; }
 }
