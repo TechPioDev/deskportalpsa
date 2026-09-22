@@ -8,10 +8,9 @@
 #     rows whose key is SECRET_ENCRYPTION_KEY in .env.prod. That key is deliberately NOT copied
 #     here: keep it where the host's other root secrets live, never next to the dump it decrypts.
 #   - attachments volume: the files the rows in `ticket_attachments` point at.
-#   - Keycloak: it runs on its dev-file H2 database INSIDE the container (no KC_DB, no volume), so
-#     recreating that container would lose every account; a copy of the H2 files each night is the
-#     only thing standing between a rebuild and "nobody can sign in". The realm definition itself
-#     is re-imported from infrastructure/keycloak on start and needs no backup.
+#   - Keycloak: its accounts, clients and signing keys, in the `keycloak` database on the same
+#     Postgres (KC_DB). Older installations that still run Keycloak on its in-container H2 store get
+#     a copy of those files instead.
 #
 # Backups live OUTSIDE the git working tree (/var/backups/deskportal) so a pull or a redeploy never
 # touches them. Every dump is test-restored into a scratch database before it is counted as good.
@@ -35,9 +34,9 @@
 #     sh -c 'rm -rf /data/* && tar -xzf /b/desk-attachments_YYYY-MM-DD_HHMMSS.tar.gz -C /data'
 #   docker compose $F start api worker
 #
-# Restore Keycloak's accounts (only after a container rebuild lost them):
+# Restore Keycloak (accounts, clients, keys):
 #   docker compose $F stop keycloak
-#   docker cp /var/backups/deskportal/keycloak-h2_YYYY-MM-DD_HHMMSS/. desk-portal-prod-keycloak-1:/opt/keycloak/data/h2/
+#   gunzip -c /var/backups/deskportal/keycloak_YYYY-MM-DD_HHMMSS.dump.gz #     | docker exec -i desk-portal-prod-postgres-1 pg_restore -U desk -d keycloak --clean --if-exists --no-owner
 #   docker compose $F start keycloak
 set -euo pipefail
 
@@ -96,7 +95,21 @@ else
   rm -f "$ATT"; STATUS=1
 fi
 
-# ── 3. Keycloak accounts (H2 files) ──────────────────────────────────────────
+# ── 3. Keycloak accounts ─────────────────────────────────────────────────────
+# Keycloak now keeps its accounts in the `keycloak` database on the same Postgres, so it is dumped
+# and restore-checked the same way. The H2 copy below stays for an installation that has not been
+# moved yet, and is skipped quietly once the in-container store is gone.
+KCDUMP="$BACKUP_DIR/keycloak_${TS}.dump.gz"
+if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$PG" psql -U "$POSTGRES_USER" -d postgres -At -c "select 1 from pg_database where datname='keycloak'" | grep -q 1; then
+  docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$PG" pg_dump -U "$POSTGRES_USER" -d keycloak -Fc --no-owner | gzip -9 > "$KCDUMP"
+  if gzip -t "$KCDUMP" 2>/dev/null && [ -s "$KCDUMP" ]; then
+    log "keycloak db ok: $KCDUMP ($(du -h "$KCDUMP" | cut -f1))"
+  else
+    log "KEYCLOAK DB BACKUP FAILED: $KCDUMP" >&2; rm -f "$KCDUMP"; STATUS=1
+  fi
+fi
+
+# ── 3b. Keycloak accounts (legacy H2 files) ──────────────────────────────────
 # Copied while Keycloak runs. H2's MVStore file is append-structured and a copy taken mid-write
 # opens at its last completed checkpoint, so this loses at most the final seconds of changes -
 # acceptable for a nightly copy of a store that changes only when someone signs up or changes a
@@ -104,16 +117,19 @@ fi
 KCDIR="$BACKUP_DIR/keycloak-h2_${TS}"
 # docker cp keeps the files' own timestamps (the store dates from August), so the folder is stamped
 # now - otherwise the retention sweep below would delete it the moment it was made.
-if docker cp "$KC:/opt/keycloak/data/h2/." "$KCDIR" 2>/dev/null && [ -s "$KCDIR/keycloakdb.mv.db" ] && touch "$KCDIR"; then
-  log "keycloak ok: $KCDIR ($(du -sh "$KCDIR" | cut -f1))"
-else
-  log "KEYCLOAK BACKUP FAILED: could not copy /opt/keycloak/data/h2 from $KC" >&2
-  rm -rf "$KCDIR"; STATUS=1
+if docker exec "$KC" test -s /opt/keycloak/data/h2/keycloakdb.mv.db 2>/dev/null; then
+  if docker cp "$KC:/opt/keycloak/data/h2/." "$KCDIR" 2>/dev/null && [ -s "$KCDIR/keycloakdb.mv.db" ] && touch "$KCDIR"; then
+    log "keycloak h2 ok: $KCDIR ($(du -sh "$KCDIR" | cut -f1))"
+  else
+    log "KEYCLOAK H2 BACKUP FAILED: could not copy /opt/keycloak/data/h2 from $KC" >&2
+    rm -rf "$KCDIR"; STATUS=1
+  fi
 fi
 
 # ── Rotate ───────────────────────────────────────────────────────────────────
 find "$BACKUP_DIR" -maxdepth 1 -name "${DB}_*.dump.gz" -type f -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'desk-attachments_*.tar.gz' -type f -mtime "+${KEEP_DAYS}" -delete
+find "$BACKUP_DIR" -maxdepth 1 -name 'keycloak_*.dump.gz' -type f -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'keycloak-h2_*' -type d -mtime "+${KEEP_DAYS}" -exec rm -rf {} +
 log "retained: $(ls -1 "$BACKUP_DIR"/${DB}_*.dump.gz 2>/dev/null | wc -l) dumps, $(du -sh "$BACKUP_DIR" | cut -f1) total. Off-site copy: NONE - this host is the only copy."
 
