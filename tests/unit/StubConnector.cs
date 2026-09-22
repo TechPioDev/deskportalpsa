@@ -120,7 +120,12 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     public List<ExternalHoliday> Holidays { get; } = [];
     public Task<IReadOnlyList<ExternalHoliday>> GetHolidaysAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<ExternalHoliday>>(Holidays);
-    public Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default) => No<UnifiedTicket?>();
+    /// <summary>Answers from <see cref="Tickets"/>; an id listed in <see cref="FailingTicketIds"/> throws as a provider error would.</summary>
+    public Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
+        => FailingTicketIds.Contains(ticketId)
+            ? throw new ConnectorException(ConnectorFailureKind.ProviderError, "provider unavailable")
+            : Task.FromResult(Tickets.FirstOrDefault(t => t.ExternalId == ticketId));
+    public HashSet<string> FailingTicketIds { get; } = [];
     /// <summary>What the provider answers to the next create; default is acceptance.</summary>
     public CreateTicketResult NextCreateResult { get; set; } = new(true, "9001", null);
 

@@ -54,8 +54,13 @@ test.describe('scheduled reports', () => {
 test.describe('email settings', () => {
   test('an administrator can add a mail account, and the password never comes back', async ({ page, request }) => {
     await page.goto('/dashboard/health');
-    const card = page.locator('div').filter({ hasText: /^Email delivery/ }).first();
+    const card = page.getByRole('region', { name: 'Email delivery' });
     await expect(card).toContainText('Not set up');
+
+    // The seeded schedule depends on email, so the attention list says so and links to the fix.
+    const attention = page.getByRole('region', { name: /Needs attention/ });
+    await expect(attention).toContainText('Email delivery is not set up');
+    await expect(attention.getByRole('link', { name: /Open/ }).first()).toHaveAttribute('href', /\/dashboard\//);
 
     await page.getByRole('button', { name: 'Set up email' }).click();
     const form = page.locator('form').filter({ hasText: 'Mail server (SMTP)' });

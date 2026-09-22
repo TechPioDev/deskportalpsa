@@ -453,7 +453,7 @@ function EmailDeliveryCard() {
       : 'Not set up — scheduled reports are saved in the portal but not emailed. An organization admin can add the mail account here.';
 
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+    <section aria-labelledby="email-delivery-heading" className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
         <span className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${data.configured
           ? 'bg-green-50 text-green-600 dark:bg-green-950/50 dark:text-green-300'
@@ -461,7 +461,7 @@ function EmailDeliveryCard() {
           <Mail size={17} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold">Email delivery</div>
+          <h2 id="email-delivery-heading" className="text-sm font-semibold">Email delivery</h2>
           <div className="text-xs text-[var(--muted)]">{statusText}</div>
         </div>
         {data.configured && canManage && !editing && (
@@ -492,7 +492,7 @@ function EmailDeliveryCard() {
           onClose={() => setEditing(false)}
           onSaved={() => { setEditing(false); test.reset(); qc.invalidateQueries({ queryKey: ['email-status'] }); }} />
       )}
-    </div>
+    </section>
   );
 }
 
