@@ -28,6 +28,7 @@ builder.Services.AddHostedService<BackgroundJobPollingService>();
 builder.Services.AddHostedService<PollingSyncService>();
 builder.Services.AddHostedService<ScheduledReportService>();
 builder.Services.AddHostedService<StaffReportBackgroundService>();
+builder.Services.AddHostedService<AttentionDigestBackgroundService>();
 builder.Services.AddHostedService<ActivityRollupBackgroundService>();
 builder.Services.AddHostedService<EnquiryRetentionBackgroundService>();
 builder.Services.AddHostedService<AuthorBackfillService>();

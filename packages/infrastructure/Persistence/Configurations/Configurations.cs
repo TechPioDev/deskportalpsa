@@ -19,6 +19,7 @@ public sealed class MspOrganizationConfig : IEntityTypeConfiguration<MspOrganiza
         b.HasKey(x => x.Id);
         b.Property(x => x.Name).HasMaxLength(200).IsRequired();
         b.Property(x => x.Slug).HasMaxLength(100).IsRequired();
+        b.Property(x => x.AttentionDigestRecipients).HasMaxLength(1000);
         b.HasIndex(x => x.Slug).IsUnique();
     }
 }

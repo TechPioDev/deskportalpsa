@@ -102,7 +102,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </Link>
       </aside>
 
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 sm:px-6">
           <div className="flex items-center gap-2 font-semibold md:hidden"><Rocket size={17} className="text-brand" /> Control Panel</div>
           {caps && (
