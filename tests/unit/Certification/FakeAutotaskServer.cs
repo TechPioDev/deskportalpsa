@@ -36,7 +36,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
     private readonly List<Dictionary<string, object?>> _companies =
         [new() { ["id"] = 1L, ["companyName"] = "Acme Corp", ["isActive"] = true }];
     private readonly List<Dictionary<string, object?>> _contacts =
-        [new() { ["id"] = 10L, ["companyID"] = 1L, ["emailAddress"] = "user@acme.test", ["firstName"] = "Acme", ["lastName"] = "User", ["isActive"] = true }];
+        [new() { ["id"] = 10L, ["companyID"] = 1L, ["emailAddress"] = "user@acme.test", ["firstName"] = "Acme", ["lastName"] = "User", ["isActive"] = 1L }];
     private readonly List<Dictionary<string, object?>> _resources =
         [new() { ["id"] = 20L, ["email"] = "tech@msp.test", ["firstName"] = "Tech", ["lastName"] = "One", ["isActive"] = true }];
     private readonly List<Dictionary<string, object?>> _contracts =

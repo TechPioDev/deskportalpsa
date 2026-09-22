@@ -977,7 +977,18 @@ public sealed class AutotaskConnector(
         if (!resp.IsSuccessStatusCode)
             throw MapError(resp, await SafeBodyAsync(resp, ct));
 
-        return await resp.Content.ReadFromJsonAsync<T>(cancellationToken: ct);
+        try
+        {
+            return await resp.Content.ReadFromJsonAsync<T>(cancellationToken: ct);
+        }
+        catch (JsonException ex)
+        {
+            // A response the connector cannot read is a provider failure like any other, not an
+            // unhandled exception: callers that tolerate a connector error (contact lookups, the
+            // reply-recipients list, sync primes) then degrade as designed instead of answering 500.
+            throw new ConnectorException(ConnectorFailureKind.ProviderError,
+                $"Autotask returned an unexpected response for {path}: {ex.Message}", ex);
+        }
     }
 
     /// <summary>
