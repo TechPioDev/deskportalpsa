@@ -19,7 +19,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="flex min-h-screen">
       <SidebarShell />
 
-      <div className="flex flex-1 flex-col">
+      {/* min-w-0: a flex item otherwise grows to its widest child's content, and the scrolling
+          phone tab bar below made every dashboard page about 2,200px wide on a phone. */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 sm:px-6">
           <SidebarToggle />
           <div className="relative hidden max-w-xl flex-1 md:block">

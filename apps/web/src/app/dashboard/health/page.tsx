@@ -3,11 +3,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw, ChevronDown, Filter, Clock, Mail, AlertOctagon, CheckCircle2, Layers,
-  Plus, ArrowRight, AlertTriangle, Activity, RotateCw, Check,
+  Plus, ArrowRight, AlertTriangle, Activity, RotateCw, Check, BellRing, ShieldCheck,
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
-import { api, type EmailSettingsInput, type UnsyncedTicket } from '@/lib/api';
+import { api, type AttentionItem, type EmailSettingsInput, type UnsyncedTicket } from '@/lib/api';
 import type { Health } from '@/lib/types';
 
 const PROVIDER: Record<number, { name: string; abbr: string; color: string }> = {
@@ -79,7 +79,7 @@ export default function HealthPage() {
           <p className="text-sm text-[var(--muted)]">Live status of each PSA connection.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => { qc.invalidateQueries({ queryKey: ['health'] }); qc.invalidateQueries({ queryKey: ['audit'] }); }}
+          <button onClick={() => { ['health', 'audit', 'attention', 'unsynced-tickets'].forEach((k) => qc.invalidateQueries({ queryKey: [k] })); }}
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
             <RefreshCw size={15} /> Refresh
           </button>
@@ -88,6 +88,8 @@ export default function HealthPage() {
           </button>
         </div>
       </div>
+
+      <AttentionPanel />
 
       <EmailDeliveryCard />
 
@@ -203,6 +205,147 @@ export default function HealthPage() {
         Integration health is calculated from synchronization status, error rates, and pending job counts.
       </div>
     </div>
+  );
+}
+
+/**
+ * Everything that is quietly going wrong, most urgent first: connections that failed or stalled,
+ * pushes that never reached the PSA, closed tickets that reports will skip, reports nobody received.
+ * The same list is emailed once a day to the digest recipients when it is not empty.
+ */
+function AttentionPanel() {
+  const { data, isLoading, isError } = useQuery({ queryKey: ['attention'], queryFn: api.attention, retry: false, refetchInterval: 5 * 60_000 });
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
+  const canManage = !!me?.permissions?.includes('org.manage');
+  const [editing, setEditing] = useState(false);
+
+  if (isLoading) return <div className="h-20 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]" />;
+  if (isError || !data) return null;
+
+  const items = data.items;
+  const critical = items.filter((i) => i.severity === 'critical').length;
+  const digestTo = data.digest.recipients;
+
+  return (
+    <section aria-labelledby="attention-heading" className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--border)] px-5 py-3">
+        <h2 id="attention-heading" className="flex items-center gap-2 text-sm font-semibold">
+          {items.length === 0
+            ? <ShieldCheck size={16} className="text-green-600 dark:text-green-400" aria-hidden="true" />
+            : <AlertTriangle size={16} className={critical ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'} aria-hidden="true" />}
+          Needs attention
+          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${items.length === 0
+            ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'
+            : critical
+              ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'}`}>
+            {items.length}
+          </span>
+        </h2>
+        <span className="flex min-w-0 basis-full items-center gap-2 text-xs text-[var(--muted)] sm:flex-1 sm:basis-auto sm:justify-end">
+          <BellRing size={13} aria-hidden="true" />
+          <span className="truncate">
+            {digestTo ? <>Daily digest to <span className="font-medium text-[var(--fg)]">{digestTo}</span></> : 'Daily digest is off'}
+          </span>
+          {canManage && !editing && (
+            <button onClick={() => setEditing(true)} className="shrink-0 font-medium text-brand hover:underline">
+              {digestTo ? 'Change' : 'Set up'}
+            </button>
+          )}
+        </span>
+      </div>
+
+      {editing && <DigestForm current={digestTo ?? ''} onClose={() => setEditing(false)} />}
+
+      {items.length === 0 ? (
+        <p className="px-5 py-4 text-sm text-[var(--muted)]">
+          Nothing needs attention. Connections are syncing, tickets are reaching the PSA and reports are going out.
+        </p>
+      ) : (
+        <ul className="divide-y divide-[var(--border)]">
+          {items.map((i) => <AttentionRow key={i.kind + i.title} item={i} />)}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function AttentionRow({ item }: { item: AttentionItem }) {
+  const critical = item.severity === 'critical';
+  return (
+    <li className="flex gap-3 px-5 py-3">
+      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${critical ? 'bg-red-500' : 'bg-amber-500'}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-sm font-medium">{item.title}</span>
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${critical
+            ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+            : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'}`}>
+            {critical ? 'Critical' : 'Warning'}
+          </span>
+        </div>
+        <p className="mt-0.5 break-words text-xs text-[var(--muted)]">{item.detail}</p>
+      </div>
+      {item.link && (
+        <a href={item.link} className="inline-flex shrink-0 items-center gap-1 self-center text-xs font-medium text-brand hover:underline">
+          Open <ArrowRight size={13} aria-hidden="true" />
+        </a>
+      )}
+    </li>
+  );
+}
+
+function DigestForm({ current, onClose }: { current: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [value, setValue] = useState(current);
+  const [invalid, setInvalid] = useState<string[]>([]);
+  const save = useMutation({
+    mutationFn: () => api.saveAttentionDigest(value),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['attention'] });
+      setInvalid(r.invalid);
+      if (r.invalid.length === 0) onClose();
+    },
+  });
+  const send = useMutation({ mutationFn: api.sendAttentionDigest });
+
+  return (
+    <form className="space-y-2 border-b border-[var(--border)] bg-[var(--bg)] px-5 py-4"
+      onSubmit={(e) => { e.preventDefault(); send.reset(); save.mutate(); }}>
+      <label className="block space-y-1 text-xs font-medium text-[var(--muted)]">
+        Email the list every morning at 07:30 (organization time) to
+        <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="ops@yourmsp.com, lead@yourmsp.com"
+          className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--fg)] outline-none focus:border-brand" />
+      </label>
+      <p className="text-xs text-[var(--faint)]">
+        Sent only on days something needs attention. Leave blank to switch the digest off.
+      </p>
+      {invalid.length > 0 && (
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+          Saved the valid addresses. Not an email address: {invalid.join(', ')}
+        </p>
+      )}
+      {save.isError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{(save.error as Error).message}</p>}
+      {(send.data || send.isError) && (
+        <p role="status" className={`text-xs font-medium ${send.data?.sent ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+          {send.data?.message ?? 'Could not reach the server.'}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {current && (
+          <button type="button" disabled={send.isPending} onClick={() => send.mutate()}
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--surface)] disabled:opacity-60">
+            {send.isPending ? 'Sending…' : 'Send digest now'}
+          </button>
+        )}
+        <span className="ml-auto flex gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--surface)]">Cancel</button>
+          <button type="submit" disabled={save.isPending} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
+            {save.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </span>
+      </div>
+    </form>
   );
 }
 

@@ -384,6 +384,13 @@ export const api = {
     if (companyId) q.set('companyId', companyId);
     return `${BFF_BASE}/api/reports/technician-productivity.pdf?${q}`;
   },
+  attention: () => request('/api/admin/attention', AttentionSchema) as Promise<Attention>,
+  saveAttentionDigest: (recipients: string) =>
+    request('/api/admin/attention/digest', z.object({
+      recipients: z.string().nullable(), lastSentOn: z.string().nullable(), invalid: z.array(z.string()),
+    }), { method: 'PUT', body: JSON.stringify({ recipients }) }),
+  sendAttentionDigest: () =>
+    request('/api/admin/attention/digest/send', z.object({ sent: z.boolean(), message: z.string() }), { method: 'POST' }),
   emailStatus: () => request('/api/admin/email', z.object({ configured: z.boolean(), from: z.string().nullable(), source: z.string() })),
   emailSettings: () => request('/api/admin/email/settings', EmailSettingsSchema),
   saveEmailSettings: (input: EmailSettingsInput) =>
@@ -977,3 +984,19 @@ const TicketNoteResponse = z.object({
   id: z.string(), authorName: z.string(), authoredByClient: z.boolean(),
   body: z.string(), createdAt: z.string(),
 });
+
+export const AttentionItemSchema = z.object({
+  kind: z.string(),
+  severity: z.enum(['critical', 'warning']),
+  title: z.string(),
+  detail: z.string(),
+  count: z.number(),
+  link: z.string().nullable(),
+});
+export type AttentionItem = z.infer<typeof AttentionItemSchema>;
+export const AttentionSchema = z.object({
+  items: z.array(AttentionItemSchema),
+  digest: z.object({ recipients: z.string().nullable(), lastSentOn: z.string().nullable() }),
+  checkedAt: z.string(),
+});
+export type Attention = z.infer<typeof AttentionSchema>;

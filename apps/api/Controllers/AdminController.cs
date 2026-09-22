@@ -250,6 +250,29 @@ public sealed class AdminReadController(
     [RequirePermission(Permissions.IntegrationHealthView)]
     public async Task<IActionResult> Health(CancellationToken ct) => Ok(await health.SnapshotAsync(ct));
 
+    /// <summary>Everything an administrator should look at, most urgent first, plus the daily digest settings.</summary>
+    [HttpGet("attention")]
+    [RequirePermission(Permissions.IntegrationHealthView)]
+    public async Task<IActionResult> Attention([FromServices] IAttentionService attention, CancellationToken ct)
+        => Ok(await attention.ListAsync(ct));
+
+    public sealed record DigestRecipientsInput(string? Recipients);
+
+    /// <summary>Who receives the daily "needs attention" email. Blank switches it off.</summary>
+    [HttpPut("attention/digest")]
+    [RequirePermission(Permissions.OrgManage)]
+    public async Task<IActionResult> SetDigest([FromServices] IAttentionService attention, [FromBody] DigestRecipientsInput input, CancellationToken ct)
+    {
+        var (digest, invalid) = await attention.SetDigestRecipientsAsync(input.Recipients, ct);
+        return Ok(new { digest.Recipients, digest.LastSentOn, invalid });
+    }
+
+    /// <summary>Sends the current list to the digest recipients now, as proof it arrives.</summary>
+    [HttpPost("attention/digest/send")]
+    [RequirePermission(Permissions.OrgManage)]
+    public async Task<IActionResult> SendDigest([FromServices] IAttentionService attention, CancellationToken ct)
+        => Ok(await attention.SendDigestNowAsync(ct));
+
     [HttpGet("audit")]
     [RequirePermission(Permissions.AuditView)]
     public async Task<IActionResult> Audit(
