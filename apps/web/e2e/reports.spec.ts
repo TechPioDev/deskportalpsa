@@ -63,7 +63,18 @@ test.describe('email settings', () => {
     await expect(attention.getByRole('link', { name: /Open/ }).first()).toHaveAttribute('href', /\/dashboard\//);
 
     await page.getByRole('button', { name: 'Set up email' }).click();
-    const form = page.locator('form').filter({ hasText: 'Mail server (SMTP)' });
+    const form = page.locator('form').filter({ has: page.getByRole('group', { name: 'Mail provider' }) });
+
+    // Microsoft 365 opens first and asks for the app registration, not a server and password.
+    await expect(form.getByLabel('Directory (tenant) ID')).toBeVisible();
+    await expect(form.getByLabel('Mail server (SMTP)')).toHaveCount(0);
+    await form.getByLabel('Directory (tenant) ID').fill('11111111-2222-3333-4444-555555555555');
+    await form.getByLabel('Application (client) ID').fill('not-a-guid');
+    await form.getByLabel('Client secret (Value)').fill('not-a-real-secret');
+    await form.getByLabel('Send from (mailbox)').fill('reports@example.test');
+    await form.getByRole('button', { name: 'Save' }).click();
+    await expect(form.getByRole('alert')).toContainText('Application (client) ID');
+
     await form.getByRole('button', { name: 'Other' }).click();
     await form.getByLabel('Mail server (SMTP)').fill('https://smtp.example.test');
     await form.getByLabel('Send from (address)').fill('reports@example.test');

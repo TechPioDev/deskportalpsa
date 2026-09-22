@@ -63,7 +63,11 @@ public sealed class AdminEmailController(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await audit.WriteAsync("email.test.failed", "Email", null, new { To = valid[0], Error = ex.GetType().Name }, ct);
-            return Ok(new TestEmailResult(false, $"The mail server refused the message: {ex.Message}"));
+            // Our own explained failures (Microsoft 365 sign-in, permissions, missing mailbox) already say
+            // what to fix; only a raw mail-server error needs the framing.
+            return Ok(new TestEmailResult(false, ex is InvalidOperationException
+                ? ex.Message
+                : $"The mail server refused the message: {ex.Message}"));
         }
     }
 }

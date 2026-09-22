@@ -36,11 +36,16 @@ public sealed class SmtpOptions
     public bool IsConfigured => !string.IsNullOrWhiteSpace(Host) && !string.IsNullOrWhiteSpace(From);
 }
 
-/// <summary>One resolved account to send through.</summary>
+/// <summary>One resolved account to send through. For Graph, Password is the client secret.</summary>
 public sealed record SmtpAccount(
-    string Host, int Port, string Security, string? Username, string? Password, string From, string FromName, bool Guarded);
+    string Host, int Port, string Security, string? Username, string? Password, string From, string FromName, bool Guarded,
+    string Method = "Smtp", string? GraphTenantId = null, string? GraphClientId = null);
 
-public sealed class SmtpEmailSender(DeskDbContext db, ISecretStore secrets, SmtpOptions server) : IEmailSender
+/// <summary>
+/// Sends an organization's mail through whichever account it has: SMTP, or Microsoft 365 via Graph.
+/// The HTTP client factory is optional so SMTP-only callers (and their tests) need none.
+/// </summary>
+public sealed class SmtpEmailSender(DeskDbContext db, ISecretStore secrets, SmtpOptions server, IHttpClientFactory? http = null) : IEmailSender
 {
     public async Task<EmailSenderStatus> StatusAsync(Guid organizationId, CancellationToken ct = default)
     {
@@ -55,6 +60,12 @@ public sealed class SmtpEmailSender(DeskDbContext db, ISecretStore secrets, Smtp
             throw new ArgumentException("An email needs at least one recipient.", nameof(message));
 
         var account = await AccountAsync(organizationId, ct) ?? throw new InvalidOperationException("Email is not configured.");
+        if (account.Method == "Graph")
+        {
+            if (http is null) throw new InvalidOperationException("Microsoft 365 sending is not available in this process.");
+            await new GraphMailSender(http.CreateClient(GraphMailSender.HttpClientName)).SendAsync(account, message, ct);
+            return;
+        }
         if (account.Guarded) await EnsurePublicHostAsync(account.Host, ct);
 
         using var smtp = new SmtpClient { Timeout = 30_000 };
@@ -84,7 +95,8 @@ public sealed class SmtpEmailSender(DeskDbContext db, ISecretStore secrets, Smtp
             string? password = null;
             if (own.PasswordSecretRef is { } secretRef)
                 password = (await secrets.ReadAsync(secretRef, ct)).GetValueOrDefault("Password");
-            return new SmtpAccount(own.Host, own.Port, own.Security, own.Username, password, own.FromAddress, own.FromName, server.BlockPrivateHosts);
+            return new SmtpAccount(own.Host, own.Port, own.Security, own.Username, password, own.FromAddress, own.FromName, server.BlockPrivateHosts,
+                own.Method, own.GraphTenantId, own.GraphClientId);
         }
         return server.IsConfigured
             ? new SmtpAccount(server.Host!, server.Port, server.Security, server.Username, server.Password, server.From!, server.FromName, false)

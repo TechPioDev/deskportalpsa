@@ -25,11 +25,14 @@ public sealed class EmailSettingsService(
         return row is null
             ? new EmailSettingsDto(false, null, 587, "StartTls", null, false, null, null, status)
             : new EmailSettingsDto(true, row.Host, row.Port, row.Security, row.Username, row.PasswordSecretRef is not null,
-                row.FromAddress, row.FromName, status);
+                row.FromAddress, row.FromName, status, row.Method, row.GraphTenantId, row.GraphClientId);
     }
 
     public async Task<EmailSettingsDto> SaveAsync(EmailSettingsInput input, CancellationToken ct = default)
     {
+        if (string.Equals(input.Method?.Trim(), "Graph", StringComparison.OrdinalIgnoreCase))
+            return await SaveGraphAsync(input, ct);
+
         var host = (input.Host ?? "").Trim();
         if (host.Length == 0) throw new ValidationFailedException("Enter the mail server, for example smtp.office365.com.");
         if (host.Contains("://") || host.Contains('/') || host.Contains(' ') || host.Length > 253)
@@ -70,6 +73,9 @@ public sealed class EmailSettingsService(
                     : await secrets.WriteAsync($"email/{Org:N}", data, ct);
             }
         }
+        row.Method = "Smtp";
+        row.GraphTenantId = null;
+        row.GraphClientId = null;
         row.Host = host;
         row.Port = input.Port;
         row.Security = security;
@@ -83,6 +89,57 @@ public sealed class EmailSettingsService(
         // What changed, never the password - only whether one was supplied.
         await audit.WriteAsync(created ? "email.settings.created" : "email.settings.updated", "OrganizationEmailSettings", row.Id.ToString(),
             new { row.Host, row.Port, row.Security, HasUsername = username is not null, PasswordChanged = input.Password is not null, row.FromAddress }, ct);
+        return await GetAsync(ct);
+    }
+
+    /// <summary>
+    /// Microsoft 365 through the Graph API. The tenant and client id are identifiers, not secrets, and are
+    /// shown back; the client secret goes to the secret store exactly as a password would.
+    /// </summary>
+    private async Task<EmailSettingsDto> SaveGraphAsync(EmailSettingsInput input, CancellationToken ct)
+    {
+        var tenantId = (input.GraphTenantId ?? "").Trim();
+        if (!GraphMailSender.IsValidTenant(tenantId))
+            throw new ValidationFailedException("Enter the Directory (tenant) ID from the app registration, or your tenant domain such as contoso.onmicrosoft.com.");
+        var clientId = (input.GraphClientId ?? "").Trim();
+        if (!Guid.TryParse(clientId, out _))
+            throw new ValidationFailedException("Enter the Application (client) ID from the app registration. It looks like 00000000-0000-0000-0000-000000000000.");
+        var (from, badFrom) = EmailAddresses.Parse(input.FromAddress);
+        if (from.Count != 1 || badFrom.Count > 0) throw new ValidationFailedException("Enter the one mailbox reports are sent from.");
+        if (input.Password is { Length: > 500 }) throw new ValidationFailedException("The client secret is too long.");
+
+        var existingRow = await db.OrganizationEmailSettings.FirstOrDefaultAsync(s => s.MspOrganizationId == Org, ct);
+        var created = existingRow is null;
+        var row = existingRow ?? new OrganizationEmailSettings { MspOrganizationId = Org, Host = GraphMailSender.Host, FromAddress = from[0] };
+
+        // A secret saved for an SMTP login is not a client secret: switching method needs a new one.
+        var switching = !created && row.Method != "Graph";
+        var keepsSecret = input.Password is null && row.PasswordSecretRef is not null && !switching;
+        if (input.Password is not { Length: > 0 } && !keepsSecret)
+            throw new ValidationFailedException("Enter the client secret (its Value, not its Secret ID).");
+
+        if (input.Password is { Length: > 0 })
+        {
+            var data = new Dictionary<string, string> { ["Password"] = input.Password };
+            row.PasswordSecretRef = row.PasswordSecretRef is { } existing
+                ? await secrets.RotateAsync(existing, data, ct)
+                : await secrets.WriteAsync($"email/{Org:N}", data, ct);
+        }
+        row.Method = "Graph";
+        row.GraphTenantId = tenantId;
+        row.GraphClientId = clientId.ToLowerInvariant();
+        row.Host = GraphMailSender.Host;
+        row.Port = 443;
+        row.Security = "SslOnConnect";
+        row.Username = null;
+        row.FromAddress = from[0];
+        row.FromName = string.IsNullOrWhiteSpace(input.FromName) ? "Desk Portal" : input.FromName.Trim()[..Math.Min(input.FromName.Trim().Length, 100)];
+        row.UpdatedByUserId = user.UserId;
+        if (created) db.OrganizationEmailSettings.Add(row);
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync(created ? "email.settings.created" : "email.settings.updated", "OrganizationEmailSettings", row.Id.ToString(),
+            new { row.Method, row.GraphTenantId, row.GraphClientId, SecretChanged = input.Password is { Length: > 0 }, row.FromAddress }, ct);
         return await GetAsync(ct);
     }
 

@@ -487,6 +487,9 @@ public sealed class OrganizationEmailSettingsConfig : IEntityTypeConfiguration<O
     {
         b.ToTable("organization_email_settings");
         b.HasKey(x => x.Id);
+        b.Property(x => x.Method).HasMaxLength(10).IsRequired().HasDefaultValue("Smtp");
+        b.Property(x => x.GraphTenantId).HasMaxLength(100);
+        b.Property(x => x.GraphClientId).HasMaxLength(36);
         b.Property(x => x.Host).HasMaxLength(253).IsRequired();
         b.Property(x => x.Security).HasMaxLength(20).IsRequired();
         b.Property(x => x.Username).HasMaxLength(320);

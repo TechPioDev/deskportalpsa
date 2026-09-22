@@ -20,11 +20,14 @@ const EmailSettingsSchema = z.object({
   hasOwnAccount: z.boolean(), host: z.string().nullable(), port: z.number(), security: z.string(),
   username: z.string().nullable(), hasPassword: z.boolean(), fromAddress: z.string().nullable(), fromName: z.string().nullable(),
   status: z.object({ configured: z.boolean(), fromAddress: z.string().nullable(), source: z.string() }),
+  method: z.string().default('Smtp'), graphTenantId: z.string().nullable().default(null), graphClientId: z.string().nullable().default(null),
 });
 export type EmailSettings = z.infer<typeof EmailSettingsSchema>;
 /** `password`: null keeps the stored one, '' removes it. */
 export type EmailSettingsInput = {
   host: string; port: number; security: string; username: string | null; password: string | null; fromAddress: string; fromName: string | null;
+  /** 'Smtp' or 'Graph' (Microsoft 365 via an app registration; password then carries the client secret). */
+  method?: string; graphTenantId?: string | null; graphClientId?: string | null;
 };
 
 /** Report kind / frequency are enums serialized as numbers by the API. */
