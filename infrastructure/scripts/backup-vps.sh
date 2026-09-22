@@ -126,11 +126,80 @@ if docker exec "$KC" test -s /opt/keycloak/data/h2/keycloakdb.mv.db 2>/dev/null;
   fi
 fi
 
+# ── 4. Off-site copy (optional) ──────────────────────────────────────────────
+# Everything above lives on this one disk; a lost VPS loses every copy. When $OFFSITE_ENV exists,
+# this run's files are encrypted HERE (AES-256, key derived from OFFSITE_PASSPHRASE) and uploaded to
+# any S3-compatible bucket (Backblaze B2, Wasabi, AWS S3, Cloudflare R2...), then their sizes are
+# checked on the far side. The bucket never sees plaintext, so its credentials alone expose nothing.
+#
+# KEEP OFFSITE_PASSPHRASE SOMEWHERE ELSE TOO (a password manager). Without it the off-site copies
+# cannot be decrypted, and the one place it is stored is the server they exist to replace.
+#
+# $OFFSITE_ENV (root-only, chmod 600), see infrastructure/scripts/offsite.env.example:
+#   OFFSITE_S3_ENDPOINT, OFFSITE_S3_REGION, OFFSITE_S3_BUCKET, OFFSITE_S3_PREFIX,
+#   OFFSITE_S3_ACCESS_KEY_ID, OFFSITE_S3_SECRET_ACCESS_KEY, OFFSITE_PASSPHRASE, OFFSITE_KEEP_DAYS
+#
+# Restore one file:
+#   (download it from the bucket, then)
+#   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:OFFSITE_PASSPHRASE \
+#     -in desk_portal_YYYY-MM-DD_HHMMSS.dump.gz.enc -out desk_portal_YYYY-MM-DD_HHMMSS.dump.gz
+#   and continue with the restore steps at the top of this file.
+OFFSITE_ENV="${OFFSITE_ENV:-/etc/deskportal/offsite.env}"
+RCLONE_IMAGE="${RCLONE_IMAGE:-rclone/rclone:1.69}"
+if [ -f "$OFFSITE_ENV" ]; then
+  if [ "$(stat -c %a "$OFFSITE_ENV")" != "600" ]; then
+    log "OFF-SITE SKIPPED: $OFFSITE_ENV must be chmod 600 (it holds the bucket key and the passphrase)" >&2; STATUS=1
+  else
+    # shellcheck disable=SC1090
+    set -a; . "$OFFSITE_ENV"; set +a
+    OFFSITE_S3_PREFIX="${OFFSITE_S3_PREFIX:-deskportal}"
+    OFFSITE_KEEP_DAYS="${OFFSITE_KEEP_DAYS:-30}"
+    missing=""
+    for v in OFFSITE_S3_ENDPOINT OFFSITE_S3_BUCKET OFFSITE_S3_ACCESS_KEY_ID OFFSITE_S3_SECRET_ACCESS_KEY OFFSITE_PASSPHRASE; do
+      [ -n "${!v:-}" ] || missing="$missing $v"
+    done
+    if [ -n "$missing" ]; then
+      log "OFF-SITE SKIPPED: $OFFSITE_ENV is missing:$missing" >&2; STATUS=1
+    elif [ "${#OFFSITE_PASSPHRASE}" -lt 20 ]; then
+      log "OFF-SITE SKIPPED: OFFSITE_PASSPHRASE must be at least 20 characters" >&2; STATUS=1
+    else
+      STAGE="$(mktemp -d "$BACKUP_DIR/.offsite.XXXXXX")"
+      for f in "$DUMP" "$ATT" "$KCDUMP"; do
+        [ -s "$f" ] || continue
+        openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:OFFSITE_PASSPHRASE \
+          -in "$f" -out "$STAGE/$(basename "$f").enc"
+      done
+      # The bucket is addressed through rclone's on-the-fly remote (environment only, no config
+      # file on disk). OFFSITE_DOCKER_NETWORK exists for the self-test against a local S3 server.
+      rc() {
+        docker run --rm ${OFFSITE_DOCKER_NETWORK:+--network "$OFFSITE_DOCKER_NETWORK"} -v "$STAGE":/stage:ro \
+          -e RCLONE_CONFIG_OFF_TYPE=s3 -e RCLONE_CONFIG_OFF_PROVIDER=Other \
+          -e RCLONE_CONFIG_OFF_ENDPOINT="$OFFSITE_S3_ENDPOINT" -e RCLONE_CONFIG_OFF_REGION="${OFFSITE_S3_REGION:-}" \
+          -e RCLONE_CONFIG_OFF_ACCESS_KEY_ID="$OFFSITE_S3_ACCESS_KEY_ID" -e RCLONE_CONFIG_OFF_SECRET_ACCESS_KEY="$OFFSITE_S3_SECRET_ACCESS_KEY" \
+          -e RCLONE_CONFIG_OFF_NO_CHECK_BUCKET=true \
+          "$RCLONE_IMAGE" "$@"
+      }
+      DEST="off:$OFFSITE_S3_BUCKET/$OFFSITE_S3_PREFIX"
+      COUNT=$(find "$STAGE" -type f | wc -l)
+      if rc copy /stage "$DEST" --s3-no-check-bucket -q && rc check /stage "$DEST" --size-only --one-way -q; then
+        log "off-site ok: $COUNT encrypted file(s) to $OFFSITE_S3_BUCKET/$OFFSITE_S3_PREFIX, sizes verified"
+        rc delete "$DEST" --min-age "${OFFSITE_KEEP_DAYS}d" --include '*.enc' -q \
+          || log "off-site retention sweep failed (uploads are fine; older copies were not removed)" >&2
+      else
+        log "OFF-SITE UPLOAD FAILED to $OFFSITE_S3_BUCKET/$OFFSITE_S3_PREFIX - local backups are fine, this host is still the only copy" >&2
+        STATUS=1
+      fi
+      rm -rf "$STAGE"
+    fi
+  fi
+fi
+
 # ── Rotate ───────────────────────────────────────────────────────────────────
 find "$BACKUP_DIR" -maxdepth 1 -name "${DB}_*.dump.gz" -type f -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'desk-attachments_*.tar.gz' -type f -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'keycloak_*.dump.gz' -type f -mtime "+${KEEP_DAYS}" -delete
 find "$BACKUP_DIR" -maxdepth 1 -name 'keycloak-h2_*' -type d -mtime "+${KEEP_DAYS}" -exec rm -rf {} +
-log "retained: $(ls -1 "$BACKUP_DIR"/${DB}_*.dump.gz 2>/dev/null | wc -l) dumps, $(du -sh "$BACKUP_DIR" | cut -f1) total. Off-site copy: NONE - this host is the only copy."
+if [ -f "$OFFSITE_ENV" ]; then OFFSITE_NOTE="off-site: see above"; else OFFSITE_NOTE="Off-site copy: NONE - this host is the only copy (create $OFFSITE_ENV to enable)"; fi
+log "retained: $(ls -1 "$BACKUP_DIR"/${DB}_*.dump.gz 2>/dev/null | wc -l) dumps, $(du -sh "$BACKUP_DIR" | cut -f1) total. $OFFSITE_NOTE."
 
 exit "$STATUS"
