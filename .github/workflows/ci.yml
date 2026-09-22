@@ -70,8 +70,11 @@ jobs:
       # Warm the API build so Playwright's server start is not also a first compile.
       - name: Build API
         run: dotnet build apps/api/Desk.Api.csproj -c Debug
+      # Enforced, not report-only: the suite is what proves a policy change before it ships.
       - name: Run browser tests
         working-directory: apps/web
+        env:
+          CSP_ENFORCE: "true"
         run: npm run test:e2e
       - name: Upload report
         if: failure()
