@@ -16,7 +16,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       POSTGRES_DB: desk_portal
-    volumes: ["desk_pg:/var/lib/postgresql/data"]
+    volumes:
+      - desk_pg:/var/lib/postgresql/data
+      # Runs once, on an empty data directory: creates Keycloak's database beside desk_portal.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d desk_portal"]
       interval: 5s
@@ -33,8 +36,19 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?}
       KC_HOSTNAME: https://auth.${PUBLIC_HOST:?}
       KC_HTTP_PORT: "8081"
+      # Accounts live in Postgres. Without KC_DB Keycloak keeps them in a dev-file H2 store inside
+      # its own container - with no volume, so every rebuild of the container lost every sign-in.
+      # The database is created by postgres-init/keycloak.sql on the server's first start.
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:?}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?}
     volumes:
-      - ../keycloak:/opt/keycloak/data/import:ro
+      # The realm to import on an empty database. A running installation points this at its own
+      # export (realm + users) so a move between stores carries the accounts and signing keys.
+      - ${KEYCLOAK_IMPORT_DIR:-../keycloak}:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres: { condition: service_healthy }
     restart: unless-stopped
 
   api:
