@@ -41,6 +41,29 @@ function passthroughHeaders(res: Response): Headers {
   return h;
 }
 
+/** Errors meaning the request never reached the API, so repeating it cannot do anything twice. */
+const NEVER_SENT = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
+
+/**
+ * Rides out an API container swap during a deploy. While the new container takes over, a request
+ * can hit the old one as it stops (connection refused, or a kept-alive socket closed under it).
+ * Retried: anything that was never sent, and reads whatever went wrong. A write whose connection
+ * dropped mid-flight is NOT retried — the API may already have done it.
+ */
+async function fetchWithRetry(send: () => Promise<Response>, method: string): Promise<Response> {
+  const idempotent = method === 'GET' || method === 'HEAD';
+  const waits = [250, 750, 1500];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (err) {
+      const code = (err as { cause?: { code?: string } })?.cause?.code ?? '';
+      if (attempt >= waits.length || !(NEVER_SENT.has(code) || idempotent)) throw err;
+      await new Promise((r) => setTimeout(r, waits[attempt]));
+    }
+  }
+}
+
 async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   const target = `${authConfig.apiBase}/${path.join('/')}${new URL(req.url).search}`;
@@ -50,7 +73,9 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
   let access = req.cookies.get(ck.access)?.value;
 
   const call = (token?: string) =>
-    fetch(target, { method: req.method, headers: upstreamHeaders(req, token), body: bodyBuf, cache: 'no-store', redirect: 'manual' });
+    fetchWithRetry(
+      () => fetch(target, { method: req.method, headers: upstreamHeaders(req, token), body: bodyBuf, cache: 'no-store', redirect: 'manual' }),
+      req.method);
 
   let upstream = await call(access);
 
