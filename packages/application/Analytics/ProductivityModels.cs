@@ -83,6 +83,20 @@ public sealed record TechnicianMetrics
     public decimal TimeWorkedHours { get; init; }
     public decimal BillableHours { get; init; }
     public decimal NonBillableHours { get; init; }
+
+    /// <summary>
+    /// The same work, split by who it was for: tickets that came from a PSA, and the team's own
+    /// boards. Kept apart rather than blended, because internal work is raised by the team itself
+    /// and a single figure that mixes the two invites the question of whether anyone is marking
+    /// their own homework. Both are real work and both are shown.
+    /// </summary>
+    public int AssignedClient { get; init; }
+    public int AssignedInternal { get; init; }
+    public int ResolvedClient { get; init; }
+    public int ResolvedInternal { get; init; }
+    public decimal ClientHours { get; init; }
+    public decimal InternalHours { get; init; }
+
     public ProductivityComponents Components { get; init; } = new();
     public ProductivityScore? Score { get; init; }
 }

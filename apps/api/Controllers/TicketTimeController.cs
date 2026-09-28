@@ -167,7 +167,13 @@ public sealed class TicketTimeController(
         await db.SaveChangesAsync(ct);
 
         if (connector is null)
+        {
+            // Recorded, not pending: there is no provider for it to be waiting on, and "not
+            // recorded" on a ticket that will never be pushed reads as a failure that never happened.
+            record.SyncStatus = TimeEntrySyncStatus.Synced;
+            await db.SaveChangesAsync(ct);
             return Ok(await RecomputeLocalAsync(ticket, ct));
+        }
 
         if (!await PushAsync(record, ticket, connector, ct))
             throw new ValidationFailedException(record.SyncError ?? "The PSA rejected the time entry.");

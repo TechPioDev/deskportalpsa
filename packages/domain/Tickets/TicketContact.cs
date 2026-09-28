@@ -21,5 +21,13 @@ public static class TicketContact
     /// Whether a public reply reaches anyone: the ticket has a contact with an address in the PSA, or
     /// a client portal user raised it and reads the thread here.
     /// </summary>
-    public static bool IsReachable(Ticket t) => Email(t) is not null || t.RequesterUserId is not null;
+    /// <remarks>
+    /// Never on a ticket that belongs to no PSA. Such a ticket's requester is the member of staff
+    /// who raised it, whose address is perfectly valid and is exactly the wrong person to "reply" to
+    /// — there is no client thread on the team's own board, and offering one would invite a
+    /// technician to write to a customer who was never part of the conversation.
+    /// </remarks>
+    public static bool IsReachable(Ticket t) =>
+        t.Origin == Desk.Domain.Enums.TicketOrigin.Psa
+        && (Email(t) is not null || t.RequesterUserId is not null);
 }

@@ -320,6 +320,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // Provider 2 = Autotask, which rejects a time entry whose summary notes are blank.
   const notesRequired = Number(ticket?.provider) === 2;
   const canUpdate = me?.permissions.includes('tickets.update') ?? false;
+  // A ticket with no provider came from one of the team's own boards, so the PSA-side rows below
+  // have nothing true to say and are left out rather than shown empty.
+  const isFromPsa = ticket?.provider !== null && ticket?.provider !== undefined;
   // Same key the Assistant settings page and its nav entry demand — only someone holding it can
   // act on a "not set up" prompt, so only they are shown one.
   const canManageConnections = me?.permissions.includes('connections.manage') ?? false;
@@ -566,17 +569,28 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               {/* One per row in the rail; still a responsive grid on narrow screens where the rail
                   collapses above the content. */}
               <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-[var(--border)] pt-4 text-sm sm:grid-cols-3 lg:grid-cols-1 lg:gap-y-0 lg:divide-y lg:divide-[var(--border)]">
-                <Meta label="Reference" value={ticket.externalTicketId ?? '—'} href={ticket.externalTicketUrl} />
-                <Meta label="Source" value={ticket.connectionName ?? '—'} />
-                <Meta label="Queue / Board" value={ticket.queueOrBoard ?? '—'} />
+                {/* A ticket on one of the team's own boards has no provider reference, no PSA to
+                    link to and no provider assignee. Showing those rows empty invites the reader to
+                    go looking for something that was never there. */}
+                {isFromPsa ? (
+                  <>
+                    <Meta label="Reference" value={ticket.externalTicketId ?? '—'} href={ticket.externalTicketUrl} />
+                    <Meta label="Source" value={ticket.connectionName ?? '—'} />
+                  </>
+                ) : (
+                  <Meta label="Reference" value={ticket.number ?? '—'} />
+                )}
+                <Meta label={isFromPsa ? 'Queue / Board' : 'Board'} value={ticket.queueOrBoard ?? '—'} />
                 {/* Two lines, not one merged answer. The PSA's assignee and the person actually
                     working it are different facts, and on a desk where technicians exist only in
                     the portal the provider's line reads "Unassigned" - the API reports a ticket
                     held only by the integration account as held by nobody, because that account
                     is not a person. Collapsing the two lines would report that while someone is
                     mid-way through the job. */}
-                <Meta label="Assigned to (PSA)" value={ticket.assignedTechnicianName ?? ticket.assignedTechnicianExternalId ?? 'Unassigned'} />
-                {ticket.assignedAppUserName && <Meta label="Working it" value={ticket.assignedAppUserName} />}
+                {isFromPsa && (
+                  <Meta label="Assigned to (PSA)" value={ticket.assignedTechnicianName ?? ticket.assignedTechnicianExternalId ?? 'Unassigned'} />
+                )}
+                <Meta label="Working it" value={ticket.assignedAppUserName ?? (isFromPsa ? '—' : 'Unclaimed')} />
                 <Meta label="Category" value={ticket.portalCategory ?? '—'} />
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 <Meta label="Opened" value={fmt(ticket.createdAt)} />

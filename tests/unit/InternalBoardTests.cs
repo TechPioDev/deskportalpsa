@@ -1,3 +1,4 @@
+using Desk.Application.Analytics;
 using Desk.Application.Boards;
 using Desk.Application.Common;
 using Desk.Application.Tickets;
@@ -5,6 +6,7 @@ using Desk.Domain.Enums;
 using Desk.Domain.Tenancy;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Admin;
+using Desk.Infrastructure.Analytics;
 using Desk.Infrastructure.Boards;
 using Desk.Infrastructure.Tickets;
 using FluentAssertions;
@@ -194,5 +196,41 @@ public class InternalBoardTests
         var act = () => tickets.CreateAsync(me, new InternalTicketInput(board.Id, "Too late", null));
 
         (await act.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Contain("closed");
+    }
+
+    [Fact]
+    public async Task A_technician_s_figures_show_client_work_and_internal_work_side_by_side()
+    {
+        var (boards, tickets, h) = Build();
+        var me = await StaffAsync(h);
+        var board = await boards.CreateAsync(new BoardInput("Internal IT", "INT", null));
+
+        // Two of the team's own tickets, one of them finished.
+        var first = await tickets.CreateAsync(me, new InternalTicketInput(board.Id, "Rebuild the bench", null, AssignedAppUserId: me));
+        await tickets.CreateAsync(me, new InternalTicketInput(board.Id, "Write the runbook", null, AssignedAppUserId: me));
+        var done = await h.Db.Tickets.SingleAsync(t => t.Id == first.TicketId);
+        done.ResolvedAt = h.Clock.GetUtcNow();
+        done.TimeWorkedHours = 2.5m;
+
+        // One client ticket from a PSA, also finished, with its own hours.
+        h.Db.Tickets.Add(new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, PsaConnectionId = Guid.NewGuid(),
+            Provider = ProviderType.AutotaskPsa, ExternalTicketId = "7815", ClientCompanyId = Guid.NewGuid(),
+            Title = "Printer offline", RequesterName = "Asha", RequesterEmail = "asha@acme.test",
+            AssignedAppUserId = me, ResolvedAt = h.Clock.GetUtcNow(), TimeWorkedHours = 4m,
+        });
+        await h.Db.SaveChangesAsync();
+
+        var metrics = new TechnicianMetricsService(h.Db, new ProductivityScorer(), h.Clock);
+        var mine = await metrics.ForTechnicianAsync(new MetricsFilter { AppUserId = me }, new ProductivityWeights());
+
+        mine.Should().BeEquivalentTo(new
+        {
+            Assigned = 3, Resolved = 2,
+            AssignedClient = 1, AssignedInternal = 2,
+            ResolvedClient = 1, ResolvedInternal = 1,
+            ClientHours = 4m, InternalHours = 2.5m,
+        }, o => o.ExcludingMissingMembers());
     }
 }

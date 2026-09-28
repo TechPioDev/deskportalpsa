@@ -1,5 +1,6 @@
 using Desk.Application.Analytics;
 using Desk.Domain.Tickets;
+using Desk.Domain.Enums;
 using Desk.Infrastructure.Persistence;
 using Desk.Infrastructure.Tickets;
 using Microsoft.EntityFrameworkCore;
@@ -13,7 +14,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
     private sealed record Row(
         Guid Id, string? Tech, Guid? AppUserId, string? TechName, DateTimeOffset CreatedAt,
         DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
-        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid? Conn);
+        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid? Conn, TicketOrigin Origin);
 
     /// <param name="byResolution">
     /// Window on WHEN THE TICKET WAS RESOLVED instead of when it was raised, for "resolved in this
@@ -52,7 +53,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             t.AssignedTechnicianName,
             t.PsaCreatedAt ?? t.CreatedAt, t.ResolvedAt, t.ClosedAt, t.SlaDueAt,
             t.TimeWorkedHours, t.BillableHours, t.NonBillableHours,
-            t.Notes.Any(n => n.IsPublic), t.PsaConnectionId)).ToListAsync(ct);
+            t.Notes.Any(n => n.IsPublic), t.PsaConnectionId, t.Origin)).ToListAsync(ct);
     }
 
     public async Task<TechnicianMetrics> ForTechnicianAsync(MetricsFilter filter, ProductivityWeights weights, CancellationToken ct = default)
@@ -240,11 +241,20 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             DocumentationQuality = resolved > 0 ? Math.Round(100.0 * resolvedRows.Count(r => r.HasNote) / resolved, 1) : null,
         };
 
+        var clientRows = rows.Where(r => r.Origin == TicketOrigin.Psa).ToList();
+        var internalRows = rows.Where(r => r.Origin != TicketOrigin.Psa).ToList();
+
         return new TechnicianMetrics
         {
             TechnicianExternalId = tech,
             Assigned = assigned,
             Resolved = resolved,
+            AssignedClient = clientRows.Count,
+            AssignedInternal = internalRows.Count,
+            ResolvedClient = clientRows.Count(r => r.ResolvedAt is not null),
+            ResolvedInternal = internalRows.Count(r => r.ResolvedAt is not null),
+            ClientHours = clientRows.Sum(r => r.Worked),
+            InternalHours = internalRows.Sum(r => r.Worked),
             Open = open,
             Overdue = overdue,
             WithinSla = withinSla,
