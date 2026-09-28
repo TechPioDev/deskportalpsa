@@ -11,7 +11,7 @@ import { api } from '@/lib/api';
 
 // `permissions` is ANY-OF: "Productivity" is rightly visible to a technician who may only see
 // their own numbers AND to a manager who holds only the team-wide permission.
-type NavItem = { href: string; label: string; icon: LucideIcon; permissions?: string[] };
+type NavItem = { href: string; label: string; icon: LucideIcon; permissions?: string[]; feature?: 'internalBoards' };
 /**
  * One accent per section. Colour here is navigation, not decoration: a glance at the icon tint
  * tells you which part of the product you are in, and the active row is unmistakable without
@@ -66,7 +66,7 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
       { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
       { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket },
       // The team's own work, kept apart from the provider queues above so the two never blur.
-      { href: '/dashboard/boards', label: 'Internal boards', icon: ClipboardList, permissions: ['tickets.create'] },
+      { href: '/dashboard/boards', label: 'Internal boards', icon: ClipboardList, permissions: ['tickets.create'], feature: 'internalBoards' },
       { href: '/dashboard/analytics', label: 'Productivity', icon: BarChart3, permissions: ['productivity.own.view', 'productivity.team.view'] },
       { href: '/dashboard/analytics/technicians', label: 'Technician hours', icon: Clock, permissions: ['productivity.own.view', 'productivity.team.view'] },
       { href: '/dashboard/analytics/clients', label: 'Client workload', icon: Building2, permissions: ['productivity.team.view'] },
@@ -114,7 +114,11 @@ function useVisibleNav() {
   // links at a technician and then yanking them reads as broken.
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
   const held = new Set(me?.permissions ?? []);
-  return (item: NavItem) => !item.permissions || item.permissions.some((p) => held.has(p));
+  // A feature switched off on this installation is hidden rather than left to 404 when clicked.
+  const features = me?.features;
+  return (item: NavItem) =>
+    (!item.permissions || item.permissions.some((p) => held.has(p)))
+    && (!item.feature || features?.[item.feature] !== false);
 }
 
 /** Compact horizontal nav for below-md, filtered identically to the sidebar. */

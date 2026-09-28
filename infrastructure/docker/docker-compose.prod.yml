@@ -73,6 +73,9 @@ services:
       Bootstrap__OrganizationName: ${BOOTSTRAP_ORG_NAME:?}
       Bootstrap__OrganizationSlug: ${BOOTSTRAP_ORG_SLUG:?}
       Connectors__BlockPrivateEgress: "true"
+      # The team's own boards (internal work, and RMM alerts). Set to false in .env.prod to switch
+      # the feature off without a rebuild: the endpoints and pages disappear, the data stays.
+      Features__InternalBoards: ${FEATURES_INTERNAL_BOARDS:-true}
       # Outbound email (scheduled reports). Off while SMTP_HOST is empty. Set these in .env.prod on the
       # server only — the password never goes into the repository or the portal UI.
       Email__Smtp__Host: ${SMTP_HOST:-}

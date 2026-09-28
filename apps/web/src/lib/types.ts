@@ -162,6 +162,10 @@ export const TechnicianDaySchema = z.object({
   billableHours: z.number(),
   resolved: z.number(),
   ticketsTouched: z.number(),
+  // Of the totals above, the part spent on the team's own boards. Defaulted so a response from the
+  // previous build mid-deploy still parses.
+  internalHours: z.number().default(0),
+  resolvedInternal: z.number().default(0),
 });
 export type TechnicianDay = z.output<typeof TechnicianDaySchema>;
 export type TechnicianResponse = z.infer<typeof TechnicianResponseSchema>;

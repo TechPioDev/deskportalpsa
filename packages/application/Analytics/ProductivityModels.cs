@@ -124,9 +124,14 @@ public sealed record TrendPoint(DateOnly Date, int Created, int Resolved);
 /// person with a colleague's afternoon. Resolved counts tickets whose resolution landed on the day,
 /// attributed to whoever the ticket sits with.
 /// </summary>
+/// <param name="InternalHours">
+/// Of <paramref name="Hours"/>, the part spent on the team's own boards rather than on a client's
+/// ticket. Carried beside the total rather than replacing it: both are the person's real day.
+/// </param>
 public sealed record TechnicianDay(
     DateOnly Date, Guid? AppUserId, string? TechnicianExternalId, string Name,
-    decimal Hours, decimal BillableHours, int Resolved, int TicketsTouched);
+    decimal Hours, decimal BillableHours, int Resolved, int TicketsTouched,
+    decimal InternalHours = 0m, int ResolvedInternal = 0);
 
 /// <summary>
 /// One client's consumption of the desk, for the question management actually asks: where is our

@@ -39,6 +39,10 @@ type PerTech = {
   resolved: number;
   touched: number;
   days: number;
+  // The same day, split by who the work was for. Client figures are the remainder, never a second
+  // number to reconcile: internal is what came off the team's own boards.
+  internalHours: number;
+  resolvedInternal: number;
 };
 
 export default function TechnicianProductivityPage() {
@@ -90,9 +94,12 @@ function TechnicianProductivity() {
       const key = r.appUserId ?? r.technicianExternalId ?? r.name;
       const cur = map.get(key) ?? {
         key, name: r.name, hours: 0, billableHours: 0, resolved: 0, touched: 0, days: 0,
+        internalHours: 0, resolvedInternal: 0,
       };
       cur.hours += r.hours;
       cur.billableHours += r.billableHours;
+      cur.internalHours += r.internalHours;
+      cur.resolvedInternal += r.resolvedInternal;
       cur.resolved += r.resolved;
       cur.touched += r.ticketsTouched;
       cur.days += 1;
@@ -253,8 +260,11 @@ function TechnicianProductivity() {
                 <tr className="border-b border-[var(--border)]">
                   <th className="px-4 py-2 font-medium">Technician</th>
                   <th className="px-2 py-2 text-right font-medium">Hours</th>
+                  <th className="px-2 py-2 text-right font-medium">Client hrs</th>
+                  <th className="px-2 py-2 text-right font-medium">Internal hrs</th>
                   <th className="px-2 py-2 text-right font-medium">Billable</th>
                   <th className="px-2 py-2 text-right font-medium">Resolved</th>
+                  <th className="px-2 py-2 text-right font-medium">Client / internal</th>
                   <th className="px-2 py-2 text-right font-medium">Tickets</th>
                   <th className="px-2 py-2 text-right font-medium">Hrs / ticket</th>
                   <th className="px-4 py-2 text-right font-medium">Active days</th>
@@ -272,8 +282,13 @@ function TechnicianProductivity() {
                       </span>
                     </td>
                     <td className="px-2 py-2.5 text-right tabular-nums">{hrs(t.hours)}</td>
+                    <td className="px-2 py-2.5 text-right tabular-nums text-[var(--muted)]">{hrs(t.hours - t.internalHours)}</td>
+                    <td className="px-2 py-2.5 text-right tabular-nums text-[var(--muted)]">{hrs(t.internalHours)}</td>
                     <td className="px-2 py-2.5 text-right tabular-nums text-[var(--muted)]">{hrs(t.billableHours)}</td>
                     <td className="px-2 py-2.5 text-right tabular-nums">{t.resolved}</td>
+                    <td className="px-2 py-2.5 text-right tabular-nums text-[var(--muted)]">
+                      {t.resolved - t.resolvedInternal} / {t.resolvedInternal}
+                    </td>
                     <td className="px-2 py-2.5 text-right tabular-nums text-[var(--muted)]">{t.touched}</td>
                     <td className="px-2 py-2.5 text-right tabular-nums">{t.touched > 0 ? hrs(t.hours / t.touched) : '—'}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-[var(--muted)]">{t.days}</td>
@@ -315,9 +330,11 @@ function downloadCsv(rows: PerTech[], meta: { period: string; range: string; cli
   };
   const lines = [
     [`Technician productivity`, meta.period, meta.range, meta.client ? `Client: ${meta.client}` : 'All clients'].map(cell).join(','),
-    ['Technician', 'Hours', 'Billable hours', 'Resolved', 'Tickets touched', 'Hours per ticket', 'Active days'].join(','),
+    ['Technician', 'Hours', 'Client hours', 'Internal hours', 'Billable hours', 'Resolved',
+      'Resolved for clients', 'Resolved internally', 'Tickets touched', 'Hours per ticket', 'Active days'].join(','),
     ...rows.map((t) => [
-      t.name, t.hours.toFixed(2), t.billableHours.toFixed(2), t.resolved, t.touched,
+      t.name, t.hours.toFixed(2), (t.hours - t.internalHours).toFixed(2), t.internalHours.toFixed(2),
+      t.billableHours.toFixed(2), t.resolved, t.resolved - t.resolvedInternal, t.resolvedInternal, t.touched,
       t.touched > 0 ? (t.hours / t.touched).toFixed(2) : '', t.days,
     ].map(cell).join(',')),
   ];

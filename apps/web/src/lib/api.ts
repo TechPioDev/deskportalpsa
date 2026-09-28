@@ -135,6 +135,8 @@ export const MeSchema = z.object({
   organizationId: z.string().nullable(),
   isPlatformScope: z.boolean(),
   permissions: z.array(z.string()),
+  // What this installation has switched on. Defaulted so an older API still parses.
+  features: z.object({ internalBoards: z.boolean().default(true) }).default({ internalBoards: true }),
 });
 
 
@@ -191,6 +193,8 @@ export const api = {
     request(`/api/tickets/${id}/assignees`, AssigneeOptionsSchema) as Promise<AssigneeOptions>,
   assignTicket: (id: string, body: {
     technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string;
+    /** What the person handing over wants the next person to read first. */
+    handoverNote?: string;
   }) =>
     request(`/api/tickets/${id}/assignment`,
       z.object({

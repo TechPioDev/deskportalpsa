@@ -5,6 +5,7 @@ using Desk.Application.Common;
 using Desk.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace Desk.Api.Controllers;
 
@@ -18,8 +19,21 @@ namespace Desk.Api.Controllers;
 [ApiController]
 [Route("api/boards")]
 [Authorize]
-public sealed class BoardsController(IBoardService boards, IInternalTicketService tickets, ICurrentUser user) : ControllerBase
+public sealed class BoardsController(
+    IBoardService boards, IInternalTicketService tickets, ICurrentUser user, BoardFeatureOptions features)
+    : ControllerBase, IActionFilter
 {
+    /// <summary>
+    /// Refuses every route here when the feature is switched off. Tickets already raised on a board
+    /// are untouched and readable again the moment it is switched back on.
+    /// </summary>
+    public void OnActionExecuting(ActionExecutingContext context)
+    {
+        if (!features.InternalBoards) throw new NotFoundException("Internal boards");
+    }
+
+    public void OnActionExecuted(ActionExecutedContext context) { }
+
     /// <summary>The boards this member of staff can work on.</summary>
     [HttpGet]
     [RequirePermission(Permissions.TicketsCreate)]

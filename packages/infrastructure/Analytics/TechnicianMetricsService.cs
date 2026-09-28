@@ -114,7 +114,12 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             entries = entries.Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.ClientCompanyId == client));
 
         var loggedRaw = await entries
-            .Select(e => new { e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId, Conn = e.Ticket!.PsaConnectionId })
+            .Select(e => new
+            {
+                e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId,
+                Conn = e.Ticket!.PsaConnectionId,
+                Internal = e.Ticket!.Origin != TicketOrigin.Psa,
+            })
             .ToListAsync(ct);
 
         // Resolution counts come from the tickets themselves, attributed to whoever holds them.
@@ -150,7 +155,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             var name = appUserId is { } uid
                 ? names.GetValueOrDefault(uid, "Unknown user")
                 : psaNames.GetValueOrDefault(ext ?? "", ext ?? "Unattributed");
-            var seeded = new TechnicianDay(day, appUserId, ext, name, 0m, 0m, 0, 0);
+            var seeded = new TechnicianDay(day, appUserId, ext, name, 0m, 0m, 0, 0, 0m, 0);
             buckets[(day, key)] = seeded;
             return seeded;
         }
@@ -167,6 +172,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             {
                 Hours = current.Hours + g.Sum(e => e.Hours),
                 BillableHours = current.BillableHours + g.Where(e => e.Billable).Sum(e => e.Hours),
+                InternalHours = current.InternalHours + g.Where(e => e.Internal).Sum(e => e.Hours),
                 TicketsTouched = current.TicketsTouched + g.Select(e => e.TicketId).Distinct().Count(),
             };
         }
@@ -178,7 +184,11 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         {
             var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
             buckets[(g.Key.Day, g.Key.AppUserId is { } u ? "u:" + u : "x:" + g.Key.Ext)] =
-                current with { Resolved = current.Resolved + g.Count() };
+                current with
+                {
+                    Resolved = current.Resolved + g.Count(),
+                    ResolvedInternal = current.ResolvedInternal + g.Count(r => r.Origin != TicketOrigin.Psa),
+                };
         }
 
         return buckets.Values.OrderBy(d => d.Date).ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();

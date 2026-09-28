@@ -92,12 +92,16 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onSave: (body: { technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string }) => void;
+  onSave: (body: {
+    technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string;
+    handoverNote?: string;
+  }) => void;
 }) {
   const [technician, setTechnician] = useState(currentTechnicianId ?? '');
   const [queue, setQueue] = useState('');
   const [role, setRole] = useState('');
   const [portalUser, setPortalUser] = useState(currentAppUserId ?? '');
+  const [handover, setHandover] = useState('');
 
   if (!options) return <p className="text-xs text-[var(--muted)]">Loading technicians…</p>;
 
@@ -162,6 +166,17 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
             their name does not appear there.
           </span>
         </label>
+        {portalUser && portalUser !== currentAppUserId && (
+          <label className="block sm:col-span-2 lg:col-span-3">
+            <span className="mb-1 block text-xs font-medium">Handover note</span>
+            <input value={handover} onChange={(e) => setHandover(e.target.value)}
+              placeholder="What should they read first? Rules 1-8 are done, 9-12 left."
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand" />
+            <span className="mt-1 block text-xs text-[var(--muted)]">
+              Kept with the handover, so the next shift reads where this was left rather than guessing.
+            </span>
+          </label>
+        )}
       </div>
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex items-center gap-2">
@@ -171,6 +186,7 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
             queueOrBoardId: queue || undefined,
             roleId: role || undefined,
             appUserId: portalUser || undefined,
+            handoverNote: handover.trim() || undefined,
           })}
           disabled={pending || !changed}
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
