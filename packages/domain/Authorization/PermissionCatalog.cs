@@ -87,6 +87,7 @@ public static class PermissionCatalog
         Admin(Permissions.AuditView, "Audit Log", "View audit log"),
         Admin(Permissions.SecurityConfigView, "Audit Log", "View security configuration"),
         Admin(Permissions.EnquiriesView, "Enquiries", "View enquiries"),
+        Admin(Permissions.BoardsManage, "Tickets", "Create and configure internal boards"),
     ];
 
     private static readonly Dictionary<string, PermissionDefinition> ByKey =

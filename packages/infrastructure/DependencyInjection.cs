@@ -173,6 +173,8 @@ public static class DependencyInjection
         services.AddScoped<IAttentionService, AttentionService>();
         services.AddSingleton<IAttentionDigestRunner, AttentionDigestRunner>();
         services.AddScoped<ITicketResyncService, Sync.TicketResyncService>();
+        services.AddScoped<Desk.Application.Boards.IBoardService, Boards.BoardService>();
+        services.AddScoped<Desk.Application.Boards.IInternalTicketService, Boards.InternalTicketService>();
         services.AddScoped<IAuditQueryService, AuditQueryService>();
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<ITechnicianProvisioningService, TechnicianProvisioningService>();
