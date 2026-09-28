@@ -408,6 +408,16 @@ export const api = {
   setBoardMembers: (id: string, appUserIds: string[]) =>
     request(`/api/boards/${id}/members`, z.array(BoardMemberSchema),
       { method: 'PUT', body: JSON.stringify({ appUserIds }) }) as Promise<BoardMember[]>,
+  // Monitoring tools allowed to open tickets. The key comes back once, on create and regenerate.
+  alertSources: () => request('/api/boards/sources', z.array(AlertSourceSchema)) as Promise<AlertSource[]>,
+  createAlertSource: (input: AlertSourceInput) =>
+    request('/api/boards/sources', AlertSourceCreatedSchema, { method: 'POST', body: JSON.stringify(input) }),
+  updateAlertSource: (id: string, input: AlertSourceInput) =>
+    request(`/api/boards/sources/${id}`, AlertSourceSchema, { method: 'PUT', body: JSON.stringify(input) }),
+  setAlertSourceActive: (id: string, active: boolean) =>
+    request(`/api/boards/sources/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
+  regenerateAlertSourceKey: (id: string) =>
+    request(`/api/boards/sources/${id}/key`, AlertSourceCreatedSchema, { method: 'POST' }),
   createInternalTicket: (input: InternalTicketInput) =>
     request('/api/boards/tickets', z.object({
       ticketId: z.string(), number: z.string(), title: z.string(), boardId: z.string(),
@@ -1056,3 +1066,22 @@ export type InternalTicketInput = {
   priority?: string | null; category?: string | null;
   clientCompanyId?: string | null; assignedAppUserId?: string | null; dueAt?: string | null;
 };
+
+/** A monitoring tool allowed to open tickets on a board. Vendor 0 generic, 1 NinjaOne, 2 Datto RMM. */
+export const AlertSourceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  boardId: z.string(),
+  boardName: z.string(),
+  vendor: z.number(),
+  keyHint: z.string(),
+  isActive: z.boolean(),
+  closeOnClear: z.boolean(),
+  lastReceivedAt: z.string().nullable(),
+  receivedCount: z.number(),
+  lastError: z.string().nullable(),
+});
+export type AlertSource = z.infer<typeof AlertSourceSchema>;
+/** The key is here once and never again: it is not stored in a form anyone can read back. */
+export const AlertSourceCreatedSchema = z.object({ source: AlertSourceSchema, key: z.string() });
+export type AlertSourceInput = { name: string; boardId: string; vendor?: number; closeOnClear?: boolean };

@@ -180,6 +180,8 @@ public static class DependencyInjection
         });
         services.AddScoped<Desk.Application.Boards.IBoardService, Boards.BoardService>();
         services.AddScoped<Desk.Application.Boards.IInternalTicketService, Boards.InternalTicketService>();
+        services.AddScoped<Desk.Application.Boards.IAlertSourceService, Boards.AlertSourceService>();
+        services.AddScoped<Desk.Application.Boards.IAlertIntakeService, Boards.AlertIntakeService>();
         services.AddScoped<IAuditQueryService, AuditQueryService>();
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<ITechnicianProvisioningService, TechnicianProvisioningService>();

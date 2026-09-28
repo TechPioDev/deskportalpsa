@@ -68,10 +68,60 @@ deleted: every board and ticket stays in the database and returns the moment it 
 The feature switch is the reversible option and should be tried first. The tag is there for the case
 where the code itself must go.
 
+## Alerts from a monitoring tool
+
+A monitoring board can be fed by the tools that watch the estate. Each tool is registered as an
+**alert source** with its own key, under Internal boards → Monitoring tools.
+
+| Step | What to do |
+|---|---|
+| 1 | Create a monitoring board, then connect a tool to it. The key is shown once and never again — only its hash is kept, so a copy of the database cannot raise tickets here. |
+| 2 | In the tool, add a webhook that posts JSON to `https://<host>/api/bff/api/intake/alerts`. |
+| 3 | Add the header `X-Desk-Alert-Key` carrying the key. It travels in a header, not the URL, so it stays out of access logs and browser history. |
+| 4 | Send the documented body. The field names the vendors' own templates use are understood too. |
+
+```json
+{
+  "alertId": "the tool's own id for the condition",
+  "title": "Disk C: is 95% full",
+  "description": "Free space 4 GB of 100 GB",
+  "severity": "critical",
+  "device": "ACME-SRV01",
+  "client": "Acme Dental",
+  "status": "raised"
+}
+```
+
+What the portal does with it:
+
+- **One ticket per condition.** The same alert id arriving again updates the existing ticket rather
+  than opening another, and a repeat within the hour adds no note at all — a tool that reports every
+  five minutes would otherwise bury its own ticket in its own repetitions.
+- **Closes itself.** `"status": "cleared"` closes the ticket with a closed date, so it leaves the
+  board and still counts in resolution-time figures. A source can be told to leave it open instead.
+- **Comes back if the fault does.** The same alert within a day of closing reopens that ticket
+  instead of opening a second one.
+- **Names the client when it can.** The tool's client name is matched against the customer list,
+  ignoring case, spacing and punctuation. An unrecognised name is reported back and kept in the
+  ticket text rather than guessed at.
+- **Severity becomes priority.** critical and high become HIGH, emergency becomes URGENT, warning
+  becomes NORMAL, info becomes LOW, anything unrecognised becomes NORMAL.
+
+Authentication is the key and nothing else, because the request arrives from a vendor's cloud with
+no session behind it. An unknown key, a switched-off source and a closed board all answer "not
+found", so probing keys teaches nothing. A key that leaks is replaced with **New key**, which
+invalidates the old one immediately.
+
+Sources are listed with what they have sent, when they last sent it, and why the last delivery was
+refused if it was — which is what makes a misconfigured webhook diagnosable without server access.
+
+**Tested (NinjaOne, Datto RMM):** both publish outbound webhooks with a payload you write yourself,
+and both have an OAuth2 REST API. The webhook route needs no API credentials at all.
+
 ## What is not built yet
 
-- **RMM intake.** The board kind and the client-visible flag exist; the endpoint that receives a
-  NinjaOne or Datto RMM webhook, deduplicates by alert id and closes the ticket when the alert
-  clears does not. Both vendors publish outbound webhooks with custom payloads and an OAuth2 API.
+- **Reading back from the RMM.** Nothing polls the tool; alerts arrive only when it sends them.
+- **Per-device client mapping.** Matching is on the client name the tool sends; an explicit map
+  from a tool's site id to a customer would be more robust for estates with awkward naming.
 - **Promoting an internal ticket into a PSA** once a client grants access.
 - **Due dates, recurring internal tasks and checklists.**

@@ -24,7 +24,10 @@ async function refresh(refreshToken: string) {
 
 function upstreamHeaders(req: NextRequest, token: string | undefined): Headers {
   const h = new Headers();
-  for (const key of ['content-type', 'accept', 'x-correlation-id']) {
+  // x-desk-alert-key: a monitoring tool's key. Only the web app is reachable from outside, so an
+  // alert from NinjaOne or Datto arrives here; dropping the header would make every delivery
+  // unauthenticated and the tool would be told its key was wrong.
+  for (const key of ['content-type', 'accept', 'x-correlation-id', 'x-desk-alert-key']) {
     const v = req.headers.get(key);
     if (v) h.set(key, v);
   }

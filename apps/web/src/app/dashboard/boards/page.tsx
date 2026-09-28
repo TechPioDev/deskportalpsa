@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClipboardList, Plus, Users, EyeOff, Eye, Archive, RotateCcw, ArrowRight } from 'lucide-react';
+import { ClipboardList, Plus, Users, EyeOff, Eye, Archive, RotateCcw, ArrowRight, Radio } from 'lucide-react';
 import { api, type Board, type BoardInput } from '@/lib/api';
 
 const KIND = { internal: 0, rmm: 1 } as const;
@@ -48,6 +48,12 @@ export default function BoardsPage() {
             <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
             Show closed boards
           </label>
+          {canManage && (
+            <Link href="/dashboard/boards/sources"
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+              <Radio size={15} /> Monitoring tools
+            </Link>
+          )}
           {canManage && (
             <button onClick={() => setEditing('new')}
               className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg hover:opacity-90">

@@ -82,6 +82,42 @@ public sealed class BoardsController(
         return Ok(await tickets.CreateAsync(uid, input, ct));
     }
 
+    // ── Alert sources: which monitoring tools may open tickets here ──────────────────────────
+    // A lead's decision, like the boards themselves, so the same permission governs it.
+
+    [HttpGet("sources")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> Sources([FromServices] IAlertSourceService sources, CancellationToken ct)
+        => Ok(await sources.ListAsync(ct));
+
+    /// <summary>Creates a source and returns its key ONCE. It is never retrievable again.</summary>
+    [HttpPost("sources")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> CreateSource(
+        [FromServices] IAlertSourceService sources, [FromBody] AlertSourceInput input, CancellationToken ct)
+        => Ok(await sources.CreateAsync(input, ct));
+
+    [HttpPut("sources/{id:guid}")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> UpdateSource(
+        Guid id, [FromServices] IAlertSourceService sources, [FromBody] AlertSourceInput input, CancellationToken ct)
+        => Ok(await sources.UpdateAsync(id, input, ct));
+
+    [HttpPut("sources/{id:guid}/active")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> SetSourceActive(
+        Guid id, [FromServices] IAlertSourceService sources, [FromBody] SetActiveRequest req, CancellationToken ct)
+    {
+        await sources.SetActiveAsync(id, req.Active, ct);
+        return NoContent();
+    }
+
+    /// <summary>Issues a new key; the old one stops working immediately.</summary>
+    [HttpPost("sources/{id:guid}/key")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> RegenerateKey(Guid id, [FromServices] IAlertSourceService sources, CancellationToken ct)
+        => Ok(await sources.RegenerateKeyAsync(id, ct));
+
     public sealed record SetActiveRequest(bool Active);
     public sealed record SetMembersRequest(IReadOnlyList<Guid>? AppUserIds);
 }
