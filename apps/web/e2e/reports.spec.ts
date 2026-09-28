@@ -38,9 +38,11 @@ test.describe('scheduled reports', () => {
     // then runs somebody else's schedule.
     await row.getByRole('button', { name: 'Run now' }).click();
     const history = page.locator('section').filter({ hasText: 'Sent and generated' });
-    await expect(history.getByText(/Technician productivity — /)).toBeVisible();
+    // The newest run, not the only one: history keeps earlier runs, and a retry or another browser
+    // adds more. What this proves is that a run was produced, which one row is enough to show.
+    await expect(history.getByText(/Technician productivity — /).first()).toBeVisible();
     // No mail account in a local run, so the report is kept rather than sent — and says which.
-    await expect(history.getByText(/not configured|Emailed to/)).toBeVisible();
+    await expect(history.getByText(/not configured|Emailed to/).first()).toBeVisible();
 
     const pdfUrl = await history.getByRole('link', { name: 'PDF' }).first().getAttribute('href');
     const pdf = await request.get(pdfUrl!);
