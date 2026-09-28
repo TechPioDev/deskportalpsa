@@ -78,11 +78,28 @@ builder.Services.AddHealthChecks()
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ctx.User.FindFirst(CurrentUser.OrgClaim)?.Value
-                          ?? ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
-            _ => new FixedWindowRateLimiterOptions { PermitLimit = 300, Window = TimeSpan.FromMinutes(1) }));
+    // Two limits, chained: the person's own allowance, and a much larger ceiling for their whole
+    // organization. Per organization alone made colleagues compete for one budget; per person alone
+    // would let one tenant's headcount set the load the host has to carry. See RateLimitPartitions.
+    o.GlobalLimiter = PartitionedRateLimiter.CreateChained(
+        PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                partitionKey: RateLimitPartitions.UserKey(ctx),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = RateLimitPartitions.PerUserPermitLimit,
+                    Window = TimeSpan.FromMinutes(1),
+                })),
+        PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+            RateLimitPartitions.OrganizationKey(ctx) is { } org
+                ? RateLimitPartition.GetFixedWindowLimiter(org, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = RateLimitPartitions.PerOrganizationPermitLimit,
+                    Window = TimeSpan.FromMinutes(1),
+                })
+                // Anonymous traffic is bounded by the per-address limit above and by the narrower
+                // policies on the routes that allow it, so it needs no organization ceiling.
+                : RateLimitPartition.GetNoLimiter<string>("anonymous")));
 
     // The public forms are the one unauthenticated write in the product, so they get their own
     // much tighter budget, partitioned by IP: the global allowance is sized for a signed-in app

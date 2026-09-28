@@ -32,7 +32,13 @@
 ## API hardening
 - RFC-7807 problem responses; internal error detail is logged, not returned.
 - Correlation id on every request/response and log line.
-- Global rate limiter (per-org / per-IP), 25 MB request cap, CORS allowlist.
+- Global rate limiter, 25 MB request cap, CORS allowlist. The limiter is chained: 300 requests a
+  minute for each PERSON (their portal user id, else the token subject, else their address) and
+  3,000 a minute for their whole organization. Per organization alone made colleagues compete for
+  one budget — a single page load is several requests — and per person alone would let one tenant's
+  headcount set the load the host must carry. Routes that must be anonymous carry their own,
+  narrower policies: public forms 5 per 10 minutes per address, monitoring alerts 120 a minute per
+  source key, so neither can spend the desk's allowance.
 - Security headers: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, CSP;
   HSTS + HTTPS redirect outside development.
 

@@ -83,13 +83,12 @@ one caller's worth of concurrency rather than a full desk. It answers "do these 
 at thirty times today's data" — they do — and leaves "how does the production host behave under a
 full desk" to a run against production-like infrastructure.
 
-**Found while doing it.** The global rate limiter allows 300 requests a minute **per organization**,
-not per person. One dashboard page load is several requests, so a busy desk of 41 people shares a
-budget that a handful of them can spend. Nothing has hit it in production, and raising or
-re-partitioning it is the owner's call rather than a change to make quietly — but it is the first
-ceiling this product will meet, and it will be met by ordinary use rather than by abuse. Alerts from
-monitoring tools no longer share that budget: they were given their own, per source key, in the same
-pass.
+**Found while doing it, and since fixed.** The global rate limiter allowed 300 requests a minute
+**per organization**, not per person: one dashboard page load is several requests, so a desk of 41
+people shared a budget a handful of them could spend. At the owner's instruction the limit is now the
+person's own (300 a minute), with a 3,000 a minute ceiling for the organization behind it so one
+tenant still cannot exhaust the host. Alerts from monitoring tools have their own allowance per
+source key, so a noisy tool cannot spend the desk's.
 
 ## Cross-browser / mobile / accessibility
 - **Rendering engine tested**: Chromium (in-app browser) — light + dark, mobile viewport, no horizontal scroll, 0 console errors.
