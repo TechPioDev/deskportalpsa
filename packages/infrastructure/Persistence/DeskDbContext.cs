@@ -42,6 +42,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<Board> Boards => Set<Board>();
     public DbSet<BoardMember> BoardMembers => Set<BoardMember>();
     public DbSet<TicketAssignment> TicketAssignments => Set<TicketAssignment>();
+    public DbSet<AlertSource> AlertSources => Set<AlertSource>();
     public DbSet<TicketNote> TicketNotes => Set<TicketNote>();
     public DbSet<Desk.Domain.Assistant.AssistantSettings> AssistantSettings => Set<Desk.Domain.Assistant.AssistantSettings>();
     public DbSet<TicketAttachment> TicketAttachments => Set<TicketAttachment>();

@@ -48,12 +48,14 @@ public class EndpointAuthorizationTests
             : null;
     }
 
-    // The deliberate exceptions: a public enquiry form, PSA webhooks (verified by signature) and
-    // signed attachment links. Anything else anonymous is a mistake. Listed by controller for wholly public ones and by action otherwise, so a new anonymous action on
+    // The deliberate exceptions: a public enquiry form, PSA webhooks (verified by signature), signed
+    // attachment links, and monitoring-tool alerts (verified by the source's own key, which arrives in
+    // a header because the request comes from a vendor's cloud with no session behind it). Anything else anonymous is a mistake. Listed by controller for wholly public ones and by action otherwise, so a new anonymous action on
     // a mostly-private controller still fails this test.
     private static readonly HashSet<string> KnownAnonymous = new(StringComparer.Ordinal)
     {
         "PublicEnquiriesController", "WebhooksController", "AttachmentsController.Blob",
+        "AlertIntakeController",
     };
 
     [Fact]

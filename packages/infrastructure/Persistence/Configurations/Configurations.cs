@@ -222,6 +222,11 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         b.HasIndex(x => new { x.MspOrganizationId, x.Number })
             .IsUnique()
             .HasFilter("\"Number\" IS NOT NULL");
+        // One ticket per alert per source: a tool repeating the same condition must not open a second.
+        b.HasIndex(x => new { x.AlertSourceId, x.SourceAlertId })
+            .IsUnique()
+            .HasFilter("\"SourceAlertId\" IS NOT NULL");
+        b.Property(x => x.SourceAlertId).HasMaxLength(200);
     }
 }
 
@@ -247,6 +252,22 @@ public sealed class BoardMemberConfig : IEntityTypeConfiguration<BoardMember>
         b.ToTable("board_members");
         b.HasKey(x => x.Id);
         b.HasIndex(x => new { x.BoardId, x.AppUserId }).IsUnique();
+    }
+}
+
+public sealed class AlertSourceConfig : IEntityTypeConfiguration<AlertSource>
+{
+    public void Configure(EntityTypeBuilder<AlertSource> b)
+    {
+        b.ToTable("alert_sources");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(120).IsRequired();
+        b.Property(x => x.KeyHash).HasMaxLength(64).IsRequired();
+        b.Property(x => x.KeyHint).HasMaxLength(16).IsRequired();
+        b.Property(x => x.LastError).HasMaxLength(500);
+        // Every delivery arrives with a key and nothing else to go on, so this is the lookup.
+        b.HasIndex(x => x.KeyHash).IsUnique();
+        b.HasOne(x => x.Board).WithMany().HasForeignKey(x => x.BoardId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 

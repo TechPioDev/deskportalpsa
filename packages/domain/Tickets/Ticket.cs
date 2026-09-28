@@ -42,6 +42,16 @@ public class Ticket : TenantEntity
     /// <summary>Who raised it, when a member of staff did. A PSA ticket's requester is a client contact instead.</summary>
     public Guid? CreatedByUserId { get; set; }
 
+    /// <summary>
+    /// The monitoring tool's own id for the alert behind this ticket. A tool that reports the same
+    /// condition every five minutes must not open a ticket every five minutes, and when it says the
+    /// condition cleared this is what says which ticket to close.
+    /// </summary>
+    public string? SourceAlertId { get; set; }
+
+    /// <summary>Which alert source opened it, when one did.</summary>
+    public Guid? AlertSourceId { get; set; }
+
     /// <summary>Who last assigned it, which is rarely the person who holds it.</summary>
     public Guid? AssignedByUserId { get; set; }
 
