@@ -37,10 +37,15 @@ public sealed class IntegrationIdentity
         return new(rows.ToDictionary(r => r.Id, r => r.Account.Trim()), rows.ToDictionary(r => r.Id, r => r.Name));
     }
 
-    /// <summary>True when <paramref name="externalId"/> is the account <paramref name="connectionId"/> writes as.</summary>
-    public bool IsAccount(Guid connectionId, string? externalId)
-        => !string.IsNullOrWhiteSpace(externalId)
-           && _accountByConnection.TryGetValue(connectionId, out var account)
+    /// <summary>
+    /// True when <paramref name="externalId"/> is the account <paramref name="connectionId"/> writes as.
+    /// A null connection is a ticket that belongs to no PSA (the team's own board, or an RMM alert):
+    /// there is no integration account to mistake its work for, so the answer is always false.
+    /// </summary>
+    public bool IsAccount(Guid? connectionId, string? externalId)
+        => connectionId is { } id
+           && !string.IsNullOrWhiteSpace(externalId)
+           && _accountByConnection.TryGetValue(id, out var account)
            && string.Equals(account, externalId.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -49,13 +54,13 @@ public sealed class IntegrationIdentity
     /// integration"). Decided on the id alone: a note stored before ids were kept keeps its name
     /// until the sync fills the id in, rather than being relabelled on a guess from the name.
     /// </summary>
-    public string NoteAuthor(Guid connectionId, string? authorExternalId, string authorName)
-        => IsAccount(connectionId, authorExternalId) ? $"{_connectionName[connectionId]} integration" : authorName;
+    public string NoteAuthor(Guid? connectionId, string? authorExternalId, string authorName)
+        => IsAccount(connectionId, authorExternalId) ? $"{_connectionName[connectionId!.Value]} integration" : authorName;
 
     /// <summary>
     /// An attachment's byline, on the note's rule. Null stays null: a portal upload by the ticket's own
     /// requester has no byline to replace.
     /// </summary>
-    public string? AttachmentAuthor(Guid connectionId, string? authorExternalId, string? authorName)
-        => IsAccount(connectionId, authorExternalId) ? $"{_connectionName[connectionId]} integration" : authorName;
+    public string? AttachmentAuthor(Guid? connectionId, string? authorExternalId, string? authorName)
+        => IsAccount(connectionId, authorExternalId) ? $"{_connectionName[connectionId!.Value]} integration" : authorName;
 }

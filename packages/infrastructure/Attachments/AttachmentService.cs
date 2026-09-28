@@ -99,7 +99,7 @@ public sealed class AttachmentService(
                 ? await db.TicketNotes.Where(n => n.Id == noteId).Select(n => n.ExternalNoteId).FirstOrDefaultAsync(ct)
                 : null;
 
-            var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+            var connector = await connectors.ResolveAsync(ticket.PsaConnectionId!.Value, ct);
             var result = await connector.AddAttachmentAsync(ticket.ExternalTicketId,
                 new SecureAttachment(attachment.OriginalFileName, attachment.ContentType,
                     attachment.SizeBytes, attachment.StorageObjectKey, content)

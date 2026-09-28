@@ -42,12 +42,16 @@ public sealed class TicketCommandService(
     {
         var ticket = await scopeQuery.FindAsync(db.Tickets, ticketId, appUserId, Permissions.TicketsAddPublicNote, ct)
             ?? throw new NotFoundException("Ticket");
-        if (Desk.Domain.Tickets.TicketContact.IsReachable(ticket) || string.IsNullOrWhiteSpace(ticket.ExternalTicketId))
+        // Nothing to ask when the contact is already known, or when there is no provider holding a
+        // contact at all (a ticket on the team's own board).
+        if (Desk.Domain.Tickets.TicketContact.IsReachable(ticket)
+            || string.IsNullOrWhiteSpace(ticket.ExternalTicketId)
+            || ticket.PsaConnectionId is not { } connectionId)
             return Desk.Domain.Tickets.TicketContact.IsReachable(ticket);
 
         try
         {
-            var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+            var connector = await connectors.ResolveAsync(connectionId, ct);
             var live = await connector.GetTicketAsync(ticket.ExternalTicketId, ct);
             if (live is not null && !string.IsNullOrWhiteSpace(live.RequesterEmail))
             {
@@ -67,9 +71,11 @@ public sealed class TicketCommandService(
     {
         var ticket = await scopeQuery.FindAsync(db.Tickets, ticketId, appUserId, Permissions.TicketsAddPublicNote, ct)
             ?? throw new NotFoundException("Ticket");
+        if (ticket.Origin != TicketOrigin.Psa || ticket.PsaConnectionId is not { } connectionId)
+            throw new ValidationFailedException("This ticket is on an internal board, so there is no client to reply to.");
         var company = await db.ClientCompanies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == ticket.ClientCompanyId, ct)
             ?? throw new NotFoundException("Client company");
-        var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+        var connector = await connectors.ResolveAsync(connectionId, ct);
         var caps = await connector.GetCapabilitiesAsync(ct);
 
         var contacts = await CompanyContactsAsync(ticket, ct);
@@ -89,8 +95,9 @@ public sealed class TicketCommandService(
     private async Task<IReadOnlyList<ExternalContact>> CompanyContactsAsync(Ticket ticket, CancellationToken ct)
     {
         var company = await db.ClientCompanies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == ticket.ClientCompanyId, ct);
-        if (company is null || string.IsNullOrWhiteSpace(company.ExternalCompanyId)) return [];
-        var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+        if (company is null || string.IsNullOrWhiteSpace(company.ExternalCompanyId)
+            || ticket.PsaConnectionId is not { } connectionId) return [];
+        var connector = await connectors.ResolveAsync(connectionId, ct);
         try
         {
             var contacts = await connector.GetContactsAsync(company.ExternalCompanyId, ct);
@@ -215,9 +222,12 @@ public sealed class TicketCommandService(
             ?? throw new NotFoundException("Ticket");
         var requester = await db.ClientUsers.FirstOrDefaultAsync(u => u.Id == access.ClientUserId, ct)
             ?? throw new NotFoundException("Client user");
+        // A client's ticket always belongs to a PSA; the client list cannot return anything else.
+        if (ticket.PsaConnectionId is not { } clientConnectionId)
+            throw new ValidationFailedException("This ticket does not belong to a PSA.");
 
         var idempotencyKey = Guid.NewGuid().ToString("N");
-        var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+        var connector = await connectors.ResolveAsync(clientConnectionId, ct);
         var result = await connector.AddPublicNoteAsync(
             ticket.ExternalTicketId!, new UnifiedTicketNoteCreateRequest(body, IsPublic: true, idempotencyKey), ct);
         if (!result.Success)
@@ -239,7 +249,7 @@ public sealed class TicketCommandService(
         db.TicketNotes.Add(note);
         await db.SaveChangesAsync(ct);
 
-        await RecordPortalEventAsync(access.MspOrganizationId, ticket.PsaConnectionId, ticket, idempotencyKey, "note.created", ct);
+        await RecordPortalEventAsync(access.MspOrganizationId, clientConnectionId, ticket, idempotencyKey, "note.created", ct);
         await activity.RecordAsync(new Desk.Application.Analytics.ActivityRecord(
             Desk.Domain.Analytics.ActivityKind.NoteAdded, Desk.Domain.Analytics.ActivitySource.Portal)
         {
@@ -272,6 +282,13 @@ public sealed class TicketCommandService(
     {
         var ticket = await scopeQuery.FindAsync(db.Tickets, ticketId, appUserId, Permissions.TicketsAddPublicNote, ct)
             ?? throw new NotFoundException("Ticket");
+
+        // A ticket on the team's own board has no provider to post to: the note is the record, and
+        // it is stored here. This is the daily update a shift leaves for the next one, so it must
+        // not be refused for a ticket that was never going to reach a PSA.
+        if (ticket.Origin != TicketOrigin.Psa || ticket.PsaConnectionId is null)
+            return await AddLocalNoteAsync(ticket, appUserId, authorName, body, ct);
+
         if (string.IsNullOrEmpty(ticket.ExternalTicketId))
             throw new ValidationFailedException("This ticket is not yet synced to the PSA, so a reply cannot be posted.");
 
@@ -294,7 +311,9 @@ public sealed class TicketCommandService(
         }
 
         var idempotencyKey = Guid.NewGuid().ToString("N");
-        var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+        // Not null: a ticket with no connection took the local-note path above.
+        var staffConnectionId = ticket.PsaConnectionId!.Value;
+        var connector = await connectors.ResolveAsync(staffConnectionId, ct);
         var result = await connector.AddPublicNoteAsync(
             ticket.ExternalTicketId,
             new UnifiedTicketNoteCreateRequest(body, IsPublic: isPublic, idempotencyKey)
@@ -320,7 +339,7 @@ public sealed class TicketCommandService(
         db.TicketNotes.Add(note);
         await db.SaveChangesAsync(ct);
 
-        await RecordPortalEventAsync(ticket.MspOrganizationId, ticket.PsaConnectionId, ticket, idempotencyKey, "note.created", ct);
+        await RecordPortalEventAsync(ticket.MspOrganizationId, staffConnectionId, ticket, idempotencyKey, "note.created", ct);
         await activity.RecordAsync(new Desk.Application.Analytics.ActivityRecord(
             Desk.Domain.Analytics.ActivityKind.NoteAdded, Desk.Domain.Analytics.ActivitySource.Portal)
         {
@@ -331,6 +350,41 @@ public sealed class TicketCommandService(
             TicketId = ticket.Id,
             ClientCompanyId = ticket.ClientCompanyId,
             Detail = isPublic ? "Public reply" : "Internal note",
+        }, ct);
+        return new TicketNoteDto(note.Id, note.AuthorName, false, note.Body, note.NoteCreatedAt);
+    }
+
+    /// <summary>
+    /// A note on a ticket that belongs to no PSA. Stored and counted exactly as any other staff
+    /// note, minus the provider push and the sync event — there is no provider to echo it back.
+    /// Always internal: an internal board has no client thread for a note to be published to.
+    /// </summary>
+    private async Task<TicketNoteDto> AddLocalNoteAsync(Ticket ticket, Guid appUserId, string authorName, string body, CancellationToken ct)
+    {
+        var note = new TicketNote
+        {
+            MspOrganizationId = ticket.MspOrganizationId,
+            TicketId = ticket.Id,
+            AuthorName = authorName,
+            AuthoredByClient = false,
+            Body = body,
+            IsPublic = false,
+            NoteCreatedAt = clock.GetUtcNow(),
+            OriginCorrelationId = ticket.CorrelationId,
+        };
+        db.TicketNotes.Add(note);
+        await db.SaveChangesAsync(ct);
+
+        await activity.RecordAsync(new Desk.Application.Analytics.ActivityRecord(
+            Desk.Domain.Analytics.ActivityKind.NoteAdded, Desk.Domain.Analytics.ActivitySource.Portal)
+        {
+            MspOrganizationId = ticket.MspOrganizationId,
+            OccurredAt = note.NoteCreatedAt,
+            ActorUserId = appUserId,
+            PsaConnectionId = ticket.PsaConnectionId,
+            TicketId = ticket.Id,
+            ClientCompanyId = ticket.ClientCompanyId,
+            Detail = "Internal note",
         }, ct);
         return new TicketNoteDto(note.Id, note.AuthorName, false, note.Body, note.NoteCreatedAt);
     }

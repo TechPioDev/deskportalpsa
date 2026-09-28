@@ -22,9 +22,13 @@ public static class PsaTicketLink
     /// the company name ("Cannot route blank company name"), so for ConnectWise this is required and
     /// no link is built without it. Autotask needs nothing beyond the zone in the endpoint.
     /// </param>
-    public static string? For(ProviderType provider, string? apiEndpoint, string? externalTicketId, string? tenantIdentifier = null)
+    /// <param name="provider">
+    /// Null for a ticket that belongs to no PSA (the team's own board, or an RMM alert). There is
+    /// nothing to link to, so no link is built.
+    /// </param>
+    public static string? For(ProviderType? provider, string? apiEndpoint, string? externalTicketId, string? tenantIdentifier = null)
     {
-        if (string.IsNullOrWhiteSpace(apiEndpoint) || string.IsNullOrWhiteSpace(externalTicketId))
+        if (provider is null || string.IsNullOrWhiteSpace(apiEndpoint) || string.IsNullOrWhiteSpace(externalTicketId))
             return null;
         if (!Uri.TryCreate(apiEndpoint.Trim(), UriKind.Absolute, out var api))
             return null;

@@ -1,6 +1,7 @@
 using Desk.Application.Common;
 using Desk.Application.Reporting;
 using Desk.Domain.Reporting;
+using Desk.Domain.Enums;
 using Desk.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,6 +34,10 @@ public sealed class ClientQbrBuilder(DeskDbContext db, TechnicianReportBuilder t
         // because "resolved, else closed" and "raised by the PSA, else by the row" do not translate well.
         var tickets = (await db.Tickets.AsNoTracking()
                 .Where(t => t.ClientCompanyId == clientCompanyId)
+                // The client's own tickets only. Work the team recorded against this customer on an
+                // internal board is not part of the customer's service record and must never appear
+                // in a document that goes to them.
+                .Where(t => t.Origin == TicketOrigin.Psa)
                 .Where(t => (t.PsaCreatedAt ?? t.CreatedAt) <= to)
                 .Where(t => (t.ResolvedAt ?? t.ClosedAt) == null || (t.ResolvedAt ?? t.ClosedAt) >= prevFrom)
                 .Select(t => new { t.ExternalTicketId, t.Title, t.PortalPriority, t.PortalCategory, t.PortalStatus, Raised = t.PsaCreatedAt ?? t.CreatedAt, t.ResolvedAt, t.ClosedAt, t.SlaDueAt })

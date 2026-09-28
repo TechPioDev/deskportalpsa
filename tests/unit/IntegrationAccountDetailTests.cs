@@ -88,7 +88,7 @@ public class IntegrationAccountDetailTests
 
         var staff = await reads.GetDetailForStaffAsync(ticket.Id);
         var client = await reads.GetDetailAsync(
-            new ClientAccess(Org, ticket.ClientCompanyId, Guid.NewGuid(), IsCompanyAdministrator: true), ticket.Id);
+            new ClientAccess(Org, ticket.ClientCompanyId!.Value, Guid.NewGuid(), IsCompanyAdministrator: true), ticket.Id);
 
         foreach (var detail in new[] { staff!, client! })
         {

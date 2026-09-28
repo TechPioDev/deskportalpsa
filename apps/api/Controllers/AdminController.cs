@@ -140,13 +140,14 @@ public sealed class AdminConnectionsController(
             .OrderByDescending(g => g.Count())
             .Select(g => g.Key)
             .FirstOrDefaultAsync(ct);
-        if (companyId == Guid.Empty) return; // no tickets synced yet — nothing to attach to
+        // No tickets synced yet, or only tickets that belong to no client: nothing to attach to.
+        if (companyId is not { } clientCompanyId || clientCompanyId == Guid.Empty) return;
 
-        var company = await db.ClientCompanies.FirstAsync(c => c.Id == companyId, ct);
+        var company = await db.ClientCompanies.FirstAsync(c => c.Id == clientCompanyId, ct);
         db.ClientUsers.Add(new ClientUser
         {
             MspOrganizationId = company.MspOrganizationId,
-            ClientCompanyId = companyId,
+            ClientCompanyId = clientCompanyId,
             Email = "dev-admin@local",
             DisplayName = "Demo Admin",
             IdpSubject = DatabaseSeeder.DevAdminSubject,

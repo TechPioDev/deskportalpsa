@@ -92,8 +92,10 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
             .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
 
+        // A ticket with no client is the team's own work. It is grouped under one explicit heading
+        // rather than an empty name, so nobody reads a blank row as a client called nothing.
         var clients = rows
-            .GroupBy(t => t.ClientCompanyId)
+            .GroupBy(t => t.ClientCompanyId ?? Guid.Empty)
             .Select(g =>
             {
                 // Resolution time needs BOTH ends. A ticket missing either is excluded and
@@ -152,7 +154,7 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
 
                 return new ClientWorkloadRow(
                     g.Key,
-                    names.GetValueOrDefault(g.Key, "Unknown client"),
+                    g.Key == Guid.Empty ? "Internal work" : names.GetValueOrDefault(g.Key, "Unknown client"),
                     g.Count(),
                     g.Count(t => t.ClosedAt is null),
                     g.Count(t => t.ClosedAt is not null),

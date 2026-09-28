@@ -27,35 +27,41 @@ public sealed class TicketResyncService(
     IAuditWriter audit,
     TimeProvider clock) : ITicketResyncService
 {
-    /// <summary>Anything not confirmed as living in the PSA.</summary>
+    /// <summary>
+    /// Anything not confirmed as living in the PSA — asked only of tickets that BELONG in a PSA.
+    /// A ticket the team raised for itself, or an RMM alert, is complete where it is: it has no
+    /// provider, was never pushed, and reporting it as "never reached the PSA" would turn every
+    /// internal ticket into a permanent critical alert.
+    /// </summary>
     private static bool IsUnsynced(Ticket t) =>
-        t.ExternalTicketId == null || t.SyncStatus != TicketSyncStatus.Synced;
+        t.Origin == TicketOrigin.Psa && (t.ExternalTicketId == null || t.SyncStatus != TicketSyncStatus.Synced);
 
     public async Task<UnsyncedTicketsDto> ListAsync(Guid? connectionId = null, CancellationToken ct = default)
     {
         var q = db.Tickets.AsNoTracking()
-            .Where(t => t.ExternalTicketId == null || t.SyncStatus != TicketSyncStatus.Synced);
+            .Where(t => t.Origin == TicketOrigin.Psa && t.PsaConnectionId != null
+                        && (t.ExternalTicketId == null || t.SyncStatus != TicketSyncStatus.Synced));
         if (connectionId is { } id) q = q.Where(t => t.PsaConnectionId == id);
 
         var rows = await q
             .OrderByDescending(t => t.CreatedAt)
-            .Join(db.PsaConnections.AsNoTracking(), t => t.PsaConnectionId, c => c.Id, (t, c) => new { t, c.Name })
+            .Join(db.PsaConnections.AsNoTracking(), t => t.PsaConnectionId!.Value, c => c.Id, (t, c) => new { t, c.Name })
             .Take(500)
             .Select(x => new
             {
-                x.t.Id, x.t.PsaConnectionId, ConnectionName = x.Name, x.t.Title,
+                x.t.Id, PsaConnectionId = x.t.PsaConnectionId!.Value, ConnectionName = x.Name, x.t.Title,
                 x.t.ClientCompanyId, x.t.SyncStatus, x.t.SyncError, x.t.CreatedAt, x.t.LastSyncedAt,
             })
             .ToListAsync(ct);
 
-        var companyIds = rows.Select(r => r.ClientCompanyId).Distinct().ToList();
+        var companyIds = rows.Where(r => r.ClientCompanyId is not null).Select(r => r.ClientCompanyId!.Value).Distinct().ToList();
         var companies = await db.ClientCompanies.AsNoTracking()
             .Where(c => companyIds.Contains(c.Id))
             .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
 
         var tickets = rows.Select(r => new UnsyncedTicketDto(
             r.Id, r.PsaConnectionId, r.ConnectionName, r.Title,
-            companies.GetValueOrDefault(r.ClientCompanyId),
+            r.ClientCompanyId is { } cid ? companies.GetValueOrDefault(cid) : null,
             r.SyncStatus.ToString(), r.SyncError, r.CreatedAt, r.LastSyncedAt)).ToList();
 
         return new UnsyncedTicketsDto(tickets.Count, tickets);
@@ -65,6 +71,11 @@ public sealed class TicketResyncService(
     {
         var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.Id == ticketId, ct)
             ?? throw new NotFoundException("Ticket");
+
+        // A ticket that belongs to no PSA cannot be pushed to one, and saying "not found" would
+        // suggest the ticket is missing rather than that the request makes no sense for it.
+        if (ticket.Origin != TicketOrigin.Psa)
+            throw new ValidationFailedException("This ticket is on an internal board and does not belong to a PSA.");
 
         // Already there: report it rather than creating a duplicate in the PSA.
         if (!IsUnsynced(ticket))

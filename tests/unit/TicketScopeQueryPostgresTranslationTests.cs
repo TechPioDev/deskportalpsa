@@ -144,8 +144,8 @@ public class TicketScopeQueryPostgresTranslationTests
             .Where(t => t.QueueOrBoard != null)
             .Select(t => new { t.PsaConnectionId, t.QueueOrBoard })
             .Distinct()
-            .Join(db.PsaConnections, t => t.PsaConnectionId, c => c.Id,
-                (t, c) => new { t.PsaConnectionId, ConnectionName = c.Name, BoardName = t.QueueOrBoard! })
+            .Join(db.PsaConnections, t => t.PsaConnectionId!.Value, c => c.Id,
+                (t, c) => new { PsaConnectionId = t.PsaConnectionId!.Value, ConnectionName = c.Name, BoardName = t.QueueOrBoard! })
             .OrderBy(b => b.ConnectionName).ThenBy(b => b.BoardName)
             .Select(b => new Desk.Application.Admin.BoardOptionDto(b.PsaConnectionId, b.ConnectionName, b.BoardName))
             .ToQueryString();

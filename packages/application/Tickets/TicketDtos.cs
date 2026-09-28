@@ -8,7 +8,8 @@ public sealed record ClientAccess(Guid MspOrganizationId, Guid ClientCompanyId, 
 public sealed record TicketListItem(
     Guid Id,
     string? ExternalTicketId,
-    ProviderType Provider,
+    /// <summary>Null for a ticket that belongs to no PSA: the team's own board, or an RMM alert.</summary>
+    ProviderType? Provider,
     string Title,
     string PortalStatus,
     string PortalPriority,
@@ -57,7 +58,8 @@ public sealed record TicketNoteDto(
 public sealed record TicketDetailDto(
     Guid Id,
     string? ExternalTicketId,
-    ProviderType Provider,
+    /// <summary>Null for a ticket that belongs to no PSA: the team's own board, or an RMM alert.</summary>
+    ProviderType? Provider,
     string Title,
     string? Description,
     string PortalStatus,

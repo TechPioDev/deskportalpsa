@@ -13,7 +13,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
     private sealed record Row(
         Guid Id, string? Tech, Guid? AppUserId, string? TechName, DateTimeOffset CreatedAt,
         DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
-        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid Conn);
+        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid? Conn);
 
     /// <param name="byResolution">
     /// Window on WHEN THE TICKET WAS RESOLVED instead of when it was raised, for "resolved in this
@@ -125,7 +125,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // It stays in the day's totals - as Unattributed - rather than vanishing: the hours happened,
         // only the person is unknown, and a page whose totals shrank would misreport the desk.
         var account = await IntegrationIdentity.LoadAsync(db, ct);
-        string? Person(Guid conn, string? ext) => account.IsAccount(conn, ext) ? null : ext;
+        string? Person(Guid? conn, string? ext) => account.IsAccount(conn, ext) ? null : ext;
 
         // Provider display names for the PSA-side rows, taken from the tickets themselves.
         var psaNames = rows
