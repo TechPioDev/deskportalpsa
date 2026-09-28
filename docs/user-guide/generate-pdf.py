@@ -117,6 +117,12 @@ story += [Paragraph("Not every job comes from a PSA. <b>Internal boards</b> hold
                     "is visible to a client.", body_s)]
 story += [bullets([
     "<b>Raise a ticket</b> on a board and assign it to anyone on the team. Everybody can assign to everybody.",
+    "Pick <b>what it is about</b> — a topic such as Patching or Access request — and the department, "
+    "priority, assignee and due date that kind of work usually has are filled in for you. Change any "
+    "of it: the topic is a shortcut, not a rule. Leads set the topics up under <b>Topics</b> on the board.",
+    "Record <b>how it reached us</b> (phone, email, chat, someone at the desk, a meeting) so the question "
+    "of where your work comes from can be answered later.",
+    "A <b>due date</b> shows in the list, with overdue in red and anything due within eight hours marked soon.",
     "Each board has its own numbers, such as <b>INT-000123</b>, which is what people quote to each other.",
     "You can name the <b>client</b> a piece of work was for. It records who it was for — it does not show the ticket "
     "to them.",

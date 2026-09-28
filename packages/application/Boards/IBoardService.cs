@@ -33,6 +33,15 @@ public interface IBoardService
 
     /// <summary>Replaces the membership. An empty list reopens the board to the whole team.</summary>
     Task<IReadOnlyList<BoardMemberDto>> SetMembersAsync(Guid boardId, IReadOnlyList<Guid> appUserIds, CancellationToken ct = default);
+
+    /// <summary>What tickets on this board can be about, and what each kind fills in.</summary>
+    Task<IReadOnlyList<BoardTopicDto>> TopicsAsync(Guid boardId, bool includeInactive = false, CancellationToken ct = default);
+
+    Task<BoardTopicDto> AddTopicAsync(Guid boardId, BoardTopicInput input, CancellationToken ct = default);
+    Task<BoardTopicDto> UpdateTopicAsync(Guid topicId, BoardTopicInput input, CancellationToken ct = default);
+
+    /// <summary>Retires a topic. Tickets raised under it keep it; nothing new can be.</summary>
+    Task SetTopicActiveAsync(Guid topicId, bool active, CancellationToken ct = default);
 }
 
 /// <param name="ClientCompanyId">
@@ -41,7 +50,23 @@ public interface IBoardService
 /// <param name="AssignedAppUserId">Who should pick it up. Anybody on the team may name anybody.</param>
 public sealed record InternalTicketInput(
     Guid BoardId, string Title, string? Description, string? Priority = null, string? Category = null,
-    Guid? ClientCompanyId = null, Guid? AssignedAppUserId = null, DateTimeOffset? DueAt = null);
+    Guid? ClientCompanyId = null, Guid? AssignedAppUserId = null, DateTimeOffset? DueAt = null,
+    /// <summary>What it is about. Fills in department, priority, assignee and due date unless the caller said otherwise.</summary>
+    Guid? BoardTopicId = null,
+    /// <summary>Which department owns it. Overrides whatever the topic would have chosen.</summary>
+    Guid? DepartmentId = null,
+    /// <summary>How the work reached us: Phone, Email, Chat, Walk-in, Meeting, Monitoring, Other.</summary>
+    string? Source = null);
+
+/// <param name="MemberCount">0 means the board is open to the whole team.</param>
+public sealed record BoardTopicDto(
+    Guid Id, Guid BoardId, string Name, Guid? DefaultDepartmentId, string? DefaultDepartmentName,
+    string? DefaultPriority, Guid? DefaultAssigneeUserId, string? DefaultAssigneeName,
+    int? DueInHours, bool IsActive, int SortOrder);
+
+public sealed record BoardTopicInput(
+    string Name, Guid? DefaultDepartmentId = null, string? DefaultPriority = null,
+    Guid? DefaultAssigneeUserId = null, int? DueInHours = null, int SortOrder = 0);
 
 public sealed record InternalTicketCreatedDto(Guid TicketId, string Number, string Title, Guid BoardId);
 

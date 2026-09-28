@@ -45,7 +45,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
                 // People stays null on the client list: no technician identity reaches a client, and
                 // neither does a board or an assignee's name.
-                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null))
+                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
+                null, null, null, null, 0, null))
             .ToListAsync(ct);
 
     /// <summary>
@@ -74,7 +75,13 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
                     t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null,
                     t.BoardId, t.Number,
-                    db.AppUsers.Where(u => u.Id == t.AssignedAppUserId).Select(u => u.DisplayName).FirstOrDefault()),
+                    db.AppUsers.Where(u => u.Id == t.AssignedAppUserId).Select(u => u.DisplayName).FirstOrDefault(),
+                    db.Departments.Where(d => d.Id == t.DepartmentId).Select(d => d.Name).FirstOrDefault(),
+                    db.BoardTopics.Where(x => x.Id == t.BoardTopicId).Select(x => x.Name).FirstOrDefault(),
+                    t.Source, t.SlaDueAt,
+                    t.Notes.Count,
+                    // When it last moved, which is what a queue is sorted by in every desk tool.
+                    t.Notes.Max(n => (DateTimeOffset?)n.NoteCreatedAt) ?? t.UpdatedAt),
                 t.AssignedAppUserId,
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,

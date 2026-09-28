@@ -120,6 +120,87 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         return await MembersAsync(boardId, ct);
     }
 
+    public async Task<IReadOnlyList<BoardTopicDto>> TopicsAsync(Guid boardId, bool includeInactive = false, CancellationToken ct = default)
+    {
+        var q = db.BoardTopics.AsNoTracking().Where(t => t.BoardId == boardId);
+        if (!includeInactive) q = q.Where(t => t.IsActive);
+        return await q
+            .OrderBy(t => t.SortOrder).ThenBy(t => t.Name)
+            .Select(t => new BoardTopicDto(
+                t.Id, t.BoardId, t.Name, t.DefaultDepartmentId,
+                db.Departments.Where(d => d.Id == t.DefaultDepartmentId).Select(d => d.Name).FirstOrDefault(),
+                t.DefaultPriority, t.DefaultAssigneeUserId,
+                db.AppUsers.Where(u => u.Id == t.DefaultAssigneeUserId).Select(u => u.DisplayName).FirstOrDefault(),
+                t.DueInHours, t.IsActive, t.SortOrder))
+            .ToListAsync(ct);
+    }
+
+    public async Task<BoardTopicDto> AddTopicAsync(Guid boardId, BoardTopicInput input, CancellationToken ct = default)
+    {
+        var board = await db.Boards.FirstOrDefaultAsync(b => b.Id == boardId, ct) ?? throw new NotFoundException("Board");
+        var name = await ValidateTopicAsync(input, boardId, null, ct);
+
+        var topic = new BoardTopic
+        {
+            MspOrganizationId = Org,
+            BoardId = board.Id,
+            Name = name,
+            DefaultDepartmentId = input.DefaultDepartmentId,
+            DefaultPriority = Priority(input.DefaultPriority),
+            DefaultAssigneeUserId = input.DefaultAssigneeUserId,
+            DueInHours = input.DueInHours,
+            SortOrder = input.SortOrder,
+        };
+        db.BoardTopics.Add(topic);
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("board.topic.added", "Board", board.Id.ToString(), new { Board = board.Name, Topic = topic.Name }, ct);
+        return (await TopicsAsync(boardId, includeInactive: true, ct)).First(t => t.Id == topic.Id);
+    }
+
+    public async Task<BoardTopicDto> UpdateTopicAsync(Guid topicId, BoardTopicInput input, CancellationToken ct = default)
+    {
+        var topic = await db.BoardTopics.FirstOrDefaultAsync(t => t.Id == topicId, ct) ?? throw new NotFoundException("Topic");
+        topic.Name = await ValidateTopicAsync(input, topic.BoardId, topicId, ct);
+        topic.DefaultDepartmentId = input.DefaultDepartmentId;
+        topic.DefaultPriority = Priority(input.DefaultPriority);
+        topic.DefaultAssigneeUserId = input.DefaultAssigneeUserId;
+        topic.DueInHours = input.DueInHours;
+        topic.SortOrder = input.SortOrder;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("board.topic.updated", "Board", topic.BoardId.ToString(), new { topic.Name }, ct);
+        return (await TopicsAsync(topic.BoardId, includeInactive: true, ct)).First(t => t.Id == topicId);
+    }
+
+    public async Task SetTopicActiveAsync(Guid topicId, bool active, CancellationToken ct = default)
+    {
+        var topic = await db.BoardTopics.FirstOrDefaultAsync(t => t.Id == topicId, ct) ?? throw new NotFoundException("Topic");
+        topic.IsActive = active;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(active ? "board.topic.activated" : "board.topic.retired", "Board",
+            topic.BoardId.ToString(), new { topic.Name }, ct);
+    }
+
+    private async Task<string> ValidateTopicAsync(BoardTopicInput input, Guid boardId, Guid? self, CancellationToken ct)
+    {
+        var name = (input.Name ?? "").Trim();
+        if (name.Length is 0 or > 120) throw new ValidationFailedException("Give the topic a name of up to 120 characters.");
+        // Case-insensitively: "Patching" and "patching" in one list is a mistake waiting to be made,
+        // not two kinds of work.
+        var lowered = name.ToLowerInvariant();
+        if (await db.BoardTopics.AnyAsync(t => t.BoardId == boardId && t.Name.ToLower() == lowered && t.Id != self, ct))
+            throw new ValidationFailedException($"This board already has a topic called {name}.");
+        if (input.DefaultDepartmentId is { } dept && !await db.Departments.AnyAsync(d => d.Id == dept, ct))
+            throw new ValidationFailedException("That department does not exist.");
+        if (input.DefaultAssigneeUserId is { } who && !await db.AppUsers.AnyAsync(u => u.Id == who && u.IsActive, ct))
+            throw new ValidationFailedException("That person is not an active member of staff.");
+        if (input.DueInHours is < 1 or > 8760)
+            throw new ValidationFailedException("A due time is between 1 hour and a year.");
+        return name;
+    }
+
+    private static string? Priority(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+
     private async Task<BoardDto> OneAsync(Guid boardId, CancellationToken ct)
         => (await ListAsync(includeInactive: true, ct)).First(b => b.Id == boardId);
 

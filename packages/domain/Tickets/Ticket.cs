@@ -55,6 +55,22 @@ public class Ticket : TenantEntity
     /// <summary>Who last assigned it, which is rarely the person who holds it.</summary>
     public Guid? AssignedByUserId { get; set; }
 
+    /// <summary>
+    /// The department that owns this work. Set on a board ticket, where the team's own structure is
+    /// the routing; a PSA ticket is routed by its provider queue instead.
+    /// </summary>
+    public Guid? DepartmentId { get; set; }
+
+    /// <summary>What this ticket is about, from the board's own list of topics.</summary>
+    public Guid? BoardTopicId { get; set; }
+
+    /// <summary>
+    /// How the work reached us: a phone call, an email, someone at the desk, a meeting, or a
+    /// monitoring tool. Recorded because "where does our work come from" is a question worth being
+    /// able to answer, and nobody can reconstruct it later.
+    /// </summary>
+    public string? Source { get; set; }
+
     // Requester
     public Guid? RequesterUserId { get; set; }
     /// <summary>

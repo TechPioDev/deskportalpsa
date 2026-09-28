@@ -418,6 +418,20 @@ export const api = {
     request(`/api/boards/sources/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
   regenerateAlertSourceKey: (id: string) =>
     request(`/api/boards/sources/${id}/key`, AlertSourceCreatedSchema, { method: 'POST' }),
+  boardTopics: (boardId: string, includeInactive = false) =>
+    request(`/api/boards/${boardId}/topics?includeInactive=${includeInactive}`, z.array(BoardTopicSchema)) as Promise<BoardTopic[]>,
+  addBoardTopic: (boardId: string, input: BoardTopicInput) =>
+    request(`/api/boards/${boardId}/topics`, BoardTopicSchema, { method: 'POST', body: JSON.stringify(input) }) as Promise<BoardTopic>,
+  updateBoardTopic: (topicId: string, input: BoardTopicInput) =>
+    request(`/api/boards/topics/${topicId}`, BoardTopicSchema, { method: 'PUT', body: JSON.stringify(input) }) as Promise<BoardTopic>,
+  setBoardTopicActive: (topicId: string, active: boolean) =>
+    request(`/api/boards/topics/${topicId}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
+  ticketSources: () => request('/api/boards/sources/options', z.array(z.string())) as Promise<string[]>,
+  /** Departments a ticket can be routed to. Readable by anyone who may raise one. */
+  boardDepartments: () =>
+    request('/api/boards/departments', z.array(z.object({
+      id: z.string(), name: z.string(), isActive: z.boolean(),
+    }))),
   createInternalTicket: (input: InternalTicketInput) =>
     request('/api/boards/tickets', z.object({
       ticketId: z.string(), number: z.string(), title: z.string(), boardId: z.string(),
@@ -1065,6 +1079,27 @@ export type InternalTicketInput = {
   boardId: string; title: string; description: string | null;
   priority?: string | null; category?: string | null;
   clientCompanyId?: string | null; assignedAppUserId?: string | null; dueAt?: string | null;
+  /** What it is about; fills in department, priority, assignee and due date unless stated. */
+  boardTopicId?: string | null; departmentId?: string | null; source?: string | null;
+};
+
+export const BoardTopicSchema = z.object({
+  id: z.string(),
+  boardId: z.string(),
+  name: z.string(),
+  defaultDepartmentId: z.string().nullable(),
+  defaultDepartmentName: z.string().nullable(),
+  defaultPriority: z.string().nullable(),
+  defaultAssigneeUserId: z.string().nullable(),
+  defaultAssigneeName: z.string().nullable(),
+  dueInHours: z.number().nullable(),
+  isActive: z.boolean(),
+  sortOrder: z.number(),
+});
+export type BoardTopic = z.infer<typeof BoardTopicSchema>;
+export type BoardTopicInput = {
+  name: string; defaultDepartmentId?: string | null; defaultPriority?: string | null;
+  defaultAssigneeUserId?: string | null; dueInHours?: number | null; sortOrder?: number;
 };
 
 /** A monitoring tool allowed to open tickets on a board. Vendor 0 generic, 1 NinjaOne, 2 Datto RMM. */

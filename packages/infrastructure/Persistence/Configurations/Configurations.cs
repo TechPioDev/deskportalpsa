@@ -227,6 +227,9 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
             .IsUnique()
             .HasFilter("\"SourceAlertId\" IS NOT NULL");
         b.Property(x => x.SourceAlertId).HasMaxLength(200);
+        b.Property(x => x.Source).HasMaxLength(40);
+        // A board filtered to one department, which is how a desk organised by department reads it.
+        b.HasIndex(x => new { x.MspOrganizationId, x.DepartmentId });
     }
 }
 
@@ -242,6 +245,19 @@ public sealed class BoardConfig : IEntityTypeConfiguration<Board>
         // The prefix appears in every ticket number on the board, so two boards cannot share one.
         b.HasIndex(x => new { x.MspOrganizationId, x.Key }).IsUnique();
         b.HasMany(x => x.Members).WithOne(m => m.Board!).HasForeignKey(m => m.BoardId).OnDelete(DeleteBehavior.Cascade);
+        b.HasMany(x => x.Topics).WithOne(t => t.Board!).HasForeignKey(t => t.BoardId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class BoardTopicConfig : IEntityTypeConfiguration<BoardTopic>
+{
+    public void Configure(EntityTypeBuilder<BoardTopic> b)
+    {
+        b.ToTable("board_topics");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(120).IsRequired();
+        b.Property(x => x.DefaultPriority).HasMaxLength(20);
+        b.HasIndex(x => new { x.BoardId, x.Name }).IsUnique();
     }
 }
 

@@ -38,8 +38,22 @@ public sealed class InternalTicketService(
         if (input.ClientCompanyId is { } companyId && !await db.ClientCompanies.AnyAsync(c => c.Id == companyId, ct))
             throw new ValidationFailedException("That client does not exist.");
 
+        // What the ticket is about, and what that usually implies. A topic is a shortcut: anything
+        // the caller stated explicitly wins over it, so the form can pre-fill and still be corrected.
+        BoardTopic? topic = null;
+        if (input.BoardTopicId is { } topicId)
+        {
+            topic = await db.BoardTopics.FirstOrDefaultAsync(t => t.Id == topicId && t.BoardId == board.Id, ct)
+                ?? throw new ValidationFailedException("That topic is not on this board.");
+            if (!topic.IsActive) throw new ValidationFailedException("That topic has been retired.");
+        }
+
+        var departmentId = input.DepartmentId ?? topic?.DefaultDepartmentId;
+        if (departmentId is { } dept && !await db.Departments.AnyAsync(d => d.Id == dept && d.IsActive, ct))
+            throw new ValidationFailedException("That department does not exist, or is closed.");
+
         Guid? assignee = null;
-        if (input.AssignedAppUserId is { } wanted)
+        if ((input.AssignedAppUserId ?? topic?.DefaultAssigneeUserId) is { } wanted)
         {
             if (!await db.AppUsers.AnyAsync(u => u.Id == wanted && u.IsActive, ct))
                 throw new ValidationFailedException("That person is not an active member of staff.");
@@ -69,10 +83,15 @@ public sealed class InternalTicketService(
             Title = title,
             Description = string.IsNullOrWhiteSpace(input.Description) ? null : input.Description.Trim(),
             PortalStatus = "NEW",
-            PortalPriority = string.IsNullOrWhiteSpace(input.Priority) ? "NORMAL" : input.Priority.Trim().ToUpperInvariant(),
+            PortalPriority = Priority(input.Priority) ?? topic?.DefaultPriority ?? "NORMAL",
+            DepartmentId = departmentId,
+            BoardTopicId = topic?.Id,
+            Source = Source(input.Source),
             PortalCategory = string.IsNullOrWhiteSpace(input.Category) ? null : input.Category.Trim(),
             QueueOrBoard = board.Name,
-            SlaDueAt = input.DueAt,
+            // The date somebody typed, else the one this kind of work usually has, else none. A due
+            // date that nobody chose is worse than none: it turns into an overdue ticket nobody meant.
+            SlaDueAt = input.DueAt ?? (topic?.DueInHours is { } hours ? now.AddHours(hours) : null),
             PsaCreatedAt = now,
             // Synced is the wrong word for a ticket with nowhere to sync to, and every "not synced"
             // reader treats PendingCreate as a failed push. Conflict and Error are worse. Synced is
@@ -105,6 +124,22 @@ public sealed class InternalTicketService(
         }, ct);
 
         return new InternalTicketCreatedDto(ticket.Id, number, ticket.Title, board.Id);
+    }
+
+    private static string? Priority(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+
+    /// <summary>
+    /// How the work reached us. A short known list rather than free text, because the only reason to
+    /// record it is to count it later, and free text cannot be counted.
+    /// </summary>
+    public static readonly string[] Sources = ["Phone", "Email", "Chat", "Walk-in", "Meeting", "Monitoring", "Other"];
+
+    private static string? Source(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return Sources.FirstOrDefault(s => s.Equals(value.Trim(), StringComparison.OrdinalIgnoreCase))
+               ?? throw new ValidationFailedException($"Source must be one of: {string.Join(", ", Sources)}.");
     }
 
     /// <summary>
