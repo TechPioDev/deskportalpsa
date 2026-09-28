@@ -28,10 +28,11 @@ public sealed class TicketsController(
     /// users see their company's tickets. Staff-first: the local dev admin is both, and an admin
     /// looking at one company's slice concluded an entire PSA was missing from the portal.
     /// </summary>
+    /// <param name="boardId">One of the team's own boards, for the board view. Staff only.</param>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List([FromQuery] Guid? boardId, CancellationToken ct)
         => user.HasPermission(Permissions.TicketsViewAll)
-            ? Ok(await reads.ListAllAsync(ct))
+            ? Ok(await reads.ListAllAsync(ct, boardId))
             : Ok(await reads.ListAsync(await AccessAsync(ct), ct));
 
     [HttpGet("{id:guid}")]

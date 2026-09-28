@@ -10,14 +10,47 @@ namespace Desk.Domain.Tickets;
 /// </summary>
 public class Ticket : TenantEntity
 {
-    // Identity across systems
-    public Guid PsaConnectionId { get; set; }
-    public ProviderType Provider { get; set; }
+    /// <summary>
+    /// Where this ticket came from. <see cref="TicketOrigin.Psa"/> is the original case and keeps
+    /// every rule it always had; the other two never reach a provider and are never pushed.
+    /// </summary>
+    public TicketOrigin Origin { get; set; } = TicketOrigin.Psa;
+
+    // Identity across systems. Null for a ticket that belongs to no PSA: the team's own work, or an
+    // RMM alert. A PSA ticket always has both, which the create paths and sync engine enforce.
+    public Guid? PsaConnectionId { get; set; }
+    public ProviderType? Provider { get; set; }
     public string? ExternalTicketId { get; set; }
-    public Guid ClientCompanyId { get; set; }
+
+    /// <summary>
+    /// The client this ticket concerns. Null for work that concerns nobody outside the team.
+    /// Naming a client on an internal ticket does NOT show it to that client: visibility is decided
+    /// by the board, never by this field.
+    /// </summary>
+    public Guid? ClientCompanyId { get; set; }
+
+    /// <summary>The board this ticket sits on, for anything that is not a PSA queue.</summary>
+    public Guid? BoardId { get; set; }
+    public Board? Board { get; set; }
+
+    /// <summary>
+    /// Human-readable number within its board, e.g. INT-000123. Null for a PSA ticket, which is
+    /// quoted by the provider's own id instead.
+    /// </summary>
+    public string? Number { get; set; }
+
+    /// <summary>Who raised it, when a member of staff did. A PSA ticket's requester is a client contact instead.</summary>
+    public Guid? CreatedByUserId { get; set; }
+
+    /// <summary>Who last assigned it, which is rarely the person who holds it.</summary>
+    public Guid? AssignedByUserId { get; set; }
 
     // Requester
     public Guid? RequesterUserId { get; set; }
+    /// <summary>
+    /// The requester's name. For an internal ticket this is the member of staff who raised it, so
+    /// the field is never blank and every existing reader keeps working.
+    /// </summary>
     public required string RequesterName { get; set; }
     public required string RequesterEmail { get; set; }
 

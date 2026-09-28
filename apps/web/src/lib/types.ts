@@ -3,7 +3,8 @@ import { z } from 'zod';
 export const TicketListItemSchema = z.object({
   id: z.string(),
   externalTicketId: z.string().nullable(),
-  provider: z.union([z.string(), z.number()]),
+  // Null for a ticket that belongs to no PSA: the team's own board, or a monitoring alert.
+  provider: z.union([z.string(), z.number()]).nullable(),
   title: z.string(),
   portalStatus: z.string(),
   portalPriority: z.string(),
@@ -20,6 +21,10 @@ export const TicketListItemSchema = z.object({
   // Who holds the ticket and who logged time on it, keyed by the server's PersonKey. Staff lists
   // only; null on a client's list, which is what tells the page not to offer a technician filter.
   people: z.array(z.object({ key: z.string(), name: z.string(), holds: z.boolean() })).nullable().default(null),
+  // The team's own boards: which board, the number people quote, and who holds it.
+  boardId: z.string().nullable().default(null),
+  number: z.string().nullable().default(null),
+  assignedToName: z.string().nullable().default(null),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 
@@ -54,7 +59,10 @@ export const AttachmentSchema = z.object({
 export const TicketDetailSchema = z.object({
   id: z.string(),
   externalTicketId: z.string().nullable(),
-  provider: z.union([z.string(), z.number()]),
+  // The number an internal board's ticket is quoted by, e.g. INT-000123.
+  number: z.string().nullable().default(null),
+  // Null for a ticket on one of the team's own boards: it belongs to no PSA.
+  provider: z.union([z.string(), z.number()]).nullable(),
   title: z.string(),
   description: z.string().nullable(),
   portalStatus: z.string(),
@@ -154,6 +162,10 @@ export const TechnicianDaySchema = z.object({
   billableHours: z.number(),
   resolved: z.number(),
   ticketsTouched: z.number(),
+  // Of the totals above, the part spent on the team's own boards. Defaulted so a response from the
+  // previous build mid-deploy still parses.
+  internalHours: z.number().default(0),
+  resolvedInternal: z.number().default(0),
 });
 export type TechnicianDay = z.output<typeof TechnicianDaySchema>;
 export type TechnicianResponse = z.infer<typeof TechnicianResponseSchema>;

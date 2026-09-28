@@ -41,8 +41,19 @@ const providerMeta: Record<number, { name: string; abbr: string; className: stri
   24: { name: 'Zendesk', abbr: 'ZD', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' },
 };
 
-/** Which PSA (and which connection/tenant) a ticket came from — vital when an MSP runs several. */
-export function SourceBadge({ provider, connectionName }: { provider: string | number; connectionName?: string | null }) {
+/**
+ * Which PSA (and which connection/tenant) a ticket came from — vital when an MSP runs several.
+ * A ticket with no provider is the team's own work; it says so rather than inventing a PSA name.
+ */
+export function SourceBadge({ provider, connectionName }: { provider: string | number | null; connectionName?: string | null }) {
+  if (provider === null || provider === undefined) {
+    return (
+      <span className="inline-flex items-center gap-1.5" title="Raised by the team, on an internal board">
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded bg-slate-200 px-1 text-[10px] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-200">IN</span>
+        <span className="max-w-[10rem] truncate text-xs text-[var(--muted)]">{connectionName ?? 'Internal'}</span>
+      </span>
+    );
+  }
   const meta = providerMeta[Number(provider)] ?? { name: `PSA ${provider}`, abbr: 'P', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' };
   return (
     <span className="inline-flex items-center gap-1.5" title={connectionName ? `${meta.name} · ${connectionName}` : meta.name}>

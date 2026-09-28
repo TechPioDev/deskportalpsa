@@ -111,3 +111,30 @@ public enum BackgroundJobStatus
     Failed = 3,
     DeadLettered = 4,
 }
+
+/// <summary>
+/// Where a ticket came from, which decides three things nothing else can answer: whether the portal
+/// pushes it to a PSA, whether a client may ever see it, and which side of the reporting split it
+/// falls on (client work versus the team's own work).
+/// </summary>
+public enum TicketOrigin
+{
+    /// <summary>Imported from, or created in, a PSA. The PSA is its system of record.</summary>
+    Psa = 0,
+
+    /// <summary>Raised by the team for the team. Never pushed anywhere, never visible to a client.</summary>
+    Internal = 1,
+
+    /// <summary>Opened automatically by a monitoring tool (RMM). Lives on its own board.</summary>
+    Rmm = 2,
+}
+
+/// <summary>What a board is for. A board's kind fixes the rules its tickets follow.</summary>
+public enum BoardKind
+{
+    /// <summary>The team's own work. Staff only, always.</summary>
+    Internal = 0,
+
+    /// <summary>Alerts from a monitoring tool. May be shown to the client it concerns, if enabled.</summary>
+    Rmm = 1,
+}

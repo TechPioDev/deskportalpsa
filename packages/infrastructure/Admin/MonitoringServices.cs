@@ -439,11 +439,12 @@ public sealed class UserAdminService(
         // EF can't see through the constructor to know ConnectionName maps to the join's c.Name.
         // Order on the anonymous projection instead, and only build the DTO in the final Select.
         => await db.Tickets.AsNoTracking()
-            .Where(t => t.QueueOrBoard != null)
+            // PSA queues only: an internal board is not a provider board and is chosen elsewhere.
+            .Where(t => t.QueueOrBoard != null && t.PsaConnectionId != null)
             .Select(t => new { t.PsaConnectionId, t.QueueOrBoard })
             .Distinct()
-            .Join(db.PsaConnections.AsNoTracking(), t => t.PsaConnectionId, c => c.Id,
-                (t, c) => new { t.PsaConnectionId, ConnectionName = c.Name, BoardName = t.QueueOrBoard! })
+            .Join(db.PsaConnections.AsNoTracking(), t => t.PsaConnectionId!.Value, c => c.Id,
+                (t, c) => new { PsaConnectionId = t.PsaConnectionId!.Value, ConnectionName = c.Name, BoardName = t.QueueOrBoard! })
             .OrderBy(b => b.ConnectionName).ThenBy(b => b.BoardName)
             .Select(b => new BoardOptionDto(b.PsaConnectionId, b.ConnectionName, b.BoardName))
             .ToListAsync(ct);

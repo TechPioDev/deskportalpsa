@@ -30,6 +30,8 @@ public class PermissionGoldenMatrixTests
             "tickets.create", "tickets.note.public.add", "tickets.time.log", "tickets.update",
             "reports.view", "productivity.team.view", "productivity.own.view",
             "integration.health.view", "jobs.manage", "audit.view", "security.config.view", "enquiries.view",
+            // Added with internal boards (Sep 2026): deciding what boards exist is a lead's call.
+            "boards.manage",
         ],
         [RoleType.MspAdministrator] =
         [
@@ -37,13 +39,13 @@ public class PermissionGoldenMatrixTests
             "users.manage", "roles.manage", "clientusers.manage", "tickets.view.all", "tickets.create",
             "tickets.note.public.add", "tickets.time.log", "tickets.update", "reports.view",
             "productivity.team.view", "integration.health.view", "jobs.manage", "audit.view",
-            "security.config.view", "enquiries.view",
+            "security.config.view", "enquiries.view", "boards.manage",
         ],
         [RoleType.Manager] =
         [
             "connections.view", "mappings.view", "tickets.view.all", "tickets.time.log",
             "tickets.update", "reports.view", "productivity.team.view", "integration.health.view",
-            "enquiries.view",
+            "enquiries.view", "boards.manage",
         ],
         [RoleType.Technician] =
         [

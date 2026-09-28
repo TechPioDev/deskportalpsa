@@ -16,7 +16,7 @@ public interface ITicketReadService
     Task<TicketDetailDto?> GetDetailAsync(ClientAccess access, Guid ticketId, CancellationToken ct = default);
 
     /// <summary>Every ticket in the tenant, for staff holding TicketsViewAll.</summary>
-    Task<IReadOnlyList<TicketListItem>> ListAllAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<TicketListItem>> ListAllAsync(CancellationToken ct = default, Guid? boardId = null);
 
     /// <summary>Any ticket in the tenant, for staff holding TicketsViewAll.</summary>
     Task<TicketDetailDto?> GetDetailForStaffAsync(Guid ticketId, CancellationToken ct = default);

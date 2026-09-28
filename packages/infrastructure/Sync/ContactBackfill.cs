@@ -19,9 +19,10 @@ public static class ContactBackfill
     public static async Task<Dictionary<Guid, List<(Guid Id, string ExternalId)>>> PendingAsync(DeskDbContext db, CancellationToken ct = default)
     {
         var rows = await db.Tickets.AsNoTracking()
-            .Where(t => t.ExternalTicketId != null && t.RequesterUserId == null
+            // PSA tickets only: the team's own tickets have no provider contact to read.
+            .Where(t => t.ExternalTicketId != null && t.PsaConnectionId != null && t.RequesterUserId == null
                         && (t.RequesterEmail == TicketContact.PlaceholderEmail || !t.RequesterEmail.Contains("@")))
-            .Select(t => new { t.Id, t.PsaConnectionId, ExternalId = t.ExternalTicketId! })
+            .Select(t => new { t.Id, PsaConnectionId = t.PsaConnectionId!.Value, ExternalId = t.ExternalTicketId! })
             .ToListAsync(ct);
         return rows
             .GroupBy(r => r.PsaConnectionId)

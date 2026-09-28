@@ -1,6 +1,7 @@
 using Desk.Application.Abstractions;
 using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
+using Desk.Domain.Enums;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -18,9 +19,17 @@ namespace Desk.Infrastructure.Tickets;
 /// </summary>
 public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQuery, ICurrentUser user) : ITicketReadService
 {
+    /// <summary>
+    /// What a client may see. Naming a client on a ticket does NOT show it to them: work the team
+    /// records against a customer — a task they asked for, a shift handover, an alert nobody has
+    /// triaged yet — is the team's own record. Only a PSA ticket, or a board explicitly published to
+    /// the client, is ever returned, and the company scope still applies on top of that.
+    /// </summary>
     private IQueryable<Ticket> Visible(ClientAccess access) =>
         db.Tickets.Where(t =>
             t.ClientCompanyId == access.ClientCompanyId
+            && (t.Origin == TicketOrigin.Psa
+                || db.Boards.Any(b => b.Id == t.BoardId && b.ClientVisible))
             && (access.IsCompanyAdministrator || t.RequesterUserId == access.ClientUserId));
 
     public async Task<IReadOnlyList<TicketListItem>> ListAsync(ClientAccess access, CancellationToken ct = default)
@@ -34,8 +43,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
                 db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                 db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
-                // People stays null on the client list: no technician identity reaches a client.
-                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null))
+                // People stays null on the client list: no technician identity reaches a client, and
+                // neither does a board or an assignee's name.
+                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null))
             .ToListAsync(ct);
 
     /// <summary>
@@ -44,9 +54,14 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     /// whichever company their login happened to be bound to, and concluded a whole PSA was missing.
     /// Callers gate this on TicketsViewAll; the tenant filter on the DbContext bounds it to the org.
     /// </summary>
-    public async Task<IReadOnlyList<TicketListItem>> ListAllAsync(CancellationToken ct = default)
+    /// <param name="boardId">
+    /// Narrows the list to one of the team's own boards. Given none, every ticket the caller may see
+    /// is returned, PSA queues and internal boards alike — the all-tickets list this has always been.
+    /// </param>
+    public async Task<IReadOnlyList<TicketListItem>> ListAllAsync(CancellationToken ct = default, Guid? boardId = null)
     {
         var visible = await StaffVisibleAsync(ct);
+        if (boardId is { } board) visible = visible.Where(t => t.BoardId == board);
         var rows = await visible
             .AsNoTracking()
             .OrderByDescending(t => t.CreatedAt)
@@ -57,7 +72,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
                     db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                     db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
-                    t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null),
+                    t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null,
+                    t.BoardId, t.Number,
+                    db.AppUsers.Where(u => u.Id == t.AssignedAppUserId).Select(u => u.DisplayName).FirstOrDefault()),
                 t.AssignedAppUserId,
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,
@@ -263,7 +280,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             AssignedAppUserId: ticket.AssignedAppUserId,
             AssignedAppUserName: assignedAppUserName,
             ContactName: Desk.Domain.Tickets.TicketContact.Name(ticket),
-            HasReachableContact: Desk.Domain.Tickets.TicketContact.IsReachable(ticket));
+            HasReachableContact: Desk.Domain.Tickets.TicketContact.IsReachable(ticket),
+            Number: ticket.Number);
     }
 
     public Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)

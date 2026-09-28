@@ -215,6 +215,50 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         b.HasIndex(x => new { x.MspOrganizationId, x.AssignedAppUserId });
         b.HasMany(x => x.Notes).WithOne(n => n.Ticket!).HasForeignKey(n => n.TicketId);
         b.HasMany(x => x.Attachments).WithOne(a => a.Ticket!).HasForeignKey(a => a.TicketId);
+        // The board lists: one board, newest first, is the query the team lives on all day.
+        b.HasIndex(x => new { x.MspOrganizationId, x.BoardId, x.PortalStatus });
+        b.Property(x => x.Number).HasMaxLength(20);
+        // Quoted to each other in conversation, so it has to be unique within the organization.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Number })
+            .IsUnique()
+            .HasFilter("\"Number\" IS NOT NULL");
+    }
+}
+
+public sealed class BoardConfig : IEntityTypeConfiguration<Board>
+{
+    public void Configure(EntityTypeBuilder<Board> b)
+    {
+        b.ToTable("boards");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(120).IsRequired();
+        b.Property(x => x.Key).HasMaxLength(8).IsRequired();
+        b.Property(x => x.Description).HasMaxLength(500);
+        // The prefix appears in every ticket number on the board, so two boards cannot share one.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Key }).IsUnique();
+        b.HasMany(x => x.Members).WithOne(m => m.Board!).HasForeignKey(m => m.BoardId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class BoardMemberConfig : IEntityTypeConfiguration<BoardMember>
+{
+    public void Configure(EntityTypeBuilder<BoardMember> b)
+    {
+        b.ToTable("board_members");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => new { x.BoardId, x.AppUserId }).IsUnique();
+    }
+}
+
+public sealed class TicketAssignmentConfig : IEntityTypeConfiguration<TicketAssignment>
+{
+    public void Configure(EntityTypeBuilder<TicketAssignment> b)
+    {
+        b.ToTable("ticket_assignments");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Note).HasMaxLength(2000);
+        b.HasIndex(x => new { x.TicketId, x.CreatedAt });
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 

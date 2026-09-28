@@ -29,8 +29,10 @@ public static class AuthorBackfill
     {
         var rows = await db.TicketNotes.AsNoTracking()
             .Where(NoteMissingAuthorId)
-            .Join(db.Tickets.AsNoTracking().Where(t => t.ExternalTicketId != null), n => n.TicketId, t => t.Id,
-                (n, t) => new { t.PsaConnectionId, ExternalId = t.ExternalTicketId! })
+            // PSA tickets only: a ticket on the team's own board has no provider to ask.
+            .Join(db.Tickets.AsNoTracking().Where(t => t.ExternalTicketId != null && t.PsaConnectionId != null),
+                n => n.TicketId, t => t.Id,
+                (n, t) => new { PsaConnectionId = t.PsaConnectionId!.Value, ExternalId = t.ExternalTicketId! })
             .Distinct()
             .ToListAsync(ct);
         return rows
@@ -49,7 +51,8 @@ public static class AuthorBackfill
         db.TicketAttachments.AsNoTracking()
             .Where(a => a.ImportedFromProvider && a.AuthorExternalId == null
                         && a.AuthorName != null && !a.AuthorName.EndsWith(" automation"))
-            .Join(db.Tickets.AsNoTracking(), a => a.TicketId, t => t.Id, (a, t) => t.PsaConnectionId)
+            .Join(db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId != null), a => a.TicketId, t => t.Id,
+                (a, t) => t.PsaConnectionId!.Value)
             .Join(db.PsaConnections.AsNoTracking().Where(c => c.Provider != ProviderType.ConnectWisePsa),
                 connectionId => connectionId, c => c.Id, (connectionId, c) => connectionId);
 

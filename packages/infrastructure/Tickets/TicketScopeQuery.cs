@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using Desk.Application.Authorization;
 using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
+using Desk.Domain.Enums;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -39,14 +40,30 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
             _ => source.Where(_ => false),
         };
 
-        return eff.BoardMode switch
+        var byBoardAccess = eff.BoardMode switch
         {
             BoardAccessMode.All => scoped,
             BoardAccessMode.None => scoped.Where(_ => false),
             BoardAccessMode.Selected => scoped.Where(BoardFilter(eff.BoardGrants)),
             _ => scoped.Where(_ => false),
         };
+
+        return byBoardAccess.Where(BoardMembership(appUserId));
     }
+
+    /// <summary>
+    /// An internal board with no members is open to the whole team, which is what a team that wants
+    /// to see each other's work asks for. Naming members narrows it to them — for a board that is
+    /// not general reading — and the ticket's own holder always keeps sight of it either way.
+    /// A PSA ticket is unaffected: provider queues are governed by board access above.
+    /// </summary>
+    private Expression<Func<Ticket, bool>> BoardMembership(Guid appUserId) =>
+        t => t.Origin == TicketOrigin.Psa
+             || t.BoardId == null
+             || t.AssignedAppUserId == appUserId
+             || t.CreatedByUserId == appUserId
+             || !db.BoardMembers.Any(m => m.BoardId == t.BoardId)
+             || db.BoardMembers.Any(m => m.BoardId == t.BoardId && m.AppUserId == appUserId);
 
     public async Task<Ticket?> FindAsync(
         IQueryable<Ticket> source, Guid ticketId, Guid appUserId, string permissionKey, CancellationToken ct = default)
@@ -159,7 +176,13 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
             Expression<Func<Ticket, bool>> clause = t => t.PsaConnectionId == connectionId && boardNames.Contains(t.QueueOrBoard!);
             combined = combined is null ? clause : Or(combined, clause);
         }
-        return combined!;
+
+        // Board grants name PSA queues, which the team's own boards are not. Restricting somebody to
+        // certain provider queues says nothing about whether they may see the team's internal work,
+        // and silently hiding it would empty the board for exactly the people who work it. Internal
+        // boards carry their own membership instead, applied before this.
+        Expression<Func<Ticket, bool>> notAProviderQueue = t => t.Origin != TicketOrigin.Psa;
+        return Or(combined!, notAProviderQueue);
     }
 
     private static Expression<Func<Ticket, bool>> Or(Expression<Func<Ticket, bool>> left, Expression<Func<Ticket, bool>> right)

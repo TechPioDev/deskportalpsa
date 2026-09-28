@@ -50,6 +50,13 @@ public static class Permissions
     // Inbound enquiries from the public site
     public const string EnquiriesView = "enquiries.view";
 
+    /// <summary>
+    /// Create and configure the team's own boards. Deliberately separate from raising or taking a
+    /// ticket on one, which anybody on the team may do: deciding what boards exist is a lead's call,
+    /// handing work to a colleague is not.
+    /// </summary>
+    public const string BoardsManage = "boards.manage";
+
     /// <summary>Every claim, used to grant the full set to super-administrators.</summary>
     public static readonly IReadOnlyList<string> All = new[]
     {
@@ -60,6 +67,7 @@ public static class Permissions
         TicketsCreate, TicketsAddPublicNote, TicketsLogTime, TicketsUpdate,
         ReportsView, ProductivityViewTeam, ProductivityViewOwn,
         IntegrationHealthView, JobsManage, AuditView, SecurityConfigView, EnquiriesView,
+        BoardsManage,
     };
 
     /// <summary>
@@ -90,6 +98,7 @@ public static class Permissions
             (ProductivityViewTeam, PermissionScope.All), (IntegrationHealthView, PermissionScope.All),
             (JobsManage, PermissionScope.All), (AuditView, PermissionScope.All),
             (SecurityConfigView, PermissionScope.All), (EnquiriesView, PermissionScope.All),
+            (BoardsManage, PermissionScope.All),
         ],
 
         RoleType.Manager =>
@@ -98,7 +107,7 @@ public static class Permissions
             (TicketsViewAll, PermissionScope.All), (TicketsLogTime, PermissionScope.All),
             (TicketsUpdate, PermissionScope.All), (ReportsView, PermissionScope.All),
             (ProductivityViewTeam, PermissionScope.All), (IntegrationHealthView, PermissionScope.All),
-            (EnquiriesView, PermissionScope.All),
+            (EnquiriesView, PermissionScope.All), (BoardsManage, PermissionScope.All),
         ],
 
         RoleType.Technician =>

@@ -8,7 +8,8 @@ public sealed record ClientAccess(Guid MspOrganizationId, Guid ClientCompanyId, 
 public sealed record TicketListItem(
     Guid Id,
     string? ExternalTicketId,
-    ProviderType Provider,
+    /// <summary>Null for a ticket that belongs to no PSA: the team's own board, or an RMM alert.</summary>
+    ProviderType? Provider,
     string Title,
     string PortalStatus,
     string PortalPriority,
@@ -29,7 +30,13 @@ public sealed record TicketListItem(
     // Who holds the ticket and who logged time on it, keyed by PersonKey. STAFF list only: the
     // client list leaves this null, so no technician identity reaches a client, and the UI reads
     // null as "this list has no people to filter by" rather than "nobody worked these".
-    IReadOnlyList<TicketPersonRef>? People = null);
+    IReadOnlyList<TicketPersonRef>? People = null,
+    // The board this ticket sits on, when it is not a provider queue, and the number people quote
+    // for it (INT-000123). Null on a PSA ticket, which is quoted by the provider's own id.
+    Guid? BoardId = null,
+    string? Number = null,
+    // Who holds it, by name, so a board reads as a list of people's work rather than of ids.
+    string? AssignedToName = null);
 
 public sealed record TicketNoteDto(
     Guid Id,
@@ -57,7 +64,8 @@ public sealed record TicketNoteDto(
 public sealed record TicketDetailDto(
     Guid Id,
     string? ExternalTicketId,
-    ProviderType Provider,
+    /// <summary>Null for a ticket that belongs to no PSA: the team's own board, or an RMM alert.</summary>
+    ProviderType? Provider,
     string Title,
     string? Description,
     string PortalStatus,
@@ -90,7 +98,9 @@ public sealed record TicketDetailDto(
     // Who the ticket is for, and whether a public reply would reach anyone: a PSA contact with an
     // address, or the client portal user who raised it. The address itself is not sent.
     string? ContactName = null,
-    bool HasReachableContact = false);
+    bool HasReachableContact = false,
+    /// <summary>The number a board's ticket is quoted by (INT-000123). Null for a PSA ticket.</summary>
+    string? Number = null);
 
 public sealed record AttachmentDto(
     Guid Id,

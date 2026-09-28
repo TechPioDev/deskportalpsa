@@ -8,7 +8,7 @@ namespace Desk.Api.Controllers;
 [ApiController]
 [Route("api/me")]
 [Authorize]
-public sealed class MeController(ICurrentUser user, ITenantContext tenant) : ControllerBase
+public sealed class MeController(ICurrentUser user, ITenantContext tenant, Desk.Application.Boards.BoardFeatureOptions features) : ControllerBase
 {
     [HttpGet]
     public IActionResult Get() => Ok(new
@@ -19,5 +19,8 @@ public sealed class MeController(ICurrentUser user, ITenantContext tenant) : Con
         organizationId = tenant.OrganizationId,
         isPlatformScope = tenant.IsPlatformScope,
         permissions = user.Permissions.OrderBy(p => p),
+        // What this installation has switched on, so the interface offers only what the API will
+        // answer rather than showing a page that returns "not found".
+        features = new { internalBoards = features.InternalBoards },
     });
 }

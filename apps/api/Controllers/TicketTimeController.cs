@@ -6,6 +6,7 @@ using Desk.Application.Common;
 using Desk.Application.Connectors;
 using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
+using Desk.Domain.Enums;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
 using Desk.Infrastructure.Tickets;
@@ -38,8 +39,11 @@ public sealed class TicketTimeController(
     public async Task<IActionResult> TimeOptions(Guid id, CancellationToken ct)
     {
         var ticket = await LoadAsync(id, ct);
+        // A board with no provider has no work types or roles to choose from: hours are simply hours.
+        if (ticket.PsaConnectionId is not { } optionsConnectionId)
+            return Ok(new { workTypes = Array.Empty<object>(), workRoles = Array.Empty<object>(), defaultWorkTypeId = (string?)null, defaultWorkRoleId = (string?)null });
         // Read from the cached field set (discovered when the connection was configured).
-        var fields = await admin.GetFieldsAsync(ticket.PsaConnectionId, ct);
+        var fields = await admin.GetFieldsAsync(optionsConnectionId, ct);
         return Ok(new
         {
             workTypes = fields.WorkTypes.Select(o => new { o.Value, o.Label }),
@@ -80,10 +84,10 @@ public sealed class TicketTimeController(
         }
         TimeRow Local(TicketTimeEntry l) => LocalRowAs(l, Who(l, l.TechnicianExternalId, l.TechnicianName));
 
-        if (string.IsNullOrEmpty(ticket.ExternalTicketId))
+        if (string.IsNullOrEmpty(ticket.ExternalTicketId) || ticket.PsaConnectionId is not { } listConnectionId)
             return Ok(local.OrderByDescending(l => l.EntryDate).Select(Local));
 
-        var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
+        var connector = await connectors.ResolveAsync(listConnectionId, ct);
         var entries = await connector.GetTimeEntriesAsync(ticket.ExternalTicketId, ct);
 
         var portalByExternalId = local
@@ -153,7 +157,7 @@ public sealed class TicketTimeController(
             // by a different person, and the hour belongs to whoever did the work. Null when this
             // user has no identity on this connection — the connector then falls back to the
             // connection's default resource, which is the behaviour every entry had before.
-            TechnicianExternalId = await MyTechnicianIdAsync(ticket.PsaConnectionId, ct),
+            TechnicianExternalId = ticket.PsaConnectionId is { } tc ? await MyTechnicianIdAsync(tc, ct) : null,
             // Who logged it HERE, which is the only attribution that survives for a technician the
             // PSA has never heard of. Stamped at creation for the same reason as the line above: a
             // retry days later by someone else must not rewrite whose hour it was.
@@ -161,6 +165,15 @@ public sealed class TicketTimeController(
         };
         db.TicketTimeEntries.Add(record);
         await db.SaveChangesAsync(ct);
+
+        if (connector is null)
+        {
+            // Recorded, not pending: there is no provider for it to be waiting on, and "not
+            // recorded" on a ticket that will never be pushed reads as a failure that never happened.
+            record.SyncStatus = TimeEntrySyncStatus.Synced;
+            await db.SaveChangesAsync(ct);
+            return Ok(await RecomputeLocalAsync(ticket, ct));
+        }
 
         if (!await PushAsync(record, ticket, connector, ct))
             throw new ValidationFailedException(record.SyncError ?? "The PSA rejected the time entry.");
@@ -180,6 +193,8 @@ public sealed class TicketTimeController(
         var (ticket, connector) = await LoadSyncedAsync(id, ct);
         var record = await db.TicketTimeEntries.FirstOrDefaultAsync(t => t.Id == entryId && t.TicketId == id, ct)
             ?? throw new NotFoundException("Time entry");
+        if (connector is null)
+            throw new ValidationFailedException("This ticket is on an internal board, so its time is recorded here and there is nothing to retry.");
         if (record.SyncStatus == TimeEntrySyncStatus.Synced)
             throw new ValidationFailedException("This entry is already recorded in the PSA.");
 
@@ -241,7 +256,8 @@ public sealed class TicketTimeController(
         if (workTypeId is null) return null;
         try
         {
-            var fields = await admin.GetFieldsAsync(ticket.PsaConnectionId, ct);
+            if (ticket.PsaConnectionId is not { } labelConnectionId) return null;
+            var fields = await admin.GetFieldsAsync(labelConnectionId, ct);
             return fields.WorkTypes.FirstOrDefault(o => o.Value == workTypeId)?.Label;
         }
         catch (Exception) { return null; } // a label is cosmetic; never fail a time log over it
@@ -252,6 +268,8 @@ public sealed class TicketTimeController(
     public async Task<IActionResult> Update(Guid id, string entryId, [FromBody] UpdateTimeRequest req, CancellationToken ct)
     {
         var (ticket, connector) = await LoadSyncedAsync(id, ct);
+        if (connector is null)
+            return Ok(await UpdateLocalEntryAsync(ticket, entryId, req, ct));
         await EnsureEntryBelongsToTicketAsync(ticket, connector, entryId, ct);
         var result = await connector.UpdateTimeEntryAsync(entryId,
             new UnifiedTimeEntryUpdate(req.Hours, req.Billable is null ? null : ParseBillable(req.Billable), req.Notes), ct);
@@ -276,9 +294,14 @@ public sealed class TicketTimeController(
             {
                 db.TicketTimeEntries.Remove(unsynced);
                 await db.SaveChangesAsync(ct);
-                return Ok(await RecomputeAsync(ticket, connector, ct));
+                return Ok(connector is null
+                    ? await RecomputeLocalAsync(ticket, ct)
+                    : await RecomputeAsync(ticket, connector, ct));
             }
         }
+
+        if (connector is null)
+            throw new NotFoundException("Time entry");
 
         await EnsureEntryBelongsToTicketAsync(ticket, connector, entryId, ct);
         var result = await connector.DeleteTimeEntryAsync(entryId, ct);
@@ -319,12 +342,19 @@ public sealed class TicketTimeController(
             throw new NotFoundException("Time entry");
     }
 
-    private async Task<(Ticket ticket, IServiceManagementConnector connector)> LoadSyncedAsync(Guid id, CancellationToken ct)
+    /// <summary>
+    /// The ticket plus, when it belongs to a PSA, the connector its time must reach. A ticket on the
+    /// team's own board returns a null connector: the hours are recorded here and pushed nowhere,
+    /// which is what makes internal work loggable at all.
+    /// </summary>
+    private async Task<(Ticket ticket, IServiceManagementConnector? connector)> LoadSyncedAsync(Guid id, CancellationToken ct)
     {
         var ticket = await LoadAsync(id, ct);
+        if (ticket.Origin != TicketOrigin.Psa || ticket.PsaConnectionId is not { } connectionId)
+            return (ticket, null);
         if (string.IsNullOrEmpty(ticket.ExternalTicketId))
             throw new ValidationFailedException("This ticket is not yet synced to the PSA, so time cannot be logged.");
-        return (ticket, await connectors.ResolveAsync(ticket.PsaConnectionId, ct));
+        return (ticket, await connectors.ResolveAsync(connectionId, ct));
     }
 
     // Re-read the ticket's entries from the PSA (source of truth) and rewrite the portal aggregates.
@@ -342,6 +372,43 @@ public sealed class TicketTimeController(
             billableHours = ticket.BillableHours,
             nonBillableHours = ticket.NonBillableHours,
         };
+    }
+
+    /// <summary>
+    /// The same aggregates for a ticket with no provider, summed from the rows held here — which are
+    /// the whole truth for such a ticket. Technician productivity reads these totals, so an internal
+    /// ticket's hours count exactly as a client ticket's do.
+    /// </summary>
+    private async Task<object> RecomputeLocalAsync(Ticket ticket, CancellationToken ct)
+    {
+        var entries = await db.TicketTimeEntries.AsNoTracking()
+            .Where(t => t.TicketId == ticket.Id)
+            .Select(t => new { t.Hours, t.Billable })
+            .ToListAsync(ct);
+        ticket.TimeWorkedHours = entries.Sum(e => e.Hours);
+        ticket.BillableHours = entries.Where(e => e.Billable).Sum(e => e.Hours);
+        ticket.NonBillableHours = entries.Where(e => !e.Billable).Sum(e => e.Hours);
+        await db.SaveChangesAsync(ct);
+        return new
+        {
+            count = entries.Count,
+            timeWorkedHours = ticket.TimeWorkedHours,
+            billableHours = ticket.BillableHours,
+            nonBillableHours = ticket.NonBillableHours,
+        };
+    }
+
+    /// <summary>Editing an hour that lives only here: no provider holds a copy to keep in step.</summary>
+    private async Task<object> UpdateLocalEntryAsync(Ticket ticket, string entryId, UpdateTimeRequest req, CancellationToken ct)
+    {
+        if (!Guid.TryParse(entryId, out var localId)) throw new NotFoundException("Time entry");
+        var entry = await db.TicketTimeEntries.FirstOrDefaultAsync(t => t.Id == localId && t.TicketId == ticket.Id, ct)
+            ?? throw new NotFoundException("Time entry");
+        if (req.Hours is { } hours) entry.Hours = hours;
+        if (req.Billable is not null) entry.Billable = ParseBillable(req.Billable) == BillableOption.Billable;
+        if (req.Notes is not null) entry.Notes = req.Notes;
+        await db.SaveChangesAsync(ct);
+        return await RecomputeLocalAsync(ticket, ct);
     }
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;

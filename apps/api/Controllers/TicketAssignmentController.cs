@@ -6,6 +6,8 @@ using Desk.Application.Connectors;
 using Desk.Application.Mapping;
 using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
+using Desk.Domain.Enums;
+using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
 using Desk.Infrastructure.Tickets;
 using Desk.PsaCore.Models;
@@ -45,7 +47,18 @@ public sealed class TicketAssignmentController(
     public async Task<IActionResult> Assignees(Guid id, CancellationToken ct)
     {
         var ticket = await LoadAsync(id, ct);
-        var fields = await admin.GetFieldsAsync(ticket.PsaConnectionId, ct);
+
+        // A board with no provider has no PSA resources to offer: the only people who can hold such
+        // a ticket are portal users, which is exactly what an internal board wants.
+        if (ticket.Origin != TicketOrigin.Psa || ticket.PsaConnectionId is not { } assigneeConnectionId)
+            return Ok(new
+            {
+                queues = Array.Empty<object>(),
+                technicians = Array.Empty<object>(),
+                portalTechnicians = await PortalTechniciansAsync(ct),
+            });
+
+        var fields = await admin.GetFieldsAsync(assigneeConnectionId, ct);
         var queueId = await ResolveQueueIdAsync(ticket, fields, ct);
 
         // Coverage rows carry a queue when the technician is scoped to one, and null when they cover
@@ -85,11 +98,7 @@ public sealed class TicketAssignmentController(
         // technician changes the ticket in the provider and their name appears there; assigning a
         // portal technician does not leave this system. A single blended list would make that
         // invisible at exactly the moment someone decides.
-        var portalTechnicians = await db.AppUsers.AsNoTracking()
-            .Where(u => u.IsActive)
-            .OrderBy(u => u.DisplayName)
-            .Select(u => new { id = u.Id, name = u.DisplayName, email = u.Email })
-            .ToListAsync(ct);
+        var portalTechnicians = await PortalTechniciansAsync(ct);
 
         return Ok(new
         {
@@ -105,18 +114,33 @@ public sealed class TicketAssignmentController(
         });
     }
 
+    /// <summary>Everyone on the team who can hold a ticket here, whether or not they exist in a PSA.</summary>
+    private async Task<IReadOnlyList<object>> PortalTechniciansAsync(CancellationToken ct)
+        => await db.AppUsers.AsNoTracking()
+            .Where(u => u.IsActive)
+            .OrderBy(u => u.DisplayName)
+            .Select(u => (object)new { id = u.Id, name = u.DisplayName, email = u.Email })
+            .ToListAsync(ct);
+
     [HttpPut("{id:guid}/assignment")]
     [RequirePermission(Permissions.TicketsUpdate)]
     public async Task<IActionResult> Assign(Guid id, [FromBody] AssignRequest req, CancellationToken ct)
     {
         var ticket = await LoadAsync(id, ct);
-        if (string.IsNullOrEmpty(ticket.ExternalTicketId))
+        var isPsaTicket = ticket.Origin == TicketOrigin.Psa && ticket.PsaConnectionId is not null;
+        if (isPsaTicket && string.IsNullOrEmpty(ticket.ExternalTicketId))
             throw new ValidationFailedException("This ticket is not yet synced to the PSA.");
 
         var technicianId = Blank(req.TechnicianExternalId);
         var queueId = Blank(req.QueueOrBoardId);
         if (technicianId is null && queueId is null && req.AppUserId is null)
             throw new ValidationFailedException("Choose a technician or a queue to change.");
+
+        // A board with no provider has no PSA resource to assign and no provider queue to move to.
+        // Handing the ticket to a colleague is the whole point of it, and that is the portal
+        // assignee below, so only the provider-side halves of the request are refused.
+        if (!isPsaTicket && (technicianId is not null || queueId is not null))
+            throw new ValidationFailedException("This ticket is on an internal board, so it can only be assigned to a portal user.");
 
         // A portal assignee is recorded here and NEVER pushed. The person has no resource in the
         // PSA — that is what "portal technician" means — so there is nothing to send and any
@@ -132,7 +156,21 @@ public sealed class TicketAssignmentController(
                 .FirstOrDefaultAsync(u => u.Id == appUserId && u.IsActive, ct)
                 ?? throw new ValidationFailedException("That portal user does not exist, or is not active.");
 
+            // Who passed it, to whom, who decided, and what they said. A shift that hands over at
+            // the end of the day leaves this behind for the shift that picks the ticket up.
+            var previous = ticket.AssignedAppUserId;
             ticket.AssignedAppUserId = assignee.Id;
+            ticket.AssignedByUserId = user.UserId;
+            if (previous != assignee.Id)
+                db.TicketAssignments.Add(new TicketAssignment
+                {
+                    MspOrganizationId = ticket.MspOrganizationId,
+                    TicketId = ticket.Id,
+                    FromAppUserId = previous,
+                    ToAppUserId = assignee.Id,
+                    AssignedByUserId = user.UserId,
+                    Note = Blank(req.HandoverNote),
+                });
             await db.SaveChangesAsync(ct);
             await audit.WriteAsync("ticket.assigned.portal", "Ticket", ticket.Id.ToString(),
                 new { ticket.ExternalTicketId, appUserId = assignee.Id, assignee.DisplayName }, ct);
@@ -150,7 +188,7 @@ public sealed class TicketAssignmentController(
                 });
         }
 
-        var fields = await admin.GetFieldsAsync(ticket.PsaConnectionId, ct);
+        var fields = await admin.GetFieldsAsync(ticket.PsaConnectionId!.Value, ct);
 
         // Reject an assignment the provider would refuse anyway, with a reason a human can act on.
         if (technicianId is not null && fields.Technicians.Count > 0
@@ -177,8 +215,8 @@ public sealed class TicketAssignmentController(
             IdempotencyKey = Guid.NewGuid().ToString("N"),
         };
 
-        var connector = await connectors.ResolveAsync(ticket.PsaConnectionId, ct);
-        var result = await connector.UpdateTicketAsync(ticket.ExternalTicketId, update, ct);
+        var connector = await connectors.ResolveAsync(ticket.PsaConnectionId!.Value, ct);
+        var result = await connector.UpdateTicketAsync(ticket.ExternalTicketId!, update, ct);
         if (!result.Success)
             throw new ValidationFailedException(result.Error ?? "The PSA rejected the assignment.");
 
@@ -194,7 +232,7 @@ public sealed class TicketAssignmentController(
             // not flip between "Support" and "Level I Support" depending on which wrote it last.
             var rules = await db.FieldMappings.AsNoTracking()
                 .Where(m => m.Provider == ticket.Provider && m.IsActive).ToListAsync(ct);
-            var ctx = new MappingContext { Provider = ticket.Provider, PsaConnectionId = ticket.PsaConnectionId };
+            var ctx = new MappingContext { Provider = ticket.Provider!.Value, PsaConnectionId = ticket.PsaConnectionId!.Value };
             ticket.QueueOrBoard = mapping.MapToPortal(rules, ctx, "queue", queueId).Value
                 ?? fields.QueuesOrBoards.FirstOrDefault(o => o.Value == queueId)?.Label
                 ?? queueId;
@@ -255,7 +293,7 @@ public sealed class TicketAssignmentController(
 
         var rules = await db.FieldMappings.AsNoTracking()
             .Where(m => m.Provider == ticket.Provider && m.IsActive).ToListAsync(ct);
-        var ctx = new MappingContext { Provider = ticket.Provider, PsaConnectionId = ticket.PsaConnectionId };
+        var ctx = new MappingContext { Provider = ticket.Provider!.Value, PsaConnectionId = ticket.PsaConnectionId!.Value };
         var mapped = mapping.MapToProvider(rules, ctx, "queue", ticket.QueueOrBoard).Value;
         if (!string.IsNullOrWhiteSpace(mapped)
             && fields.QueuesOrBoards.Any(o => o.Value == mapped)) return mapped;
@@ -280,6 +318,8 @@ public sealed class TicketAssignmentController(
     /// rather than an alternative to it — a desk running both kinds of technician needs to say "the
     /// PSA has it on the integration account, and Basit is working it" in one sentence.
     /// </param>
+    /// <param name="HandoverNote">What the person handing over wants the next person to read first.</param>
     public sealed record AssignRequest(
-        string? TechnicianExternalId, string? QueueOrBoardId, string? RoleId = null, Guid? AppUserId = null);
+        string? TechnicianExternalId, string? QueueOrBoardId, string? RoleId = null, Guid? AppUserId = null,
+        string? HandoverNote = null);
 }

@@ -39,6 +39,9 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<Desk.Domain.Analytics.ActivityEvent> ActivityEvents => Set<Desk.Domain.Analytics.ActivityEvent>();
     public DbSet<Desk.Domain.Analytics.ActivityDailyFact> ActivityDailyFacts => Set<Desk.Domain.Analytics.ActivityDailyFact>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
+    public DbSet<Board> Boards => Set<Board>();
+    public DbSet<BoardMember> BoardMembers => Set<BoardMember>();
+    public DbSet<TicketAssignment> TicketAssignments => Set<TicketAssignment>();
     public DbSet<TicketNote> TicketNotes => Set<TicketNote>();
     public DbSet<Desk.Domain.Assistant.AssistantSettings> AssistantSettings => Set<Desk.Domain.Assistant.AssistantSettings>();
     public DbSet<TicketAttachment> TicketAttachments => Set<TicketAttachment>();

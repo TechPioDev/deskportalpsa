@@ -135,6 +135,8 @@ export const MeSchema = z.object({
   organizationId: z.string().nullable(),
   isPlatformScope: z.boolean(),
   permissions: z.array(z.string()),
+  // What this installation has switched on. Defaulted so an older API still parses.
+  features: z.object({ internalBoards: z.boolean().default(true) }).default({ internalBoards: true }),
 });
 
 
@@ -161,6 +163,9 @@ export type ConnectionSettings = z.infer<typeof ConnectionSettingsSchema>;
 
 export const api = {
   listTickets: () => request('/api/tickets', z.array(TicketListItemSchema)) as Promise<TicketListItem[]>,
+  /** The tickets on one of the team's own boards. */
+  tickets: (boardId: string) =>
+    request(`/api/tickets?boardId=${boardId}`, z.array(TicketListItemSchema)) as Promise<TicketListItem[]>,
   getTicket: (id: string) => request(`/api/tickets/${id}`, TicketDetailSchema) as Promise<TicketDetail>,
   createTicket: (body: { title: string; description?: string; priority?: string; queueOrBoard?: string }) =>
     request('/api/tickets', z.object({ id: z.string(), externalTicketId: z.string().nullable() }), {
@@ -188,6 +193,8 @@ export const api = {
     request(`/api/tickets/${id}/assignees`, AssigneeOptionsSchema) as Promise<AssigneeOptions>,
   assignTicket: (id: string, body: {
     technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string;
+    /** What the person handing over wants the next person to read first. */
+    handoverNote?: string;
   }) =>
     request(`/api/tickets/${id}/assignment`,
       z.object({
@@ -387,6 +394,24 @@ export const api = {
     if (companyId) q.set('companyId', companyId);
     return `${BFF_BASE}/api/reports/technician-productivity.pdf?${q}`;
   },
+  // The team's own boards. Reading them needs only tickets.create; configuring them needs boards.manage.
+  boards: (includeInactive = false) =>
+    request(`/api/boards?includeInactive=${includeInactive}`, z.array(BoardSchema)) as Promise<Board[]>,
+  createBoard: (input: BoardInput) =>
+    request('/api/boards', BoardSchema, { method: 'POST', body: JSON.stringify(input) }) as Promise<Board>,
+  updateBoard: (id: string, input: BoardInput) =>
+    request(`/api/boards/${id}`, BoardSchema, { method: 'PUT', body: JSON.stringify(input) }) as Promise<Board>,
+  setBoardActive: (id: string, active: boolean) =>
+    request(`/api/boards/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
+  boardMembers: (id: string) =>
+    request(`/api/boards/${id}/members`, z.array(BoardMemberSchema)) as Promise<BoardMember[]>,
+  setBoardMembers: (id: string, appUserIds: string[]) =>
+    request(`/api/boards/${id}/members`, z.array(BoardMemberSchema),
+      { method: 'PUT', body: JSON.stringify({ appUserIds }) }) as Promise<BoardMember[]>,
+  createInternalTicket: (input: InternalTicketInput) =>
+    request('/api/boards/tickets', z.object({
+      ticketId: z.string(), number: z.string(), title: z.string(), boardId: z.string(),
+    }), { method: 'POST', body: JSON.stringify(input) }),
   attention: () => request('/api/admin/attention', AttentionSchema) as Promise<Attention>,
   saveAttentionDigest: (recipients: string) =>
     request('/api/admin/attention/digest', z.object({
@@ -1003,3 +1028,31 @@ export const AttentionSchema = z.object({
   checkedAt: z.string(),
 });
 export type Attention = z.infer<typeof AttentionSchema>;
+
+/** A board the team works on that is not a PSA queue. Kind 0 is the team's own work, 1 is monitoring. */
+export const BoardSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  key: z.string(),
+  description: z.string().nullable(),
+  kind: z.number(),
+  clientVisible: z.boolean(),
+  isActive: z.boolean(),
+  sortOrder: z.number(),
+  memberCount: z.number(),
+  openTickets: z.number(),
+});
+export type Board = z.infer<typeof BoardSchema>;
+export const BoardMemberSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), email: z.string(),
+});
+export type BoardMember = z.infer<typeof BoardMemberSchema>;
+export type BoardInput = {
+  name: string; key: string; description: string | null;
+  kind?: number; clientVisible?: boolean; sortOrder?: number;
+};
+export type InternalTicketInput = {
+  boardId: string; title: string; description: string | null;
+  priority?: string | null; category?: string | null;
+  clientCompanyId?: string | null; assignedAppUserId?: string | null; dueAt?: string | null;
+};

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Desk.Application.ControlPanel;
 using Desk.Domain.ControlPanel;
+using Desk.Domain.Enums;
 using Desk.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,7 +19,9 @@ internal static class ReportComposer
 
     public static async Task<AccountReportDto> BuildAsync(DeskDbContext db, Guid companyId, CancellationToken ct)
     {
-        var tickets = db.Tickets.AsNoTracking().Where(t => t.ClientCompanyId == companyId);
+        // PSA tickets only: an internal board's work is the team's record, not the client's.
+        var tickets = db.Tickets.AsNoTracking()
+            .Where(t => t.ClientCompanyId == companyId && t.Origin == TicketOrigin.Psa);
 
         var byStatus = await tickets
             .GroupBy(t => t.PortalStatus)

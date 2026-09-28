@@ -173,6 +173,13 @@ public static class DependencyInjection
         services.AddScoped<IAttentionService, AttentionService>();
         services.AddSingleton<IAttentionDigestRunner, AttentionDigestRunner>();
         services.AddScoped<ITicketResyncService, Sync.TicketResyncService>();
+        // One switch over the whole internal-boards feature; see BoardFeatureOptions for why.
+        services.AddSingleton(new Desk.Application.Boards.BoardFeatureOptions
+        {
+            InternalBoards = config.GetValue("Features:InternalBoards", true),
+        });
+        services.AddScoped<Desk.Application.Boards.IBoardService, Boards.BoardService>();
+        services.AddScoped<Desk.Application.Boards.IInternalTicketService, Boards.InternalTicketService>();
         services.AddScoped<IAuditQueryService, AuditQueryService>();
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<ITechnicianProvisioningService, TechnicianProvisioningService>();

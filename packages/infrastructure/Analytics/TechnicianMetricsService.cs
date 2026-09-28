@@ -1,5 +1,6 @@
 using Desk.Application.Analytics;
 using Desk.Domain.Tickets;
+using Desk.Domain.Enums;
 using Desk.Infrastructure.Persistence;
 using Desk.Infrastructure.Tickets;
 using Microsoft.EntityFrameworkCore;
@@ -13,7 +14,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
     private sealed record Row(
         Guid Id, string? Tech, Guid? AppUserId, string? TechName, DateTimeOffset CreatedAt,
         DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
-        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid Conn);
+        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid? Conn, TicketOrigin Origin);
 
     /// <param name="byResolution">
     /// Window on WHEN THE TICKET WAS RESOLVED instead of when it was raised, for "resolved in this
@@ -52,7 +53,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             t.AssignedTechnicianName,
             t.PsaCreatedAt ?? t.CreatedAt, t.ResolvedAt, t.ClosedAt, t.SlaDueAt,
             t.TimeWorkedHours, t.BillableHours, t.NonBillableHours,
-            t.Notes.Any(n => n.IsPublic), t.PsaConnectionId)).ToListAsync(ct);
+            t.Notes.Any(n => n.IsPublic), t.PsaConnectionId, t.Origin)).ToListAsync(ct);
     }
 
     public async Task<TechnicianMetrics> ForTechnicianAsync(MetricsFilter filter, ProductivityWeights weights, CancellationToken ct = default)
@@ -113,7 +114,12 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             entries = entries.Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.ClientCompanyId == client));
 
         var loggedRaw = await entries
-            .Select(e => new { e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId, Conn = e.Ticket!.PsaConnectionId })
+            .Select(e => new
+            {
+                e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId,
+                Conn = e.Ticket!.PsaConnectionId,
+                Internal = e.Ticket!.Origin != TicketOrigin.Psa,
+            })
             .ToListAsync(ct);
 
         // Resolution counts come from the tickets themselves, attributed to whoever holds them.
@@ -125,7 +131,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // It stays in the day's totals - as Unattributed - rather than vanishing: the hours happened,
         // only the person is unknown, and a page whose totals shrank would misreport the desk.
         var account = await IntegrationIdentity.LoadAsync(db, ct);
-        string? Person(Guid conn, string? ext) => account.IsAccount(conn, ext) ? null : ext;
+        string? Person(Guid? conn, string? ext) => account.IsAccount(conn, ext) ? null : ext;
 
         // Provider display names for the PSA-side rows, taken from the tickets themselves.
         var psaNames = rows
@@ -149,7 +155,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             var name = appUserId is { } uid
                 ? names.GetValueOrDefault(uid, "Unknown user")
                 : psaNames.GetValueOrDefault(ext ?? "", ext ?? "Unattributed");
-            var seeded = new TechnicianDay(day, appUserId, ext, name, 0m, 0m, 0, 0);
+            var seeded = new TechnicianDay(day, appUserId, ext, name, 0m, 0m, 0, 0, 0m, 0);
             buckets[(day, key)] = seeded;
             return seeded;
         }
@@ -166,6 +172,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             {
                 Hours = current.Hours + g.Sum(e => e.Hours),
                 BillableHours = current.BillableHours + g.Where(e => e.Billable).Sum(e => e.Hours),
+                InternalHours = current.InternalHours + g.Where(e => e.Internal).Sum(e => e.Hours),
                 TicketsTouched = current.TicketsTouched + g.Select(e => e.TicketId).Distinct().Count(),
             };
         }
@@ -177,7 +184,11 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         {
             var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
             buckets[(g.Key.Day, g.Key.AppUserId is { } u ? "u:" + u : "x:" + g.Key.Ext)] =
-                current with { Resolved = current.Resolved + g.Count() };
+                current with
+                {
+                    Resolved = current.Resolved + g.Count(),
+                    ResolvedInternal = current.ResolvedInternal + g.Count(r => r.Origin != TicketOrigin.Psa),
+                };
         }
 
         return buckets.Values.OrderBy(d => d.Date).ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();
@@ -240,11 +251,20 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             DocumentationQuality = resolved > 0 ? Math.Round(100.0 * resolvedRows.Count(r => r.HasNote) / resolved, 1) : null,
         };
 
+        var clientRows = rows.Where(r => r.Origin == TicketOrigin.Psa).ToList();
+        var internalRows = rows.Where(r => r.Origin != TicketOrigin.Psa).ToList();
+
         return new TechnicianMetrics
         {
             TechnicianExternalId = tech,
             Assigned = assigned,
             Resolved = resolved,
+            AssignedClient = clientRows.Count,
+            AssignedInternal = internalRows.Count,
+            ResolvedClient = clientRows.Count(r => r.ResolvedAt is not null),
+            ResolvedInternal = internalRows.Count(r => r.ResolvedAt is not null),
+            ClientHours = clientRows.Sum(r => r.Worked),
+            InternalHours = internalRows.Sum(r => r.Worked),
             Open = open,
             Overdue = overdue,
             WithinSla = withinSla,
