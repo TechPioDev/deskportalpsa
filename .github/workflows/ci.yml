@@ -84,6 +84,44 @@ jobs:
           path: apps/web/playwright-report
           retention-days: 7
 
+  # The same suite in Firefox and WebKit as well. Only on main, because it costs three times the
+  # time and browser differences are a release question rather than a per-commit one. This closes
+  # the cross-browser gap the QA report has carried since the start: until now nothing but Chromium
+  # had ever run the app.
+  e2e-cross-browser:
+    name: Browser tests (Firefox and Safari)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      - name: Install browsers
+        working-directory: apps/web
+        run: npx playwright install chromium firefox webkit --with-deps
+      - name: Build API
+        run: dotnet build apps/api/Desk.Api.csproj -c Debug
+      - name: Run browser tests in every browser
+        working-directory: apps/web
+        env:
+          CSP_ENFORCE: "true"
+          PLAYWRIGHT_BROWSERS: "all"
+        run: npm run test:e2e
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-cross-browser
+          path: apps/web/playwright-report
+          retention-days: 7
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest

@@ -33,7 +33,16 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // Chromium always; Firefox and WebKit when asked for. The three share one SQLite file and one
+  // worker, so running all of them triples the time — worth it before a release, not on every push.
+  // PLAYWRIGHT_BROWSERS=all runs the set; CI runs Chromium and adds the others on a release branch.
+  projects: (process.env.PLAYWRIGHT_BROWSERS === 'all'
+    ? [
+        { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+        { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+        { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+      ]
+    : [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }]),
   webServer: [
     {
       command: 'dotnet run --project apps/api --no-launch-profile',

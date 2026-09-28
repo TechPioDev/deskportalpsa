@@ -12,7 +12,10 @@ test.describe('scheduled reports', () => {
 
     await page.getByRole('button', { name: 'New schedule' }).click();
     const form = page.locator('form').filter({ hasText: 'How often' });
-    await form.getByLabel('Name').fill('Monthly technician report');
+    // Unique per run: the suite keeps its rows between runs and across browsers, and two schedules
+    // sharing a name make every locator here ambiguous.
+    const name = `Monthly technician report ${test.info().project.name} ${Date.now().toString().slice(-6)}`;
+    await form.getByLabel('Name').fill(name);
     await form.getByLabel('How often').selectOption({ label: 'Monthly — last calendar month' });
 
     // A typo in the recipients is caught on save, not hours later when nobody receives the report.
@@ -23,12 +26,17 @@ test.describe('scheduled reports', () => {
     await form.getByLabel('Send to').fill('manager@techpio.test');
     await form.getByRole('button', { name: 'Create schedule' }).click();
 
-    const row = page.locator('div').filter({ hasText: /^Monthly technician report/ }).first();
+    // Anchored: the row's text STARTS with the schedule's name, while the page container merely
+    // contains it. Unique name plus anchor is what makes this one element rather than several.
+    const row = page.locator('div').filter({ hasText: new RegExp(`^${name}`) }).first();
     await expect(row).toContainText('Monthly, covers last calendar month');
     await expect(row).toContainText('all clients');
     await expect(row).toContainText('Next:');
 
-    await page.getByRole('button', { name: 'Run now' }).click();
+    // The schedule this test just made, not whichever one happens to be first: a second run of the
+    // suite (or the same suite in another browser) leaves rows behind, and a page-wide button match
+    // then runs somebody else's schedule.
+    await row.getByRole('button', { name: 'Run now' }).click();
     const history = page.locator('section').filter({ hasText: 'Sent and generated' });
     await expect(history.getByText(/Technician productivity — /)).toBeVisible();
     // No mail account in a local run, so the report is kept rather than sent — and says which.
