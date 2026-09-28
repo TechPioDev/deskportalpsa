@@ -10,6 +10,37 @@ credential *in* that backup permanently unreadable even if the database itself i
 > silently stalled sync). Credentials now live in the same durable store as everything else — one
 > less process that can lose state independently of the database.
 
+## Drill record
+
+A restore is a claim until someone performs one. `infrastructure/scripts/restore-drill.sh` restores
+the most recent set into scratch databases and a scratch directory on the live host, compares what
+came back against what is live, and removes everything it made. Production is read only throughout:
+nothing is stopped, replaced or written to.
+
+**28 September 2026, against the 03:45 set of the same morning:**
+
+| What | Restored | Live | Time |
+|---|---|---|---|
+| Tickets | 150 | 150 | database restored in 1s |
+| Ticket notes | 362 | 362 | |
+| Attachments (rows) | 37 | 37 | |
+| Time entries | 16 | 16 | |
+| Staff users | 41 | 41 | |
+| Client companies | 11 | 11 | |
+| Field mappings | 52 | 52 | |
+| Audit entries | 269 | 269 | |
+| Sign-in accounts | 3 | 3 | sign-in database restored in 1s |
+| Sign-in clients | 15 | 15 | |
+| Attachment files | 40 | 40 | attachments restored in under a second |
+| Attachment bytes | 7,259,259 | 7,259,259 | byte-for-byte, and one file verified by checksum |
+
+Two things the drill taught, both now fixed in the script: the tables added that same day are
+absent from the night's backup, which is correct and expected rather than a shortfall; and comparing
+directory sizes rather than file sizes made a clean restore look short by a few kilobytes and
+invited a hunt for data that was never missing.
+
+Run it again after any change to the backup script, and read the numbers rather than the exit code.
+
 ## What to back up
 
 | Component | Contains | Backup method | RPO target |

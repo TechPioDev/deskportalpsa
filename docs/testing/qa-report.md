@@ -53,7 +53,7 @@ All found defects resolved. **No open critical or high defects.**
 | Ref | Item | Plan |
 |---|---|---|
 | ~~K-1~~ Resolved | Attachment upload + malware scanning/quarantine/signed URLs | **Built**: validate → scan (EICAR/PE) → quarantine → randomized key → HMAC signed time-limited URLs → audited downloads. Production wires ClamAV + MinIO behind the same interfaces. |
-| K-2 | Live DAST, penetration test, load run, DR restore drill | Production-readiness gates — need a running stack |
+| K-2 (part) | Live DAST, penetration test, load run | Production-readiness gates — still to commission. **The DR restore drill is done (28 Sep 2026)**: last night's set restored into scratch on the live host, every table matching, attachments byte-for-byte with a checksum check. See `docs/deployment/backup-and-recovery.md`. |
 | K-3 | Dev-only ESLint `brace-expansion` advisory (not shipped) | ESLint 10 upgrade |
 | ~~K-4~~ Resolved | Cross-browser validation on Firefox/Safari | **Done (Sep 2026)**: the browser suite runs in Chromium, Firefox and WebKit. Chromium on every push; all three on main (`e2e-cross-browser`), locally with `PLAYWRIGHT_BROWSERS=all`. WebKit found one real weakness — a test that matched two rows once earlier data existed — now fixed. |
 | ~~K-5~~ Resolved | Keycloak login flow in the web app | **Built**: OIDC auth-code + PKCE (S256), tokens in httpOnly cookies (BFF pattern — no token in JS), same-origin proxy with refresh-on-401, middleware guard, login/logout/session. End-to-end verified up to the Keycloak redirect (live IdP still needed for the full round-trip). |
