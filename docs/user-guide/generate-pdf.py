@@ -8,7 +8,8 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, PageBreak, ListFlowable, ListItem, Table, TableStyle, HRFlowable
 )
 
-OUT = r"E:\autotask\DPI-Autotask\desk-portal\apps\web\public\user-guide.pdf"
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+OUT = os.path.join(REPO, "apps", "web", "public", "user-guide.pdf")
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
 BRAND = colors.HexColor("#2563eb")
@@ -66,8 +67,10 @@ story += [Paragraph("Finding your way around", h2_s)]
 story += [Paragraph("The left sidebar is your main navigation. On a phone it collapses into a scrollable bar at the top. "
                     "A light/dark theme toggle sits at the top right.", body_s)]
 story += [bullets([
-    "<b>Tickets</b> — raise and follow your support requests.",
-    "<b>Productivity</b> — technician &amp; team performance (staff).",
+    "<b>Tickets</b> — raise and follow support requests.",
+    "<b>Internal boards</b> — the work your team does for itself, and alerts from monitoring (staff).",
+    "<b>Productivity, Technician hours, Client workload</b> — how the desk is doing (staff).",
+    "<b>Scheduled reports</b> — reports that send themselves (staff).",
     "<b>PSA Connections, Field Mapping, Integration Health, Background Jobs, Audit Log</b> — administration.",
 ])]
 
@@ -87,12 +90,66 @@ story += [bullets([
 story += [Paragraph("Internal notes your support team writes are never shown in the portal — you only ever see public "
                     "replies.", note_s)]
 
-# ---- 3. Dashboards ----
-story += [Paragraph("3. Productivity dashboards (staff)", h1_s), hr()]
+# ---- 3. Working a ticket (staff) ----
+story += [Paragraph("3. Working a ticket (staff)", h1_s), hr()]
+story += [Paragraph("Open a ticket and use the box at the top of the conversation. One action covers the three things "
+                    "you usually do at once: say what happened, move the ticket on, and record your time.", body_s)]
+story += [bullets([
+    "<b>Internal note</b> is selected first, because most of what you write is for the team. It never reaches the client.",
+    "<b>Public reply</b> appears only when the ticket has a contact who would actually receive it. On an internal "
+    "board there is no client to reply to, so it is not offered at all.",
+    "<b>Set status</b> changes the ticket as you post, rather than as a second step you might forget.",
+    "<b>Log time</b> records hours against the ticket, with the reply they belong to. There is a timer if you prefer "
+    "to start it and forget it.",
+])]
+story += [Paragraph("Assign or hand over", h2_s)]
+story += [Paragraph("<b>Assign technician</b> sets who is working the ticket. On an internal board you can also leave a "
+                    "<b>handover note</b> — what the next person should read first — which is kept with the handover, "
+                    "so a night shift picks up where the day shift left off instead of guessing.", body_s)]
+story += [Paragraph("A ticket that came from a PSA also shows a link that opens it in that system, for the things the "
+                    "portal deliberately does not duplicate.", note_s)]
+
+# ---- 4. Internal boards ----
+story += [Paragraph("4. Internal boards (staff)", h1_s), hr()]
+story += [Paragraph("Not every job comes from a PSA. <b>Internal boards</b> hold the work your team does for itself and "
+                    "for each other: tasks you assign between shifts, project work, and anything a client has asked for "
+                    "that never reached their PSA. Nothing on a board is sent to a PSA, and nothing on an internal board "
+                    "is visible to a client.", body_s)]
+story += [bullets([
+    "<b>Raise a ticket</b> on a board and assign it to anyone on the team. Everybody can assign to everybody.",
+    "Each board has its own numbers, such as <b>INT-000123</b>, which is what people quote to each other.",
+    "You can name the <b>client</b> a piece of work was for. It records who it was for — it does not show the ticket "
+    "to them.",
+    "A board with no members belongs to the whole team. Leads and administrators can narrow a board to named people.",
+    "Creating and configuring boards is limited to leads and administrators; raising and assigning is not.",
+])]
+story += [Paragraph("Alerts from monitoring tools", h2_s)]
+story += [Paragraph("A board of the <b>monitoring</b> kind can be fed by NinjaOne, Datto RMM or anything else that can "
+                    "post JSON. Under <b>Internal boards &rarr; Monitoring tools</b>, connect a tool and copy the key it "
+                    "shows you into that tool's webhook, along with the address on the same page.", body_s)]
+story += [bullets([
+    "The same alert arriving repeatedly updates one ticket rather than opening a pile of them.",
+    "When the tool says the condition cleared, the ticket closes itself.",
+    "If the same fault returns within a day, that ticket reopens instead of a second one appearing.",
+    "The client the tool names is matched against your customer list; a name nobody recognises is reported back "
+    "rather than guessed at.",
+])]
+story += [Paragraph("The key is shown once, when it is issued, because only a fingerprint of it is stored. If it is "
+                    "lost or leaks, issue a new one — the old one stops working immediately.", note_s)]
+
+story += [PageBreak()]
+
+# ---- 5. Dashboards ----
+story += [Paragraph("5. Productivity dashboards (staff)", h1_s), hr()]
 story += [Paragraph("The <b>Productivity</b> page shows technician and team metrics: assigned, resolved, open and "
                     "overdue tickets, SLA compliance, average resolution time, and time worked. A configurable "
                     "<b>productivity score</b> combines several signals into a single number, with a breakdown per "
                     "component. Use <b>Export CSV</b> to download the team view.", body_s)]
+story += [Paragraph("Technician hours", h2_s)]
+story += [Paragraph("<b>Technician hours</b> shows each person's hours and output over any period — today, yesterday, "
+                    "this or last month, this or last quarter. Client work and internal work are shown side by side "
+                    "rather than blended: hours for clients, hours on the team's own boards, and tickets resolved on "
+                    "each side. Export the same table by name for a spreadsheet or a review.", body_s)]
 story += [Paragraph("Productivity scores are operational indicators only and must not be used as the sole basis for "
                     "employee performance decisions. The score only counts signals that are actually measured, and "
                     "reports how much of the model that covers.", note_s)]
@@ -100,7 +157,7 @@ story += [Paragraph("Productivity scores are operational indicators only and mus
 story += [PageBreak()]
 
 # ---- 4. Administration ----
-story += [Paragraph("4. Administration", h1_s), hr()]
+story += [Paragraph("6. Administration", h1_s), hr()]
 
 story += [Paragraph("PSA Connections", h2_s)]
 story += [Paragraph("Connect Autotask and ConnectWise tenants under <b>PSA Connections</b>.", body_s)]
@@ -139,6 +196,26 @@ story += [bullets([
     "Each save is stored as a new <b>version</b> and recorded in the audit log, so changes can be reviewed.",
 ])]
 
+story += [Paragraph("Scheduled reports", h2_s)]
+story += [Paragraph("Under <b>Scheduled reports</b>, set the organization's time zone and create reports that send "
+                    "themselves: technician productivity daily, weekly, monthly or quarterly, and a client business "
+                    "review each quarter. Each runs at 07:00 in your time zone, covering the last complete period, and "
+                    "arrives as a PDF with a spreadsheet beside it. Every run is kept in the portal to download even if "
+                    "email is not set up.", body_s)]
+
+story += [Paragraph("Email delivery", h2_s)]
+story += [Paragraph("Reports need an account to send from. On <b>Integration Health</b>, use <b>Set up email</b>. "
+                    "Microsoft 365 is the recommended route: create an app registration with the <b>Mail.Send</b> "
+                    "permission and enter its tenant and client IDs and secret. Mail then leaves from a real mailbox, "
+                    "which is what keeps it out of Junk. A plain mail server with a username and password also works. "
+                    "<b>Send test email</b> proves it before anyone relies on it.", body_s)]
+
+story += [Paragraph("Needs attention", h2_s)]
+story += [Paragraph("Integration Health opens with one list of what is quietly going wrong: connections that failed or "
+                    "stopped syncing, tickets that never reached the PSA, closed tickets with no closed date, and "
+                    "reports nobody received. Add recipients and the same list is emailed each morning, but only on "
+                    "days something is on it.", body_s)]
+
 story += [Paragraph("Monitoring &amp; audit", h2_s)]
 story += [bullets([
     "<b>Integration Health</b> — per-connection status, pending jobs, dead-lettered jobs and failed events.",
@@ -148,7 +225,7 @@ story += [bullets([
 ])]
 
 # ---- 5. Security ----
-story += [Paragraph("5. Security &amp; your data", h1_s), hr()]
+story += [Paragraph("7. Security &amp; your data", h1_s), hr()]
 story += [bullets([
     "Each organization's data is fully isolated — you only ever see your own.",
     "PSA credentials live only in the secret vault; they are never returned to the browser or written to logs or the audit trail.",
@@ -157,7 +234,7 @@ story += [bullets([
 ])]
 
 # ---- 6. Help ----
-story += [Paragraph("6. Getting help", h1_s), hr()]
+story += [Paragraph("8. Getting help", h1_s), hr()]
 story += [Paragraph("If a page shows a &ldquo;sign in&rdquo; or empty state where you expect data, your session may have "
                     "expired — sign in again. For anything else, contact your MSP administrator, who can review the "
                     "audit log and integration health to diagnose issues.", body_s)]
