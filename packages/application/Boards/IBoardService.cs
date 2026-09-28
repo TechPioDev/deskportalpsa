@@ -6,11 +6,12 @@ namespace Desk.Application.Boards;
 /// <param name="MemberCount">0 means the board is open to the whole team, which is the usual case.</param>
 public sealed record BoardDto(
     Guid Id, string Name, string Key, string? Description, BoardKind Kind,
-    bool ClientVisible, bool IsActive, int SortOrder, int MemberCount, int OpenTickets);
+    bool ClientVisible, bool IsActive, int SortOrder, int MemberCount, int OpenTickets,
+    Guid? DefaultSlaPlanId = null, string? DefaultSlaPlanName = null);
 
 public sealed record BoardInput(
     string Name, string Key, string? Description, BoardKind Kind = BoardKind.Internal,
-    bool ClientVisible = false, int SortOrder = 0);
+    bool ClientVisible = false, int SortOrder = 0, Guid? DefaultSlaPlanId = null);
 
 public sealed record BoardMemberDto(Guid AppUserId, string DisplayName, string Email);
 
@@ -62,11 +63,11 @@ public sealed record InternalTicketInput(
 public sealed record BoardTopicDto(
     Guid Id, Guid BoardId, string Name, Guid? DefaultDepartmentId, string? DefaultDepartmentName,
     string? DefaultPriority, Guid? DefaultAssigneeUserId, string? DefaultAssigneeName,
-    int? DueInHours, bool IsActive, int SortOrder);
+    int? DueInHours, bool IsActive, int SortOrder, Guid? SlaPlanId = null, string? SlaPlanName = null);
 
 public sealed record BoardTopicInput(
     string Name, Guid? DefaultDepartmentId = null, string? DefaultPriority = null,
-    Guid? DefaultAssigneeUserId = null, int? DueInHours = null, int SortOrder = 0);
+    Guid? DefaultAssigneeUserId = null, int? DueInHours = null, int SortOrder = 0, Guid? SlaPlanId = null);
 
 public sealed record InternalTicketCreatedDto(Guid TicketId, string Number, string Title, Guid BoardId);
 

@@ -116,6 +116,21 @@ story += [Paragraph("<b>Follow</b> puts a ticket in your own <b>Following</b> vi
                     "you escalated, or the customer you look after. <b>Add somebody</b> does the same for a colleague. "
                     "Following never changes who is working the ticket.", body_s)]
 
+story += [Paragraph("Tasks", h2_s)]
+story += [Paragraph("Break a ticket into steps under <b>Tasks</b> — order the part, fit it, update the register. Tick each "
+                    "one off as it is done; the portal records who ticked it and when. A ticket cannot be closed from "
+                    "the portal while any of its tasks is still open. Tasks are for your team only and are never sent "
+                    "to a PSA or shown to a client.", body_s)]
+
+story += [Paragraph("Canned responses and formatting", h2_s)]
+story += [bullets([
+    "<b>Canned response</b> in the reply box inserts a saved reply, filled in with this ticket's number, "
+    "customer, contact and your name. Edit it as you like before sending.",
+    "The toolbar formats the text: bold, italic, lists, quotes, code, links and tables.",
+    "Paste a screenshot straight into the reply box and it is attached to the reply.",
+])]
+story += [Paragraph("Some PSAs, Autotask among them, show formatting as the marks you typed rather than as formatting.", note_s)]
+
 story += [Paragraph("Find a ticket", h2_s)]
 story += [bullets([
     "The <b>search box</b> at the top of every page (Ctrl+/) finds ticket numbers, subjects, customers and, once you "
@@ -146,6 +161,13 @@ story += [bullets([
     "A board with no members belongs to the whole team. Leads and administrators can narrow a board to named people.",
     "Creating and configuring boards is limited to leads and administrators; raising and assigning is not.",
 ])]
+story += [Paragraph("SLA plans", h2_s)]
+story += [Paragraph("Leads set up <b>SLA plans</b> under <b>Internal boards &rarr; SLA plans</b>: a first reply within so "
+                    "many hours and resolution within so many, counted round the clock or in working hours only. Give a "
+                    "plan to a topic, or make it a board's default, and each new ticket shows <b>First reply</b> and "
+                    "<b>Resolution</b> dates, marked met, late or overdue. The board list shows <b>Reply by</b> until "
+                    "somebody writes on the ticket.", body_s)]
+
 story += [Paragraph("Alerts from monitoring tools", h2_s)]
 story += [Paragraph("A board of the <b>monitoring</b> kind can be fed by NinjaOne, Datto RMM or anything else that can "
                     "post JSON. Under <b>Internal boards &rarr; Monitoring tools</b>, connect a tool and copy the key it "

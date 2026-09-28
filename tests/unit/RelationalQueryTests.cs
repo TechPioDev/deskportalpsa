@@ -123,6 +123,37 @@ public sealed class RelationalQueryTests : IDisposable
         (await boards.MembersAsync(_boardId)).Select(m => m.DisplayName).Should().Equal("Anika", "Dalbir");
     }
 
+    [Fact]
+    public async Task Sla_plans_canned_responses_and_tasks_translate()
+    {
+        var audit = new AuditWriter(_db, User, _tenant, _clock);
+        var plans = new SlaPlanService(_db, _tenant, audit);
+        var plan = await plans.SaveAsync(null, new Desk.Application.Boards.SlaPlanInput("Priority", 8, 1, BusinessHoursOnly: true));
+        var boards = new BoardService(_db, _tenant, audit);
+        var board = (await boards.ListAsync()).Single();
+        await boards.UpdateAsync(board.Id, new Desk.Application.Boards.BoardInput(board.Name, board.Key, null, DefaultSlaPlanId: plan.Id));
+        (await plans.ListAsync()).Single().UsedBy.Should().Be(1);
+        (await boards.ListAsync()).Single().DefaultSlaPlanName.Should().Be("Priority");
+
+        var canned = new CannedResponseService(_db, _tenant, User, new NoopTicketScopeQuery(), audit);
+        await canned.SaveAsync(null, new Desk.Application.Boards.CannedResponseInput("Received", "Thanks — {ticket.number}"));
+        await canned.SaveAsync(null, new Desk.Application.Boards.CannedResponseInput("Board only", "Here", _boardId));
+        (await canned.ListAsync(_ticketId)).Should().HaveCount(2);
+
+        var tasks = new TicketTaskService(_db, _tenant, User, new NoopTicketScopeQuery(), _clock);
+        var list = await tasks.AddAsync(_ticketId, "Order the battery", _me);
+        list = await tasks.AddAsync(_ticketId, "Fit it", null);
+        list = await tasks.SetDoneAsync(list[0].Id, true);
+        list = await tasks.MoveAsync(list[1].Id, -1);
+        list.Select(t => t.Title).Should().Equal("Fit it", "Order the battery");
+        list[1].Should().BeEquivalentTo(new { AssignedName = "Dalbir", DoneByName = "Dalbir" });
+        (await TicketTaskService.OpenCountAsync(_db, _ticketId, default)).Should().Be(1);
+
+        // The list's task counts are two more subqueries in an already long projection.
+        var row = (await Reads.ListAllAsync()).Single();
+        row.Should().BeEquivalentTo(new { TaskCount = 2, TasksDone = 1 });
+    }
+
     public void Dispose()
     {
         _db.Dispose();

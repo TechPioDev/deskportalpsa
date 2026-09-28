@@ -3,7 +3,7 @@
 import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, UserCircle2, Users, CalendarClock, Settings2 } from 'lucide-react';
+import { ArrowLeft, Plus, UserCircle2, Users, CalendarClock, Settings2, ListChecks } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { TicketListItem } from '@/lib/types';
 
@@ -34,6 +34,19 @@ function dueLabel(iso: string | null): { text: string; tone: string } {
   if (hours < 0) return { text: `${when} · overdue`, tone: 'text-red-600 dark:text-red-400 font-medium' };
   if (hours < 8) return { text: `${when} · soon`, tone: 'text-amber-700 dark:text-amber-400' };
   return { text: when, tone: 'text-[var(--muted)]' };
+}
+
+/**
+ * The reply promise, while it is still a promise. Once somebody has written on the ticket there is
+ * nothing to chase, so the column goes back to showing only the resolve-by date.
+ */
+function replyLabel(t: TicketListItem): { text: string; tone: string } | null {
+  if (!t.firstResponseDueAt || t.firstRespondedAt || !isOpen(t.portalStatus)) return null;
+  const hours = (new Date(t.firstResponseDueAt).getTime() - Date.now()) / 3_600_000;
+  const when = new Date(t.firstResponseDueAt).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+  if (hours < 0) return { text: `Reply overdue · ${when}`, tone: 'text-red-600 dark:text-red-400 font-medium' };
+  if (hours < 1) return { text: `Reply by ${when}`, tone: 'text-amber-700 dark:text-amber-400' };
+  return { text: `Reply by ${when}`, tone: 'text-[var(--muted)]' };
 }
 
 /**
@@ -159,6 +172,7 @@ function TicketTable({ title, rows, muted }: { title: string; rows: TicketListIt
           <tbody>
             {sorted.map((t) => {
               const due = dueLabel(t.dueAt);
+              const reply = replyLabel(t);
               return (
                 <tr key={t.id} className="border-b border-[var(--border)] last:border-0">
                   <td className="px-5 py-3 font-mono text-xs text-[var(--muted)]">{t.number ?? '—'}</td>
@@ -167,6 +181,14 @@ function TicketTable({ title, rows, muted }: { title: string; rows: TicketListIt
                     <Link href={`/dashboard/tickets/${t.id}`} className="font-medium hover:underline">{t.title}</Link>
                     <span className="ml-2 inline-flex items-center gap-2 align-middle text-[11px] text-[var(--faint)]">
                       {t.replyCount > 0 && <span title="Updates on this ticket">{t.replyCount}</span>}
+                      {t.taskCount > 0 && (
+                        <span title={`${t.tasksDone} of ${t.taskCount} tasks done`}
+                          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${t.tasksDone === t.taskCount
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-[var(--bg)]'}`}>
+                          <ListChecks size={11} aria-hidden="true" /> {t.tasksDone}/{t.taskCount}
+                        </span>
+                      )}
                       {t.topic && <span className="rounded bg-[var(--bg)] px-1.5 py-0.5">{t.topic}</span>}
                       {t.source && <span>{t.source}</span>}
                       {t.customerName && <span>· {t.customerName}</span>}
@@ -183,7 +205,10 @@ function TicketTable({ title, rows, muted }: { title: string; rows: TicketListIt
                       {t.portalPriority.toUpperCase()}
                     </span>
                   </td>
-                  <td className={`px-2 py-3 text-xs ${due.tone}`}>{due.text}</td>
+                  <td className="px-2 py-3 text-xs">
+                    {reply && <div className={reply.tone}>{reply.text}</div>}
+                    <div className={due.tone}>{due.text}</div>
+                  </td>
                   <td className="px-5 py-3 tabular-nums text-xs text-[var(--muted)]">{t.timeWorkedHours ?? 0}</td>
                 </tr>
               );

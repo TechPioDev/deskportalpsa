@@ -44,6 +44,18 @@ public sealed class TicketStatusController(
             ?? throw new NotFoundException("Ticket");
         var portalStatus = req.Status.Trim();
 
+        // As in osTicket: the task list is only worth keeping if "closed" means it was done. Asked
+        // before either branch, so it holds for PSA tickets as well — their tasks live here too.
+        // A PSA that closes the ticket itself is not stopped; the portal cannot veto the provider.
+        if (Closed(portalStatus) || Resolved(portalStatus))
+        {
+            var open = await Desk.Infrastructure.Tickets.TicketTaskService.OpenCountAsync(db, ticket.Id, ct);
+            if (open > 0)
+                throw new ValidationFailedException(open == 1
+                    ? "One task on this ticket is still open. Tick it off or remove it, then close the ticket."
+                    : $"{open} tasks on this ticket are still open. Tick them off or remove them, then close the ticket.");
+        }
+
         // A ticket on the team's own board has no provider to agree with: the portal's status IS
         // the status, so it is set here and nothing is pushed.
         if (ticket.Origin != TicketOrigin.Psa || ticket.PsaConnectionId is not { } connectionId || ticket.Provider is not { } provider)

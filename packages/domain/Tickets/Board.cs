@@ -40,6 +40,9 @@ public class Board : TenantEntity
     /// <summary>Next ticket number on this board. Allocated under a transaction, never reused.</summary>
     public int NextNumber { get; set; } = 1;
 
+    /// <summary>The SLA plan a ticket on this board gets when its topic names none.</summary>
+    public Guid? DefaultSlaPlanId { get; set; }
+
     public Guid? CreatedByUserId { get; set; }
 
     public ICollection<BoardMember> Members { get; set; } = new List<BoardMember>();
@@ -71,6 +74,12 @@ public class BoardTopic : TenantEntity
 
     /// <summary>Hours from raising to when it is due, when this kind of work has a usual deadline.</summary>
     public int? DueInHours { get; set; }
+
+    /// <summary>
+    /// The SLA plan this kind of work runs on. A fixed <see cref="DueInHours"/> wins over it for the
+    /// resolve-by date, being the more specific instruction; the plan still sets when a reply is owed.
+    /// </summary>
+    public Guid? SlaPlanId { get; set; }
 
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }

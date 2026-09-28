@@ -37,6 +37,11 @@ export const TicketListItemSchema = z.object({
   assignedTeamId: z.string().nullable().default(null),
   assignedTeamName: z.string().nullable().default(null),
   following: z.boolean().default(false),
+  // The ticket's task list as a count, and the SLA's reply promise with whether it was kept.
+  taskCount: z.number().default(0),
+  tasksDone: z.number().default(0),
+  firstResponseDueAt: z.string().nullable().default(null),
+  firstRespondedAt: z.string().nullable().default(null),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 
@@ -143,6 +148,11 @@ export const TicketDetailSchema = z.object({
   assignedTeamName: z.string().nullable().default(null),
   // Who is watching without holding it. Empty on a client's detail, which never names the desk.
   followers: z.array(TicketFollowerSchema).nullable().default(null),
+  // The SLA plan the due dates came from, and its reply promise. Staff only; null otherwise.
+  slaPlanName: z.string().nullable().default(null),
+  slaDueAt: z.string().nullable().default(null),
+  firstResponseDueAt: z.string().nullable().default(null),
+  firstRespondedAt: z.string().nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

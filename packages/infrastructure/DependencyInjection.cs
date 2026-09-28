@@ -181,6 +181,9 @@ public static class DependencyInjection
             InternalBoards = config.GetValue("Features:InternalBoards", true),
         });
         services.AddScoped<Desk.Application.Boards.IBoardService, Boards.BoardService>();
+        services.AddScoped<Desk.Application.Boards.ISlaPlanService, Boards.SlaPlanService>();
+        services.AddScoped<Desk.Application.Boards.ICannedResponseService, Boards.CannedResponseService>();
+        services.AddScoped<Desk.Application.Boards.ITicketTaskService, Tickets.TicketTaskService>();
         services.AddScoped<Desk.Application.Boards.IInternalTicketService, Boards.InternalTicketService>();
         services.AddScoped<Desk.Application.Boards.IAlertSourceService, Boards.AlertSourceService>();
         services.AddScoped<Desk.Application.Boards.IAlertIntakeService, Boards.AlertIntakeService>();

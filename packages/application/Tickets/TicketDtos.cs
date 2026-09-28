@@ -53,7 +53,13 @@ public sealed record TicketListItem(
     string? AssignedTeamName = null,
     // Whether the CALLER follows this ticket, so a list can be narrowed to what they are watching
     // without a second round trip per row. False on the client list, which has no followers.
-    bool Following = false);
+    bool Following = false,
+    // The ticket's task list as a count, so a row can say "3/5" without anyone opening it.
+    int TaskCount = 0,
+    int TasksDone = 0,
+    // The SLA's reply promise, and whether it has been kept.
+    DateTimeOffset? FirstResponseDueAt = null,
+    DateTimeOffset? FirstRespondedAt = null);
 
 /// <summary>
 /// A named, validated filter set. Every field is optional and an absent one means "do not narrow by
@@ -194,7 +200,12 @@ public sealed record TicketDetailDto(
     /// Who is watching it without holding it. Empty on the client detail: these are colleagues'
     /// names, and a client has no business enumerating the desk.
     /// </summary>
-    IReadOnlyList<TicketFollowerDto>? Followers = null);
+    IReadOnlyList<TicketFollowerDto>? Followers = null,
+    /// <summary>The SLA plan the due dates came from, by name, and the reply promise it made.</summary>
+    string? SlaPlanName = null,
+    DateTimeOffset? SlaDueAt = null,
+    DateTimeOffset? FirstResponseDueAt = null,
+    DateTimeOffset? FirstRespondedAt = null);
 
 public sealed record AttachmentDto(
     Guid Id,

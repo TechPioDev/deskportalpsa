@@ -138,6 +138,19 @@ public class Ticket : TenantEntity
 
     // SLA & time
     public DateTimeOffset? SlaDueAt { get; set; }
+
+    /// <summary>The plan a board ticket's due dates came from, kept so the ticket can say why it is due when it is.</summary>
+    public Guid? SlaPlanId { get; set; }
+
+    /// <summary>When the first reply is owed, from the SLA plan. Null when the plan promises none.</summary>
+    public DateTimeOffset? FirstResponseDueAt { get; set; }
+
+    /// <summary>
+    /// When somebody on the team first wrote on it. Recorded rather than worked out from the notes,
+    /// because not every note is a person answering: a monitoring tool repeating its alert writes one
+    /// too, and counting that as the reply would mark every alert answered the moment it recurred.
+    /// </summary>
+    public DateTimeOffset? FirstRespondedAt { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
     public DateTimeOffset? ClosedAt { get; set; }
     public decimal TimeWorkedHours { get; set; }

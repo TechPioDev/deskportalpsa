@@ -289,6 +289,43 @@ public sealed class AlertSourceConfig : IEntityTypeConfiguration<AlertSource>
     }
 }
 
+public sealed class SlaPlanConfig : IEntityTypeConfiguration<SlaPlan>
+{
+    public void Configure(EntityTypeBuilder<SlaPlan> b)
+    {
+        b.ToTable("sla_plans");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(80).IsRequired();
+        // Two plans called "Standard" is a choice nobody can make correctly from a dropdown.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Name }).IsUnique();
+    }
+}
+
+public sealed class TicketTaskConfig : IEntityTypeConfiguration<TicketTask>
+{
+    public void Configure(EntityTypeBuilder<TicketTask> b)
+    {
+        b.ToTable("ticket_tasks");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Title).HasMaxLength(300).IsRequired();
+        // One ticket's list, in order: the only way these are ever read.
+        b.HasIndex(x => new { x.TicketId, x.SortOrder });
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedResponse>
+{
+    public void Configure(EntityTypeBuilder<CannedResponse> b)
+    {
+        b.ToTable("canned_responses");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(80).IsRequired();
+        b.Property(x => x.Body).HasMaxLength(10000).IsRequired();
+        b.HasIndex(x => new { x.MspOrganizationId, x.BoardId, x.Name }).IsUnique();
+    }
+}
+
 public sealed class TicketFollowerConfig : IEntityTypeConfiguration<TicketFollower>
 {
     public void Configure(EntityTypeBuilder<TicketFollower> b)

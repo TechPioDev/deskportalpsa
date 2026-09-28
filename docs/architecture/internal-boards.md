@@ -105,6 +105,21 @@ existing `PUT /api/tickets/{id}/assignment` as `teamId` / `clearTeam`. Migration
 `SearchViewsFollowers` adds `tickets.AssignedTeamId` and two tables, `ticket_followers` and
 `saved_ticket_views`; it is additive and its `Down` drops exactly those.
 
+## SLA plans, canned responses and tasks
+
+| Feature | What it does |
+|---|---|
+| **SLA plans** | *Boards → SLA plans.* A plan promises a first reply within N hours and resolution within N hours, counted round the clock or in working hours only (working days and hours, in the organization's time zone). A topic names a plan, otherwise the board's default applies; a date typed on the ticket always wins, and a topic's fixed "due within" wins for the resolve date. Alerts from monitoring take their board's plan, timed from when the alert arrived. The first reply is met by the first note anyone on the team writes (recorded as `FirstRespondedAt`; alert repeats do not count). Changing a plan never re-dates tickets already raised; retiring one stops it being applied. PSA tickets keep their PSA's own SLA. Overnight working windows are refused — a night shift is a 24x7 desk. Holidays are not yet taken off the clock. |
+| **Canned responses** | *Boards → Canned responses.* Replies the desk keeps, for every ticket (PSA ones included) or one board. Inserted from the reply box and filled in: `{ticket.number}`, `{ticket.title}`, `{customer}`, `{requester}`, `{assignee}`, `{me}`. A placeholder with no value is left visible rather than blanked. |
+| **Tasks** | A checklist inside any ticket: add, tick (who and when is recorded), reorder, assign, remove. Staff only, never sent to a PSA. As in osTicket, a ticket with open tasks cannot be closed or resolved from the portal; a PSA that closes the ticket itself is not stopped. |
+| **Rich notes** | The reply box has a working toolbar — bold, italic, lists, quote, code, link, table — writing markdown the thread renders. Pasting or dropping a screenshot attaches it to the reply, where it shows inline. Notes are still rendered as React elements from a small markdown subset, never as HTML. Some PSAs (Autotask) show the marks as typed. |
+
+`/api/boards/sla-plans`, `/api/canned-responses`, `/api/tickets/{id}/canned-responses`, `/api/tickets/{id}/tasks`,
+`/api/tickets/tasks/{taskId}[/done|/move]`. Migration `SlaCannedTasks` adds three tables (`sla_plans`,
+`canned_responses`, `ticket_tasks`) and five nullable columns (tickets: `SlaPlanId`, `FirstResponseDueAt`,
+`FirstRespondedAt`; boards: `DefaultSlaPlanId`; board_topics: `SlaPlanId`). Additive; its `Down` drops exactly those.
+Rollback tag for this step: `pre-sla-canned-tasks`.
+
 ## Alerts from a monitoring tool
 
 A monitoring board can be fed by the tools that watch the estate. Each tool is registered as an
@@ -161,4 +176,4 @@ and both have an OAuth2 REST API. The webhook route needs no API credentials at 
 - **Per-device client mapping.** Matching is on the client name the tool sends; an explicit map
   from a tool's site id to a customer would be more robust for estates with awkward naming.
 - **Promoting an internal ticket into a PSA** once a client grants access.
-- **Due dates, recurring internal tasks and checklists.**
+- **Recurring internal tasks**, holidays in the SLA clock, and pausing the clock while waiting on a customer.

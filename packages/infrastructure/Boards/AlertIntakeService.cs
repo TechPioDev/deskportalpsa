@@ -89,6 +89,9 @@ public sealed class AlertIntakeService(
         var now = clock.GetUtcNow();
         var client = await MatchClientAsync(message.Client, ct);
         var number = await NextNumberAsync(board, ct);
+        // Timed from when we were told, not from when the tool says the fault began: nobody can be
+        // late answering an alert that had not arrived yet.
+        var sla = await SlaPlanner.ForAsync(db, board, null, now, ct);
 
         var ticket = new Ticket
         {
@@ -111,6 +114,9 @@ public sealed class AlertIntakeService(
             QueueOrBoard = board.Name,
             PsaCreatedAt = message.OccurredAt ?? now,
             SyncStatus = TicketSyncStatus.Synced,
+            SlaPlanId = sla.PlanId,
+            SlaDueAt = sla.ResolveBy,
+            FirstResponseDueAt = sla.RespondBy,
         };
         db.Tickets.Add(ticket);
         await db.SaveChangesAsync(ct);

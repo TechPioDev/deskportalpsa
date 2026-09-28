@@ -30,7 +30,9 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
             .Select(b => new BoardDto(
                 b.Id, b.Name, b.Key, b.Description, b.Kind, b.ClientVisible, b.IsActive, b.SortOrder,
                 db.BoardMembers.Count(m => m.BoardId == b.Id),
-                db.Tickets.Count(t => t.BoardId == b.Id && t.ClosedAt == null)))
+                db.Tickets.Count(t => t.BoardId == b.Id && t.ClosedAt == null),
+                b.DefaultSlaPlanId,
+                db.SlaPlans.Where(p => p.Id == b.DefaultSlaPlanId).Select(p => p.Name).FirstOrDefault()))
             .ToListAsync(ct);
     }
 
@@ -51,6 +53,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
             // whatever the request asked for. Only an RMM board can be shown to the client it names.
             ClientVisible = input.Kind == BoardKind.Rmm && input.ClientVisible,
             SortOrder = input.SortOrder,
+            DefaultSlaPlanId = await PlanAsync(input.DefaultSlaPlanId, ct),
         };
         db.Boards.Add(board);
         await db.SaveChangesAsync(ct);
@@ -79,6 +82,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         board.Description = Blank(input.Description);
         board.SortOrder = input.SortOrder;
         board.ClientVisible = board.Kind == BoardKind.Rmm && input.ClientVisible;
+        board.DefaultSlaPlanId = await PlanAsync(input.DefaultSlaPlanId, ct);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("board.updated", "Board", board.Id.ToString(),
             new { board.Name, board.Key, board.ClientVisible, clientVisibilityChanged = wasClientVisible != board.ClientVisible }, ct);
@@ -135,7 +139,8 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
                 db.Departments.Where(d => d.Id == t.DefaultDepartmentId).Select(d => d.Name).FirstOrDefault(),
                 t.DefaultPriority, t.DefaultAssigneeUserId,
                 db.AppUsers.Where(u => u.Id == t.DefaultAssigneeUserId).Select(u => u.DisplayName).FirstOrDefault(),
-                t.DueInHours, t.IsActive, t.SortOrder))
+                t.DueInHours, t.IsActive, t.SortOrder, t.SlaPlanId,
+                db.SlaPlans.Where(p => p.Id == t.SlaPlanId).Select(p => p.Name).FirstOrDefault()))
             .ToListAsync(ct);
     }
 
@@ -154,6 +159,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
             DefaultAssigneeUserId = input.DefaultAssigneeUserId,
             DueInHours = input.DueInHours,
             SortOrder = input.SortOrder,
+            SlaPlanId = await PlanAsync(input.SlaPlanId, ct),
         };
         db.BoardTopics.Add(topic);
         await db.SaveChangesAsync(ct);
@@ -170,6 +176,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         topic.DefaultAssigneeUserId = input.DefaultAssigneeUserId;
         topic.DueInHours = input.DueInHours;
         topic.SortOrder = input.SortOrder;
+        topic.SlaPlanId = await PlanAsync(input.SlaPlanId, ct);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("board.topic.updated", "Board", topic.BoardId.ToString(), new { topic.Name }, ct);
         return (await TopicsAsync(topic.BoardId, includeInactive: true, ct)).First(t => t.Id == topicId);
@@ -200,6 +207,16 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         if (input.DueInHours is < 1 or > 8760)
             throw new ValidationFailedException("A due time is between 1 hour and a year.");
         return name;
+    }
+
+    /// <summary>A plan that exists and is in use, or none. A retired plan is refused rather than
+    /// accepted and then silently skipped when a ticket is raised.</summary>
+    private async Task<Guid?> PlanAsync(Guid? planId, CancellationToken ct)
+    {
+        if (planId is not { } id) return null;
+        if (!await db.SlaPlans.AnyAsync(p => p.Id == id && p.IsActive, ct))
+            throw new ValidationFailedException("That SLA plan does not exist, or has been retired.");
+        return id;
     }
 
     private static string? Priority(string? value)

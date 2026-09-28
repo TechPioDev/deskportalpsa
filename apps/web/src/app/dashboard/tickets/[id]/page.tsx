@@ -13,6 +13,8 @@ import { useTimer } from '@/components/TimerProvider';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
 import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
+import { TasksPanel } from '@/components/TasksPanel';
+import { ComposerTools } from '@/components/ComposerTools';
 import { api, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 
@@ -422,6 +424,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   });
   const timer = useTimer();
   const fileRef = useRef<HTMLInputElement>(null);
+  const replyBox = useRef<HTMLTextAreaElement>(null);
 
   const { data: ticket, isLoading, isError } = useQuery({ queryKey: ['ticket', id], queryFn: () => api.getTicket(id) });
   const { data: list } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
@@ -753,6 +756,17 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 <Meta label="Opened" value={fmt(ticket.createdAt)} />
                 <Meta label="Updated" value={fmt(ticket.updatedAt)} />
+                {/* The SLA, where a board ticket has one. Staff only: the detail carries these as
+                    null for a client, so nothing renders for them. */}
+                {ticket.slaPlanName && <Meta label="SLA plan" value={ticket.slaPlanName} />}
+                {ticket.firstResponseDueAt && (
+                  <SlaMeta label="First reply" due={ticket.firstResponseDueAt} met={ticket.firstRespondedAt}
+                    open={!['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase())} />
+                )}
+                {!isFromPsa && ticket.slaDueAt && (
+                  <SlaMeta label="Resolution" due={ticket.slaDueAt} met={ticket.resolvedAt}
+                    open={!['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase())} />
+                )}
               </dl>
 
               {canUpdate && (
@@ -835,6 +849,12 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               </button>
             )}
 
+
+            {isStaff && (
+              <TasksPanel ticketId={id} canUpdate={canUpdate}
+                people={assignOpts?.portalTechnicians.map((u) => ({ id: u.id, name: u.name })) ?? []}
+                onNeedPeople={() => setNeedPeople(true)} />
+            )}
 
             {/* Time entries (query disabled without tickets.time.log, so this stays absent for clients) */}
             {entries && entries.length > 0 && (
@@ -1227,8 +1247,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   </div>
                   <div className="p-4">
                 {/* Composer */}
-                {/* No formatting toolbar: the Bold/emoji/link buttons it used to show were wired to
-                  nothing — decoration presented as function. Attach lives on the real button below. */}
+                {/* The formatting toolbar that used to sit here was removed because its buttons did
+                  nothing. The one below edits the text itself, and pasting or dropping a screenshot
+                  into the box attaches it to this reply. */}
                 <form onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(comment.trim()); }} className="rounded-xl border border-[var(--border)] bg-[var(--bg)]">
                 {/* Recipients, above the body as every mail client puts them. Public replies only:
                     an internal note reaches nobody, so showing addresses there would invite exactly
@@ -1289,7 +1310,35 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     )}
                   </div>
                 )}
-                <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} maxLength={4000}
+                {isStaff && (
+                  <ComposerTools textarea={replyBox} value={comment} onChange={setComment} ticketId={id} maxLength={4000}
+                    showPsaHint={isFromPsa}
+                    placeholders={{
+                      'ticket.number': ticket.number ?? ticket.externalTicketId,
+                      'ticket.title': ticket.title,
+                      customer: ticket.customerName,
+                      requester: ticket.contactName,
+                      assignee: ticket.assignedAppUserName ?? ticket.assignedTechnicianName,
+                      me: me?.displayName,
+                    }} />
+                )}
+                <textarea ref={replyBox} value={comment} onChange={(e) => setComment(e.target.value)} rows={3} maxLength={4000}
+                  onPaste={(e) => {
+                    // A screenshot pasted into the reply joins the reply's files, and shows in the
+                    // thread under the note it came with. Text pastes are left alone.
+                    const images = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
+                    if (images.length === 0) return;
+                    e.preventDefault();
+                    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+                    setPendingFiles((prev) => [...prev, ...images.map((f, i) =>
+                      new File([f], f.name && f.name !== 'image.png' ? f.name : `screenshot-${stamp}${i ? `-${i}` : ''}.png`, { type: f.type }))]);
+                  }}
+                  onDrop={(e) => {
+                    const files = Array.from(e.dataTransfer.files);
+                    if (files.length === 0) return;
+                    e.preventDefault();
+                    setPendingFiles((prev) => [...prev, ...files]);
+                  }}
                   onKeyDown={(e) => {
                     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && comment.trim() && !addComment.isPending) {
                       e.preventDefault();
@@ -1470,6 +1519,36 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
           </>
         );
       })()}
+    </div>
+  );
+}
+
+/**
+ * A due date from the SLA, and whether it was kept. Kept or not is the point of the row, so it says
+ * so in words as well as colour: met on time, met late, overdue, or when it falls due.
+ */
+function SlaMeta({ label, due, met, open }: { label: string; due: string; met: string | null; open: boolean }) {
+  const dueAt = new Date(due).getTime();
+  const when = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  let text: string;
+  let tone = 'text-[var(--fg)]';
+  if (met) {
+    const late = new Date(met).getTime() > dueAt;
+    text = late ? `Late — ${when(met)}` : `Met — ${when(met)}`;
+    tone = late ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400';
+  } else if (!open) {
+    text = `Was due ${when(due)}`;
+    tone = 'text-[var(--muted)]';
+  } else if (dueAt < Date.now()) {
+    text = `Overdue — ${when(due)}`;
+    tone = 'text-red-600 dark:text-red-400';
+  } else {
+    text = `By ${when(due)}`;
+  }
+  return (
+    <div className="lg:py-2">
+      <dt className="text-[10px] uppercase tracking-wide text-[var(--faint)]">{label}</dt>
+      <dd className={`mt-0.5 truncate font-medium ${tone}`} title={`Due ${when(due)}`}>{text}</dd>
     </div>
   );
 }

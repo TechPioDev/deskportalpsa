@@ -337,6 +337,8 @@ public sealed class TicketCommandService(
             OriginCorrelationId = ticket.CorrelationId,
         };
         db.TicketNotes.Add(note);
+        // The first time the team answered, for the first-response promise of an SLA plan.
+        ticket.FirstRespondedAt ??= note.NoteCreatedAt;
         await db.SaveChangesAsync(ct);
 
         await RecordPortalEventAsync(ticket.MspOrganizationId, staffConnectionId, ticket, idempotencyKey, "note.created", ct);
@@ -373,6 +375,8 @@ public sealed class TicketCommandService(
             OriginCorrelationId = ticket.CorrelationId,
         };
         db.TicketNotes.Add(note);
+        // The first time the team answered, for the first-response promise of an SLA plan.
+        ticket.FirstRespondedAt ??= note.NoteCreatedAt;
         await db.SaveChangesAsync(ct);
 
         await activity.RecordAsync(new Desk.Application.Analytics.ActivityRecord(

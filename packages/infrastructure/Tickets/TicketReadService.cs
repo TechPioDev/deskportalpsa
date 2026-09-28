@@ -46,7 +46,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 // People stays null on the client list: no technician identity reaches a client, and
                 // neither does a board or an assignee's name.
                 t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
-                null, null, null, null, 0, null, null, null, false))
+                null, null, null, null, 0, null, null, null, false, 0, 0, null, null))
             .ToListAsync(ct);
 
     /// <summary>
@@ -99,7 +99,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                     db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
                     t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
-                    null, null, null, null, 0, null, null, null, false))
+                    null, null, null, null, 0, null, null, null, false, 0, 0, null, null))
                 .ToListAsync(ct)
             : await ProjectStaffAsync(scope, take, byLastUpdate: true, ct);
 
@@ -230,7 +230,10 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     t.Notes.Max(n => (DateTimeOffset?)n.NoteCreatedAt) ?? t.UpdatedAt,
                     t.AssignedTeamId,
                     db.Teams.Where(x => x.Id == t.AssignedTeamId).Select(x => x.Name).FirstOrDefault(),
-                    me != null && db.TicketFollowers.Any(f => f.TicketId == t.Id && f.AppUserId == me)),
+                    me != null && db.TicketFollowers.Any(f => f.TicketId == t.Id && f.AppUserId == me),
+                    db.TicketTasks.Count(k => k.TicketId == t.Id),
+                    db.TicketTasks.Count(k => k.TicketId == t.Id && k.IsDone),
+                    t.FirstResponseDueAt, t.FirstRespondedAt),
                 t.AssignedAppUserId,
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,
@@ -478,7 +481,15 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             AssignedTeamName: teamName,
             // Colleagues' names, so they reach the staff detail only. The client detail carries the
             // same empty list either way, rather than a shorter one that hints there is more.
-            Followers: includeInternal ? followers : []);
+            Followers: includeInternal ? followers : [],
+            // The SLA is the team's promise about its own board, so it reaches staff only; a client
+            // reading a published board sees the ticket, not how the desk times itself.
+            SlaPlanName: includeInternal && ticket.SlaPlanId is { } planId
+                ? await db.SlaPlans.AsNoTracking().Where(p => p.Id == planId).Select(p => p.Name).FirstOrDefaultAsync(ct)
+                : null,
+            SlaDueAt: includeInternal ? ticket.SlaDueAt : null,
+            FirstResponseDueAt: includeInternal ? ticket.FirstResponseDueAt : null,
+            FirstRespondedAt: includeInternal ? ticket.FirstRespondedAt : null);
     }
 
     public Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)

@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClipboardList, Plus, Users, EyeOff, Eye, Archive, RotateCcw, ArrowRight, Radio } from 'lucide-react';
+import { ClipboardList, Plus, Users, EyeOff, Eye, Archive, RotateCcw, ArrowRight, Radio, Timer, MessageSquareText } from 'lucide-react';
 import { api, type Board, type BoardInput } from '@/lib/api';
 
 const KIND = { internal: 0, rmm: 1 } as const;
@@ -49,10 +49,20 @@ export default function BoardsPage() {
             Show closed boards
           </label>
           {canManage && (
-            <Link href="/dashboard/boards/sources"
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
-              <Radio size={15} /> Monitoring tools
-            </Link>
+            <>
+              <Link href="/dashboard/boards/sla"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                <Timer size={15} /> SLA plans
+              </Link>
+              <Link href="/dashboard/boards/responses"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                <MessageSquareText size={15} /> Canned responses
+              </Link>
+              <Link href="/dashboard/boards/sources"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                <Radio size={15} /> Monitoring tools
+              </Link>
+            </>
           )}
           {canManage && (
             <button onClick={() => setEditing('new')}
@@ -118,6 +128,14 @@ function Section({ title, boards, canManage, onEdit, onActive, hint }: {
                     <Users size={11} aria-hidden="true" />
                     {b.memberCount === 0 ? 'Whole team' : `${b.memberCount} member${b.memberCount === 1 ? '' : 's'}`}
                   </span>
+                  {b.defaultSlaPlanName && (
+                    <>
+                      <span>·</span>
+                      <span className="inline-flex items-center gap-1" title="The SLA plan tickets here get when their topic names none">
+                        <Timer size={11} aria-hidden="true" /> {b.defaultSlaPlanName}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
               <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${b.clientVisible
@@ -157,7 +175,9 @@ function BoardForm({ board, onClose, onSaved }: { board: Board | null; onClose: 
     kind: board?.kind ?? KIND.internal,
     clientVisible: board?.clientVisible ?? false,
     sortOrder: board?.sortOrder ?? 0,
+    defaultSlaPlanId: board?.defaultSlaPlanId ?? null,
   });
+  const { data: plans } = useQuery({ queryKey: ['sla-plans', false], queryFn: () => api.slaPlans(false), retry: false });
   const save = useMutation({
     mutationFn: () => (board ? api.updateBoard(board.id, v) : api.createBoard(v)),
     onSuccess: onSaved,
@@ -209,6 +229,22 @@ function BoardForm({ board, onClose, onSaved }: { board: Board | null; onClose: 
           </div>
         </div>
       )}
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2">
+        SLA plan
+        <select value={v.defaultSlaPlanId ?? ''} onChange={(e) => setV({ ...v, defaultSlaPlanId: e.target.value || null })}
+          className={field}>
+          <option value="">None — tickets here have no due date unless someone sets one</option>
+          {(plans ?? []).map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <span className="block text-[11px] font-normal text-[var(--faint)]">
+          {isRmm
+            ? 'Every alert that opens a ticket here gets this plan, timed from when the alert arrives.'
+            : 'Tickets get this plan unless their topic names another. '}
+          {(plans ?? []).length === 0 && <Link href="/dashboard/boards/sla" className="text-brand hover:underline">Set up SLA plans</Link>}
+        </span>
+      </label>
       {isRmm && (
         <label className="flex items-start gap-2 text-xs text-[var(--muted)]">
           <input type="checkbox" checked={!!v.clientVisible} className="mt-0.5"

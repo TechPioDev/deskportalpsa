@@ -86,6 +86,7 @@ export default function BoardTopicsPage({ params }: { params: Promise<{ id: stri
                 <th className="px-2 py-2.5 font-medium">Priority</th>
                 <th className="px-2 py-2.5 font-medium">Usually goes to</th>
                 <th className="px-2 py-2.5 font-medium">Due within</th>
+                <th className="px-2 py-2.5 font-medium">SLA plan</th>
                 <th className="px-5 py-2.5 font-medium"></th>
               </tr>
             </thead>
@@ -100,6 +101,7 @@ export default function BoardTopicsPage({ params }: { params: Promise<{ id: stri
                   <td className="px-2 py-3 text-xs text-[var(--muted)]">{t.defaultPriority ?? '—'}</td>
                   <td className="px-2 py-3 text-xs text-[var(--muted)]">{t.defaultAssigneeName ?? 'Anyone'}</td>
                   <td className="px-2 py-3 text-xs text-[var(--muted)]">{t.dueInHours ? `${t.dueInHours}h` : '—'}</td>
+                  <td className="px-2 py-3 text-xs text-[var(--muted)]">{t.slaPlanName ?? 'Board default'}</td>
                   <td className="px-5 py-3 text-right text-xs font-medium">
                     <button onClick={() => setEditing(t)} className="text-[var(--muted)] hover:text-[var(--fg)]">Edit</button>
                     <button onClick={() => setActive.mutate({ topicId: t.id, active: !t.isActive })}
@@ -132,7 +134,9 @@ function TopicForm({ boardId, topic, onClose, onSaved }: {
     defaultAssigneeUserId: topic?.defaultAssigneeUserId ?? '',
     dueInHours: topic?.dueInHours ?? null,
     sortOrder: topic?.sortOrder ?? 0,
+    slaPlanId: topic?.slaPlanId ?? null,
   });
+  const { data: plans } = useQuery({ queryKey: ['sla-plans', false], queryFn: () => api.slaPlans(false), retry: false });
   const { data: departments } = useQuery({ queryKey: ['board-departments'], queryFn: api.boardDepartments, retry: false });
   const { data: staff } = useQuery({
     queryKey: ['staff-users-min'], queryFn: () => api.staffUsers({ pageSize: 200 }), staleTime: 5 * 60_000, retry: false,
@@ -145,6 +149,7 @@ function TopicForm({ boardId, topic, onClose, onSaved }: {
         defaultPriority: v.defaultPriority || null,
         defaultAssigneeUserId: v.defaultAssigneeUserId || null,
         dueInHours: v.dueInHours || null,
+        slaPlanId: v.slaPlanId || null,
       };
       return topic ? api.updateBoardTopic(topic.id, input) : api.addBoardTopic(boardId, input);
     },
@@ -189,6 +194,16 @@ function TopicForm({ boardId, topic, onClose, onSaved }: {
         <span className="block text-[11px] font-normal text-[var(--faint)]">
           Leave blank when this kind of work has no usual deadline. A due date nobody chose becomes an
           overdue ticket nobody meant.
+        </span>
+      </label>
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2">
+        SLA plan
+        <select value={v.slaPlanId ?? ''} onChange={(e) => setV({ ...v, slaPlanId: e.target.value || null })} className={field}>
+          <option value="">The board&apos;s default</option>
+          {(plans ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <span className="block text-[11px] font-normal text-[var(--faint)]">
+          Sets when a reply is owed and when the ticket is due. A fixed &ldquo;Due within&rdquo; above wins for the due date.
         </span>
       </label>
       {save.isError && (

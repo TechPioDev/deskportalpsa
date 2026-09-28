@@ -478,6 +478,43 @@ export const api = {
     request(`/api/boards/${boardId}/topics`, BoardTopicSchema, { method: 'POST', body: JSON.stringify(input) }) as Promise<BoardTopic>,
   updateBoardTopic: (topicId: string, input: BoardTopicInput) =>
     request(`/api/boards/topics/${topicId}`, BoardTopicSchema, { method: 'PUT', body: JSON.stringify(input) }) as Promise<BoardTopic>,
+
+  slaPlans: (includeInactive = false) =>
+    request(`/api/boards/sla-plans?includeInactive=${includeInactive}`, z.array(SlaPlanSchema)) as Promise<SlaPlan[]>,
+  saveSlaPlan: (id: string | null, input: SlaPlanInput) =>
+    request(id ? `/api/boards/sla-plans/${id}` : '/api/boards/sla-plans', SlaPlanSchema,
+      { method: id ? 'PUT' : 'POST', body: JSON.stringify(input) }) as Promise<SlaPlan>,
+  setSlaPlanActive: (id: string, active: boolean) =>
+    request(`/api/boards/sla-plans/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
+
+  /** Every canned response, for the page that manages them. */
+  cannedResponses: (includeInactive = false) =>
+    request(`/api/canned-responses?includeInactive=${includeInactive}`, z.array(CannedResponseSchema)) as Promise<CannedResponse[]>,
+  /** The responses offered while replying on this ticket: everywhere's, plus its board's. */
+  cannedResponsesFor: (ticketId: string) =>
+    request(`/api/tickets/${ticketId}/canned-responses`, z.array(CannedResponseSchema)) as Promise<CannedResponse[]>,
+  saveCannedResponse: (id: string | null, input: CannedResponseInput) =>
+    request(id ? `/api/canned-responses/${id}` : '/api/canned-responses', CannedResponseSchema,
+      { method: id ? 'PUT' : 'POST', body: JSON.stringify(input) }) as Promise<CannedResponse>,
+  setCannedResponseActive: (id: string, active: boolean) =>
+    request(`/api/canned-responses/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
+
+  ticketTasks: (ticketId: string) =>
+    request(`/api/tickets/${ticketId}/tasks`, z.array(TicketTaskSchema)) as Promise<TicketTask[]>,
+  addTicketTask: (ticketId: string, title: string, assignedAppUserId: string | null) =>
+    request(`/api/tickets/${ticketId}/tasks`, z.array(TicketTaskSchema),
+      { method: 'POST', body: JSON.stringify({ title, assignedAppUserId }) }) as Promise<TicketTask[]>,
+  updateTicketTask: (taskId: string, title: string, assignedAppUserId: string | null) =>
+    request(`/api/tickets/tasks/${taskId}`, z.array(TicketTaskSchema),
+      { method: 'PUT', body: JSON.stringify({ title, assignedAppUserId }) }) as Promise<TicketTask[]>,
+  setTicketTaskDone: (taskId: string, done: boolean) =>
+    request(`/api/tickets/tasks/${taskId}/done`, z.array(TicketTaskSchema),
+      { method: 'PUT', body: JSON.stringify({ done }) }) as Promise<TicketTask[]>,
+  moveTicketTask: (taskId: string, offset: -1 | 1) =>
+    request(`/api/tickets/tasks/${taskId}/move`, z.array(TicketTaskSchema),
+      { method: 'PUT', body: JSON.stringify({ offset }) }) as Promise<TicketTask[]>,
+  deleteTicketTask: (taskId: string) =>
+    request(`/api/tickets/tasks/${taskId}`, z.array(TicketTaskSchema), { method: 'DELETE' }) as Promise<TicketTask[]>,
   setBoardTopicActive: (topicId: string, active: boolean) =>
     request(`/api/boards/topics/${topicId}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
   ticketSources: () => request('/api/boards/sources/options', z.array(z.string())) as Promise<string[]>,
@@ -1122,6 +1159,8 @@ export const BoardSchema = z.object({
   sortOrder: z.number(),
   memberCount: z.number(),
   openTickets: z.number(),
+  defaultSlaPlanId: z.string().nullable().default(null),
+  defaultSlaPlanName: z.string().nullable().default(null),
 });
 export type Board = z.infer<typeof BoardSchema>;
 export const BoardMemberSchema = z.object({
@@ -1131,6 +1170,8 @@ export type BoardMember = z.infer<typeof BoardMemberSchema>;
 export type BoardInput = {
   name: string; key: string; description: string | null;
   kind?: number; clientVisible?: boolean; sortOrder?: number;
+  /** The SLA plan a ticket gets when its topic names none. Sent on every save: omitting it clears it. */
+  defaultSlaPlanId?: string | null;
 };
 export type InternalTicketInput = {
   boardId: string; title: string; description: string | null;
@@ -1152,12 +1193,63 @@ export const BoardTopicSchema = z.object({
   dueInHours: z.number().nullable(),
   isActive: z.boolean(),
   sortOrder: z.number(),
+  slaPlanId: z.string().nullable().default(null),
+  slaPlanName: z.string().nullable().default(null),
 });
 export type BoardTopic = z.infer<typeof BoardTopicSchema>;
 export type BoardTopicInput = {
   name: string; defaultDepartmentId?: string | null; defaultPriority?: string | null;
   defaultAssigneeUserId?: string | null; dueInHours?: number | null; sortOrder?: number;
+  slaPlanId?: string | null;
 };
+
+/** How quickly board work is owed. Working days are a bitmask with Sunday as bit 0. */
+export const SlaPlanSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  resolveWithinHours: z.number(),
+  firstResponseWithinHours: z.number().nullable(),
+  businessHoursOnly: z.boolean(),
+  workdayStartHour: z.number(),
+  workdayEndHour: z.number(),
+  workingDays: z.number(),
+  isActive: z.boolean(),
+  sortOrder: z.number(),
+  usedBy: z.number(),
+});
+export type SlaPlan = z.infer<typeof SlaPlanSchema>;
+export type SlaPlanInput = {
+  name: string; resolveWithinHours: number; firstResponseWithinHours: number | null;
+  businessHoursOnly: boolean; workdayStartHour: number; workdayEndHour: number; workingDays: number;
+  sortOrder?: number;
+};
+
+/** A reply the desk keeps. boardId null means it is offered on every ticket, PSA ones included. */
+export const CannedResponseSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  body: z.string(),
+  boardId: z.string().nullable(),
+  boardName: z.string().nullable(),
+  isActive: z.boolean(),
+  sortOrder: z.number(),
+});
+export type CannedResponse = z.infer<typeof CannedResponseSchema>;
+export type CannedResponseInput = { name: string; body: string; boardId: string | null; sortOrder?: number };
+
+/** One step of the work inside a ticket. Staff only; never sent to a PSA. */
+export const TicketTaskSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  isDone: z.boolean(),
+  doneAt: z.string().nullable(),
+  doneByName: z.string().nullable(),
+  assignedAppUserId: z.string().nullable(),
+  assignedName: z.string().nullable(),
+  sortOrder: z.number(),
+  createdAt: z.string(),
+});
+export type TicketTask = z.infer<typeof TicketTaskSchema>;
 
 /** A monitoring tool allowed to open tickets on a board. Vendor 0 generic, 1 NinjaOne, 2 Datto RMM. */
 export const AlertSourceSchema = z.object({

@@ -62,6 +62,7 @@ public sealed class InternalTicketService(
 
         var number = await NextNumberAsync(board, ct);
         var now = clock.GetUtcNow();
+        var sla = await SlaPlanner.ForAsync(db, board, topic, now, ct);
         var ticket = new Ticket
         {
             MspOrganizationId = Org,
@@ -89,9 +90,11 @@ public sealed class InternalTicketService(
             Source = Source(input.Source),
             PortalCategory = string.IsNullOrWhiteSpace(input.Category) ? null : input.Category.Trim(),
             QueueOrBoard = board.Name,
-            // The date somebody typed, else the one this kind of work usually has, else none. A due
-            // date that nobody chose is worse than none: it turns into an overdue ticket nobody meant.
-            SlaDueAt = input.DueAt ?? (topic?.DueInHours is { } hours ? now.AddHours(hours) : null),
+            // The date somebody typed, else the topic's fixed time, else the SLA plan's, else none. A
+            // due date that nobody chose is worse than none: it becomes an overdue ticket nobody meant.
+            SlaDueAt = input.DueAt ?? (topic?.DueInHours is { } hours ? now.AddHours(hours) : sla.ResolveBy),
+            SlaPlanId = sla.PlanId,
+            FirstResponseDueAt = sla.RespondBy,
             PsaCreatedAt = now,
             // Synced is the wrong word for a ticket with nowhere to sync to, and every "not synced"
             // reader treats PendingCreate as a failed push. Conflict and Error are worse. Synced is

@@ -101,28 +101,10 @@ public static class StaffReportPeriods
     };
 
     /// <summary>True when the id names a real zone on this host (so it will not silently fall back to UTC).</summary>
-    public static bool IsKnown(string? id)
-        => !string.IsNullOrWhiteSpace(id) && (TryFind(id, out _)
-            || (TimeZoneInfo.TryConvertIanaIdToWindowsId(id, out var w) && TryFind(w, out _))
-            || (TimeZoneInfo.TryConvertWindowsIdToIanaId(id, out var i) && TryFind(i, out _)));
+    public static bool IsKnown(string? id) => Desk.Domain.Common.TimeZones.IsKnown(id);
 
     /// <summary>Resolves an IANA or Windows zone id, falling back to UTC for anything unknown.</summary>
-    public static TimeZoneInfo Zone(string? id)
-    {
-        if (string.IsNullOrWhiteSpace(id)) return TimeZoneInfo.Utc;
-        if (TryFind(id, out var zone)) return zone;
-        // Linux containers know IANA ids ("Asia/Kolkata"), Windows hosts may only know Windows ids
-        // ("India Standard Time"); an organization saved on one must still resolve on the other.
-        if (TimeZoneInfo.TryConvertIanaIdToWindowsId(id, out var windowsId) && TryFind(windowsId, out zone)) return zone;
-        if (TimeZoneInfo.TryConvertWindowsIdToIanaId(id, out var ianaId) && TryFind(ianaId, out zone)) return zone;
-        return TimeZoneInfo.Utc;
-    }
-
-    private static bool TryFind(string id, out TimeZoneInfo zone)
-    {
-        try { zone = TimeZoneInfo.FindSystemTimeZoneById(id); return true; }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException) { zone = TimeZoneInfo.Utc; return false; }
-    }
+    public static TimeZoneInfo Zone(string? id) => Desk.Domain.Common.TimeZones.Resolve(id);
 
     private static DateTimeOffset AtSendHour(DateOnly day, TimeZoneInfo zone)
         => LocalToUtc(day.ToDateTime(new TimeOnly(SendHour, 0)), zone);
