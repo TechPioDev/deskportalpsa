@@ -3,7 +3,8 @@ import { QueryProvider } from '@/components/QueryProvider';
 import { UserMenu } from '@/components/UserMenu';
 import { TimerProvider, TimerWidget } from '@/components/TimerProvider';
 import { NotificationsBell } from '@/components/NotificationsBell';
-import { FileText, Search, HelpCircle } from 'lucide-react';
+import { FileText, HelpCircle } from 'lucide-react';
+import { HeaderSearch } from '@/components/HeaderSearch';
 import { MobileNav } from '@/components/SidebarNav';
 import { SidebarShell, SidebarProvider, SidebarToggle } from '@/components/SidebarShell';
 import { UpdateWatchdog } from '@/components/UpdateWatchdog';
@@ -24,14 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 sm:px-6">
           <SidebarToggle />
-          <div className="relative hidden max-w-xl flex-1 md:block">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
-            <input
-              type="search"
-              placeholder="Search tickets, customers, technicians… (Ctrl+/)"
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] py-2 pl-9 pr-3 text-sm outline-none focus:border-brand"
-            />
-          </div>
+          <HeaderSearch />
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
             <TimerWidget />
             <NotificationsBell />

@@ -7,13 +7,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Pencil, MoreHorizontal, Paperclip,
   Send, ArrowUpDown, Lock, Monitor, Wifi, Mail, KeyRound, Cpu, Ticket,
-  Copy, RefreshCw, Download, Clock, Trash2, Check, X, ClipboardList, UserCog, ExternalLink, AlertTriangle} from 'lucide-react';
+  Copy, RefreshCw, Download, Clock, Trash2, Check, X, ClipboardList, UserCog, ExternalLink, AlertTriangle,
+  Eye, UserPlus} from 'lucide-react';
 import { useTimer } from '@/components/TimerProvider';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
 import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
 import { api, type AssigneeOptions } from '@/lib/api';
-import type { TicketDetail } from '@/lib/types';
+import type { TicketDetail, TicketFollower } from '@/lib/types';
 
 /// Whether the time-entry list is open. Shared across tickets on purpose: a technician who wants
 /// the list expanded wants it expanded on every ticket, not once per ticket id.
@@ -84,7 +85,7 @@ type TicketAttachment = TicketDetail['attachments'][number];
  * "who can take this" is a role question first — an Engineer and a Help Desk tech covering the same
  * board are not interchangeable, and the provider only exposes that through queue coverage.
  */
-function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppUserId, pending, error, onCancel, onSave }: {
+function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppUserId, currentTeamId, pending, error, onCancel, onSave }: {
   options: AssigneeOptions | undefined;
   currentTechnicianId: string | null;
   currentQueueId: string | null;
@@ -94,14 +95,18 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
   onCancel: () => void;
   onSave: (body: {
     technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string;
-    handoverNote?: string;
+    handoverNote?: string; teamId?: string; clearTeam?: boolean;
   }) => void;
+  currentTeamId: string | null;
 }) {
   const [technician, setTechnician] = useState(currentTechnicianId ?? '');
   const [queue, setQueue] = useState('');
   const [role, setRole] = useState('');
   const [portalUser, setPortalUser] = useState(currentAppUserId ?? '');
   const [handover, setHandover] = useState('');
+  // '' leaves it alone, 'none' takes it off the team, an id routes it to that team. Three states,
+  // because "unchanged" and "nobody" are different instructions and one empty value cannot say both.
+  const [team, setTeam] = useState('');
 
   if (!options) return <p className="text-xs text-[var(--muted)]">Loading technicians…</p>;
 
@@ -111,7 +116,8 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
 
   const changed = (technician && technician !== currentTechnicianId)
     || (queue && queue !== currentQueueId)
-    || (portalUser && portalUser !== currentAppUserId);
+    || (portalUser && portalUser !== currentAppUserId)
+    || (team === 'none' ? currentTeamId !== null : !!team && team !== currentTeamId);
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -166,6 +172,23 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
             their name does not appear there.
           </span>
         </label>
+        {options.teams.length > 0 && (
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium">Team</span>
+            <select value={team} onChange={(e) => setTeam(e.target.value)}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand">
+              <option value="">— unchanged —</option>
+              {currentTeamId && <option value="none">— take it off the team —</option>}
+              {options.teams.map((t) => (
+                <option key={t.id} value={t.id}>{t.department} · {t.name}</option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-[var(--muted)]">
+              Which team the work belongs to. A ticket can sit with a team and with a person at once —
+              routing it to Level 2 and Basit picking it up are two facts, not a contradiction.
+            </span>
+          </label>
+        )}
         {portalUser && portalUser !== currentAppUserId && (
           <label className="block sm:col-span-2 lg:col-span-3">
             <span className="mb-1 block text-xs font-medium">Handover note</span>
@@ -187,6 +210,8 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
             roleId: role || undefined,
             appUserId: portalUser || undefined,
             handoverNote: handover.trim() || undefined,
+            teamId: team && team !== 'none' ? team : undefined,
+            clearTeam: team === 'none' || undefined,
           })}
           disabled={pending || !changed}
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
@@ -194,6 +219,114 @@ function AssignPanel({ options, currentTechnicianId, currentQueueId, currentAppU
         </button>
         <button onClick={onCancel} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--bg)]">Cancel</button>
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Who is watching this ticket without holding it: the person who escalated it, the lead who cares
+ * about the customer, the engineer who fixed it last time. A follower is not an assignee — they are
+ * not accountable for the work — which is precisely why adding one is not a reassignment and does
+ * not take the ticket off whoever has it.
+ */
+function FollowersPanel({ ticketId, initial, people, canUpdate, onNeedPeople }: {
+  ticketId: string;
+  initial: TicketFollower[];
+  /** Everyone who could be added; arrives once onNeedPeople has asked for it. */
+  people: { id: string; name: string }[];
+  canUpdate: boolean;
+  /** Called when somebody wants to add a follower, so the page fetches the staff list then and not
+   *  on every visit to a ticket — most of them never touch this panel. */
+  onNeedPeople: () => void;
+}) {
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const { data: followers } = useQuery({
+    queryKey: ['followers', ticketId],
+    queryFn: () => api.ticketFollowers(ticketId),
+    initialData: initial,
+    staleTime: 30_000,
+  });
+  const change = useMutation({
+    mutationFn: (v: { add?: string; remove?: string }) =>
+      v.remove ? api.removeTicketFollower(ticketId, v.remove) : api.addTicketFollower(ticketId, v.add),
+    onSuccess: (rows) => {
+      qc.setQueryData(['followers', ticketId], rows);
+      setAdding(false);
+      // The list marks what you follow, so it is now out of date.
+      qc.invalidateQueries({ queryKey: ['tickets'] });
+      qc.invalidateQueries({ queryKey: ['ticket', ticketId] });
+    },
+  });
+
+  const rows = followers ?? [];
+  const meFollows = rows.some((f) => f.isMe);
+  const candidates = people.filter((p) => !rows.some((f) => f.appUserId === p.id));
+
+  return (
+    <div className="mt-4 border-t border-[var(--border)] pt-4">
+      <div className="flex items-center justify-between">
+        <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+          <Eye size={13} /> Following {rows.length > 0 && <span className="font-normal">({rows.length})</span>}
+        </h3>
+        {canUpdate && (
+          <button onClick={() => change.mutate(meFollows ? { remove: rows.find((f) => f.isMe)!.appUserId } : {})}
+            disabled={change.isPending}
+            className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg)] disabled:opacity-60">
+            {meFollows ? 'Unfollow' : 'Follow'}
+          </button>
+        )}
+      </div>
+
+      {rows.length === 0 && (
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          Nobody is watching this. Follow it to see it in your own list without taking it on.
+        </p>
+      )}
+
+      {rows.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {rows.map((f) => (
+            <li key={f.appUserId} className="flex items-center justify-between gap-2 text-sm">
+              <span className="truncate">{f.name}{f.isMe && <span className="ml-1 text-xs text-[var(--faint)]">(you)</span>}</span>
+              {canUpdate && (
+                <button onClick={() => change.mutate({ remove: f.appUserId })} disabled={change.isPending}
+                  title={`Stop ${f.isMe ? 'following' : `${f.name} following`} this ticket`}
+                  className="shrink-0 rounded p-0.5 text-[var(--faint)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
+                  <X size={12} />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canUpdate && (
+        adding ? (
+          candidates.length > 0 ? (
+            <select autoFocus defaultValue="" onChange={(e) => e.target.value && change.mutate({ add: e.target.value })}
+              className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-xs outline-none focus:border-brand">
+              <option value="">Who should see this go by?</option>
+              {candidates.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          ) : (
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              {people.length === 0 ? 'Loading the team…' : 'Everybody on the team is already following this.'}
+            </p>
+          )
+        ) : (
+          <button onClick={() => { onNeedPeople(); setAdding(true); }}
+            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)]">
+            <UserPlus size={12} /> Add somebody
+          </button>
+        )
+      )}
+      {change.isError && (
+        <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
+          {(change.error as Error).message}
+        </p>
+      )}
     </div>
   );
 }
@@ -294,14 +427,20 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const { data: list } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
   // Only fetched once the picker is opened: it costs a provider round trip for coverage data that
   // most visits to a ticket never need.
+  // Asked for by the followers panel as well as the picker: adding a colleague needs the same staff
+  // list, and both are a provider round trip most visits to a ticket never need.
+  const [needPeople, setNeedPeople] = useState(false);
   const { data: assignOpts } = useQuery({
     queryKey: ['assignees', id],
     queryFn: () => api.ticketAssignees(id),
-    enabled: assignOpen,
+    enabled: assignOpen || needPeople,
     retry: false,
   });
   const assign = useMutation({
-    mutationFn: (body: { technicianExternalId?: string; queueOrBoardId?: string; roleId?: string }) => api.assignTicket(id, body),
+    mutationFn: (body: {
+      technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string;
+      handoverNote?: string; teamId?: string; clearTeam?: boolean;
+    }) => api.assignTicket(id, body),
     onSuccess: () => {
       setAssignOpen(false);
       [['ticket', id], ['tickets'], ['team']].forEach((k) => qc.invalidateQueries({ queryKey: k }));
@@ -607,6 +746,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   <Meta label="Assigned to (PSA)" value={ticket.assignedTechnicianName ?? ticket.assignedTechnicianExternalId ?? 'Unassigned'} />
                 )}
                 <Meta label="Working it" value={ticket.assignedAppUserName ?? (isFromPsa ? '—' : 'Unclaimed')} />
+                {/* Only when there is one: a Team row reading "—" on every ticket of a desk that does
+                    not route by team is a question the desk never asked. */}
+                {ticket.assignedTeamName && <Meta label="Team" value={ticket.assignedTeamName} />}
                 <Meta label="Category" value={ticket.portalCategory ?? '—'} />
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 <Meta label="Opened" value={fmt(ticket.createdAt)} />
@@ -626,6 +768,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     currentTechnicianId={ticket.assignedTechnicianExternalId}
                     currentQueueId={assignOpts?.queueOrBoardId ?? null}
                     currentAppUserId={ticket.assignedAppUserId}
+                    currentTeamId={ticket.assignedTeamId}
                     pending={assign.isPending}
                     error={assign.isError ? (assign.error instanceof Error ? assign.error.message : 'The PSA rejected the change.') : null}
                     onCancel={() => { setAssignOpen(false); assign.reset(); }}
@@ -633,6 +776,19 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   />
                 )}
               </div>
+              )}
+
+              {/* Staff only: these are colleagues' names, and the client detail carries none of
+                  them. Following yourself needs nobody's name; adding a colleague needs the staff
+                  list, which is fetched the moment somebody asks for it. */}
+              {ticket.followers !== null && (
+                <FollowersPanel
+                  ticketId={id}
+                  initial={ticket.followers}
+                  people={assignOpts?.portalTechnicians.map((u) => ({ id: u.id, name: u.name })) ?? []}
+                  canUpdate={canUpdate}
+                  onNeedPeople={() => setNeedPeople(true)}
+                />
               )}
             </div>
 

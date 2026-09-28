@@ -18,6 +18,18 @@ public interface ITicketReadService
     /// <summary>Every ticket in the tenant, for staff holding TicketsViewAll.</summary>
     Task<IReadOnlyList<TicketListItem>> ListAllAsync(CancellationToken ct = default, Guid? boardId = null);
 
+    /// <summary>
+    /// The same list, narrowed by a query. Runs in the database rather than over an already-loaded
+    /// page, which is the only way free text can reach the conversation as well as the title: the
+    /// answer to "which ticket was that disk on" is usually in a note, not a subject line.
+    /// </summary>
+    /// <param name="access">
+    /// A client identity to answer as, or null for the staff scope. The same method serves both so
+    /// that one visibility rule decides what a search can find — a second implementation is how a
+    /// search ends up returning what the list would not.
+    /// </param>
+    Task<TicketSearchResult> SearchAsync(TicketQuery query, ClientAccess? access = null, CancellationToken ct = default);
+
     /// <summary>Any ticket in the tenant, for staff holding TicketsViewAll.</summary>
     Task<TicketDetailDto?> GetDetailForStaffAsync(Guid ticketId, CancellationToken ct = default);
     Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default);
@@ -63,4 +75,33 @@ public interface ITicketCommandService
     /// began to be captured - it only re-reads recently active tickets.
     /// </summary>
     Task<bool> RefreshContactAsync(Guid appUserId, Guid ticketId, CancellationToken ct = default);
+}
+
+
+/// <summary>
+/// Who is watching a ticket. Distinct from who holds it: a follower is never accountable for the
+/// work, which is exactly why adding one is not a change of assignment.
+/// </summary>
+public interface ITicketFollowerService
+{
+    Task<IReadOnlyList<TicketFollowerDto>> ListAsync(Guid ticketId, CancellationToken ct = default);
+
+    /// <summary>Adds a follower. Following an already-followed ticket is a no-op, not an error.</summary>
+    Task<IReadOnlyList<TicketFollowerDto>> AddAsync(Guid ticketId, Guid appUserId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<TicketFollowerDto>> RemoveAsync(Guid ticketId, Guid appUserId, CancellationToken ct = default);
+
+    /// <summary>Every ticket the caller follows, for the view that shows exactly those.</summary>
+    Task<IReadOnlyList<Guid>> FollowedTicketIdsAsync(CancellationToken ct = default);
+}
+
+/// <summary>
+/// Saved filter sets. The built-in views are code, so this covers only the ones a desk invents: a
+/// caller sees their own and anything a colleague shared, and may change only their own.
+/// </summary>
+public interface ITicketViewService
+{
+    Task<IReadOnlyList<SavedViewDto>> ListAsync(Guid? boardId = null, CancellationToken ct = default);
+    Task<SavedViewDto> SaveAsync(Guid? id, string name, bool shared, Guid? boardId, SavedViewFilters filters, CancellationToken ct = default);
+    Task DeleteAsync(Guid id, CancellationToken ct = default);
 }

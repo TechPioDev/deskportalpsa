@@ -32,6 +32,11 @@ export const TicketListItemSchema = z.object({
   dueAt: z.string().nullable().default(null),
   replyCount: z.number().default(0),
   lastActivityAt: z.string().nullable().default(null),
+  // The team it is routed to, and whether I am watching it — both shown beside the assignee, not
+  // instead of it: "Level 2 · Basit" is a different fact from either half on its own.
+  assignedTeamId: z.string().nullable().default(null),
+  assignedTeamName: z.string().nullable().default(null),
+  following: z.boolean().default(false),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 
@@ -63,6 +68,47 @@ export const AttachmentSchema = z.object({
   ticketNoteId: z.string().nullable().default(null),
 });
 
+export const TicketFollowerSchema = z.object({
+  appUserId: z.string(),
+  name: z.string(),
+  email: z.string().nullable(),
+  isMe: z.boolean(),
+  addedAt: z.string(),
+});
+export type TicketFollower = z.infer<typeof TicketFollowerSchema>;
+
+/** A filter set somebody named. The built-in views are code, not rows, and never come back here. */
+export const SavedViewFiltersSchema = z.object({
+  search: z.string().nullable().default(null),
+  status: z.string().nullable().default(null),
+  priority: z.string().nullable().default(null),
+  company: z.string().nullable().default(null),
+  queue: z.string().nullable().default(null),
+  connectionName: z.string().nullable().default(null),
+  personKey: z.string().nullable().default(null),
+  departmentId: z.string().nullable().default(null),
+  teamId: z.string().nullable().default(null),
+  openness: z.string().nullable().default(null),
+  mineOnly: z.boolean().default(false),
+  followingOnly: z.boolean().default(false),
+  unassignedOnly: z.boolean().default(false),
+  overdueOnly: z.boolean().default(false),
+  raisedWithinDays: z.number().nullable().default(null),
+});
+export type SavedViewFilters = z.infer<typeof SavedViewFiltersSchema>;
+
+export const SavedViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  shared: z.boolean(),
+  isMine: z.boolean(),
+  ownerName: z.string().nullable(),
+  boardId: z.string().nullable(),
+  filters: SavedViewFiltersSchema,
+  sortOrder: z.number().default(0),
+});
+export type SavedView = z.infer<typeof SavedViewSchema>;
+
 export const TicketDetailSchema = z.object({
   id: z.string(),
   externalTicketId: z.string().nullable(),
@@ -93,6 +139,10 @@ export const TicketDetailSchema = z.object({
   externalTicketUrl: z.string().nullable().default(null),
   contactName: z.string().nullable().default(null),
   hasReachableContact: z.boolean().default(false),
+  assignedTeamId: z.string().nullable().default(null),
+  assignedTeamName: z.string().nullable().default(null),
+  // Who is watching without holding it. Empty on a client's detail, which never names the desk.
+  followers: z.array(TicketFollowerSchema).nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

@@ -230,6 +230,8 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         b.Property(x => x.Source).HasMaxLength(40);
         // A board filtered to one department, which is how a desk organised by department reads it.
         b.HasIndex(x => new { x.MspOrganizationId, x.DepartmentId });
+        // A team's own queue: the list every member of that team opens first.
+        b.HasIndex(x => new { x.MspOrganizationId, x.AssignedTeamId });
     }
 }
 
@@ -284,6 +286,41 @@ public sealed class AlertSourceConfig : IEntityTypeConfiguration<AlertSource>
         // Every delivery arrives with a key and nothing else to go on, so this is the lookup.
         b.HasIndex(x => x.KeyHash).IsUnique();
         b.HasOne(x => x.Board).WithMany().HasForeignKey(x => x.BoardId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class TicketFollowerConfig : IEntityTypeConfiguration<TicketFollower>
+{
+    public void Configure(EntityTypeBuilder<TicketFollower> b)
+    {
+        b.ToTable("ticket_followers");
+        b.HasKey(x => x.Id);
+        // Following twice is the same as following once, and the UI must not have to de-duplicate it.
+        b.HasIndex(x => new { x.TicketId, x.AppUserId }).IsUnique();
+        // "What am I following" is the query behind a whole saved view, run on every page load.
+        b.HasIndex(x => new { x.MspOrganizationId, x.AppUserId });
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class SavedTicketViewConfig : IEntityTypeConfiguration<SavedTicketView>
+{
+    public void Configure(EntityTypeBuilder<SavedTicketView> b)
+    {
+        b.ToTable("saved_ticket_views");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(60).IsRequired();
+        b.Property(x => x.Search).HasMaxLength(200);
+        b.Property(x => x.Status).HasMaxLength(50);
+        b.Property(x => x.Priority).HasMaxLength(20);
+        b.Property(x => x.Company).HasMaxLength(300);
+        b.Property(x => x.Queue).HasMaxLength(200);
+        b.Property(x => x.ConnectionName).HasMaxLength(200);
+        b.Property(x => x.PersonKey).HasMaxLength(80);
+        b.Property(x => x.Openness).HasMaxLength(20);
+        // One name per owner per list: a second "Overdue" of my own is a mistake, not a variant.
+        // Two people may each have their own, which is why the owner is part of it.
+        b.HasIndex(x => new { x.MspOrganizationId, x.OwnerUserId, x.BoardId, x.Name }).IsUnique();
     }
 }
 

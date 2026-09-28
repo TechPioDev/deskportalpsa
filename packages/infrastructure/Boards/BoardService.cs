@@ -93,12 +93,16 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         await audit.WriteAsync(active ? "board.activated" : "board.deactivated", "Board", board.Id.ToString(), new { board.Name }, ct);
     }
 
+    // Ordered on the user's column BEFORE projecting. Ordering on a property of the constructed DTO
+    // cannot be translated to SQL: the in-memory test provider evaluates it happily, and Postgres and
+    // SQLite both refuse it — so this endpoint answered 500 on every real database while every test
+    // of it passed.
     public async Task<IReadOnlyList<BoardMemberDto>> MembersAsync(Guid boardId, CancellationToken ct = default)
         => await db.BoardMembers.AsNoTracking()
             .Where(m => m.BoardId == boardId)
-            .Join(db.AppUsers.AsNoTracking(), m => m.AppUserId, u => u.Id,
-                (m, u) => new BoardMemberDto(u.Id, u.DisplayName, u.Email))
-            .OrderBy(m => m.DisplayName)
+            .Join(db.AppUsers.AsNoTracking(), m => m.AppUserId, u => u.Id, (m, u) => u)
+            .OrderBy(u => u.DisplayName)
+            .Select(u => new BoardMemberDto(u.Id, u.DisplayName, u.Email))
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<BoardMemberDto>> SetMembersAsync(Guid boardId, IReadOnlyList<Guid> appUserIds, CancellationToken ct = default)

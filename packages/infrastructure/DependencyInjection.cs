@@ -107,6 +107,8 @@ public static class DependencyInjection
         services.AddScoped<IClientAccessResolver, ClientAccessResolver>();
         services.AddScoped<IProfileService, ProfileService>();
         services.AddScoped<ITicketReadService, TicketReadService>();
+        services.AddScoped<Desk.Application.Tickets.ITicketFollowerService, Tickets.TicketFollowerService>();
+        services.AddScoped<Desk.Application.Tickets.ITicketViewService, Tickets.TicketViewService>();
         services.AddScoped<ITicketCommandService, TicketCommandService>();
         services.AddScoped<IEffectivePermissionService, EffectivePermissionService>();
         services.AddScoped<ITicketScopeQuery, TicketScopeQuery>();

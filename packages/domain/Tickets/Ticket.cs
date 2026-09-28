@@ -56,6 +56,17 @@ public class Ticket : TenantEntity
     public Guid? AssignedByUserId { get; set; }
 
     /// <summary>
+    /// The team the ticket sits with, when it is a team's job rather than one person's yet. A desk
+    /// that routes to "Level 2" before anyone picks the work up needs somewhere to say so, and the
+    /// alternative — assigning it to a lead who is not going to do it — makes every report wrong.
+    ///
+    /// Independent of <see cref="AssignedAppUserId"/>, not an alternative to it: the normal path is
+    /// a ticket landing with a team and then one of its members taking it, and both facts stay true.
+    /// Portal-side only; a team here has no counterpart in the PSA and is never pushed.
+    /// </summary>
+    public Guid? AssignedTeamId { get; set; }
+
+    /// <summary>
     /// The department that owns this work. Set on a board ticket, where the team's own structure is
     /// the routing; a PSA ticket is routed by its provider queue instead.
     /// </summary>

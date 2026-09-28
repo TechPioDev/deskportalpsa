@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { Suspense, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Inbox, Search, X } from 'lucide-react';
+import { Plus, Inbox, Search, X, Eye, Users } from 'lucide-react';
 import { api } from '@/lib/api';
 import { StatusBadge, PriorityBadge, SourceBadge } from '@/components/badges';
-import type { TicketListItem } from '@/lib/types';
+import { TicketViewBar, EMPTY_FILTERS } from '@/components/TicketViewBar';
+import type { TicketListItem, SavedViewFilters } from '@/lib/types';
 import { isResolvedStatus } from '@/lib/status';
 import { fmtHours } from '@/lib/format';
 
@@ -62,7 +63,7 @@ function TicketsList() {
   // linked here, which is the one thing a link from a figure must never do.
   const from = params.get('from');
 
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(() => params.get('q') ?? '');
   const [status, setStatus] = useState(() => params.get('status') ?? ALL);
   const [priority, setPriority] = useState(() => params.get('priority') ?? ALL);
   // Company arrives by NAME, not id: this list filters on the name it displays, and a link that
@@ -73,6 +74,22 @@ function TicketsList() {
   // A person KEY ("u:<portal user>" or "x:<PSA resource>"), not a name: two people can share a
   // name, and Client workload's People list links here with exactly the key it counted by.
   const [tech, setTech] = useState(() => params.get('tech') ?? ALL);
+
+  // The view filters that are not a column: open/resolved, and the four questions about the person
+  // reading the page. Initialised from the URL — `view` has always carried the first of them — and
+  // then owned here, because a view chip has to be able to set all of them in one go.
+  const [openness, setOpenness] = useState<string | null>(() => view);
+  const [mine, setMine] = useState(() => params.get('mine') === '1');
+  const [following, setFollowing] = useState(() => params.get('following') === '1');
+  const [unassigned, setUnassigned] = useState(() => params.get('unassigned') === '1');
+  const [overdue, setOverdue] = useState(() => params.get('overdue') === '1');
+
+  // Who is asking. "Mine" is a question about them, and without an answer it would quietly mean
+  // "nobody's" — so the chip is only offered once this has arrived.
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 10 * 60_000, retry: false });
+  const myKey = me?.userId ? `u:${me.userId}` : null;
+  // Memoised: a fresh [] on every render would re-run the filter memo below on every render too.
+  const myTeams = useMemo(() => me?.teamIds ?? [], [me]);
 
   const rows = useMemo(() => data ?? [], [data]);
 
@@ -93,33 +110,89 @@ function TicketsList() {
   }, [techNames, tech]);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return rows.filter((t) =>
-      (!needle || (t.title ?? '').toLowerCase().includes(needle) || (t.externalTicketId ?? '').toLowerCase().includes(needle))
-      && (status === ALL || t.portalStatus === status)
-      && (view !== 'open' || !isResolvedStatus(t.portalStatus))
-      && (view !== 'resolved' || isResolvedStatus(t.portalStatus))
-      && (!from || new Date(t.raisedAt ?? t.createdAt) >= new Date(from))
-      && (priority === ALL || t.portalPriority === priority)
-      && (source === ALL || (t.connectionName ?? '') === source)
-      && (company === ALL || (t.customerName ?? '') === company)
-      && (queue === ALL || (t.queueOrBoard ?? '') === queue)
-      // Holds it OR logged time on it - the rule People counts by. Holder alone would send anyone
-      // who only logged time from that list to an empty one.
-      && (tech === ALL || (t.people ?? []).some((p) => p.key === tech)));
-  }, [rows, q, status, priority, source, company, queue, view, from, tech]);
+    const now = Date.now();
+    return rows.filter((t) => {
+      const resolved = isResolvedStatus(t.portalStatus);
+      const holder = (t.people ?? []).find((p) => p.holds);
+      return (!needle
+          || (t.title ?? '').toLowerCase().includes(needle)
+          || (t.externalTicketId ?? '').toLowerCase().includes(needle)
+          // The board number people actually quote to each other, which a search for "INT-00012"
+          // was finding nothing for.
+          || (t.number ?? '').toLowerCase().includes(needle)
+          || (t.customerName ?? '').toLowerCase().includes(needle))
+        && (status === ALL || t.portalStatus === status)
+        && (openness !== 'open' || !resolved)
+        && (openness !== 'resolved' || resolved)
+        && (!from || new Date(t.raisedAt ?? t.createdAt) >= new Date(from))
+        && (priority === ALL || t.portalPriority === priority)
+        && (source === ALL || (t.connectionName ?? '') === source)
+        && (company === ALL || (t.customerName ?? '') === company)
+        && (queue === ALL || (t.queueOrBoard ?? '') === queue)
+        // Holds it OR logged time on it - the rule People counts by. Holder alone would send anyone
+        // who only logged time from that list to an empty one.
+        && (tech === ALL || (t.people ?? []).some((p) => p.key === tech))
+        // Mine covers a team I am in as well as my own name: a ticket routed to Level 2 is mine to
+        // pick up, which is the whole point of routing it there.
+        && (!mine || holder?.key === myKey
+            || (t.assignedTeamId !== null && myTeams.includes(t.assignedTeamId)))
+        && (!following || t.following)
+        && (!unassigned || holder === undefined)
+        // Overdue means past due AND still open. A ticket closed late is history, not work to do,
+        // and a list that keeps showing it can never be emptied.
+        && (!overdue || (t.dueAt !== null && new Date(t.dueAt).getTime() < now && !resolved));
+    });
+  }, [rows, q, status, priority, source, company, queue, openness, from, tech,
+      mine, following, unassigned, overdue, myKey, myTeams]);
 
   // The hours behind what is on screen. Opened from a client's hours figure, this is the same
   // sum - which is what makes that link honest rather than approximate.
   const totalWorked = filtered.reduce((a, t) => a + t.timeWorkedHours, 0);
   const totalBillable = filtered.reduce((a, t) => a + t.billableHours, 0);
 
-  const active = q.trim() !== '' || view !== null || from !== null
+  const active = q.trim() !== '' || openness !== null || from !== null
+    || mine || following || unassigned || overdue
     || [status, priority, source, company, queue, tech].some((v) => v !== ALL);
   const router = useRouter();
   const clear = () => {
     setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL); setTech(ALL);
-    // Drops `view` as well. Leaving it would clear every visible control and still filter the list,
-    // which reads as the page ignoring the button.
+    setOpenness(null); setMine(false); setFollowing(false); setUnassigned(false); setOverdue(false);
+    // Drops the URL's own filters as well. Leaving them would clear every visible control and still
+    // filter the list, which reads as the page ignoring the button.
+    if (params.toString()) router.replace('/dashboard/tickets');
+  };
+
+  // The filter set as a view sees it, and the one way back. Everything the bar can set is set here,
+  // so a chip cannot leave a stale control behind contradicting the list.
+  const filters: SavedViewFilters = {
+    ...EMPTY_FILTERS,
+    search: q.trim() || null,
+    status: status === ALL ? null : status,
+    priority: priority === ALL ? null : priority,
+    company: company === ALL ? null : company,
+    queue: queue === ALL ? null : queue,
+    connectionName: source === ALL ? null : source,
+    personKey: tech === ALL ? null : tech,
+    openness,
+    mineOnly: mine,
+    followingOnly: following,
+    unassignedOnly: unassigned,
+    overdueOnly: overdue,
+  };
+  const applyView = (f: SavedViewFilters) => {
+    setQ(f.search ?? '');
+    setStatus(f.status ?? ALL);
+    setPriority(f.priority ?? ALL);
+    setCompany(f.company ?? ALL);
+    setQueue(f.queue ?? ALL);
+    setSource(f.connectionName ?? ALL);
+    setTech(f.personKey ?? ALL);
+    setOpenness(f.openness ?? null);
+    setMine(f.mineOnly);
+    setFollowing(f.followingOnly);
+    setUnassigned(f.unassignedOnly);
+    setOverdue(f.overdueOnly);
+    // A view and a URL filter would fight; the view wins, because it is the thing just clicked.
     if (params.toString()) router.replace('/dashboard/tickets');
   };
 
@@ -138,6 +211,10 @@ function TicketsList() {
         </Link>
       </div>
 
+      {!isError && rows.length > 0 && (
+        <TicketViewBar filters={filters} onApply={applyView} canSave={hasPeople} />
+      )}
+
       {isLoading && <SkeletonTable />}
 
       {isError && (
@@ -155,7 +232,7 @@ function TicketsList() {
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
           <div className="relative">
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title or reference…"
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by title, number or customer…"
               className="w-56 rounded-lg border border-[var(--border)] bg-[var(--bg)] py-1.5 pl-8 pr-3 text-sm outline-none focus:border-brand" />
           </div>
           <Select label="Status" value={status} onChange={setStatus} options={optionsFor(rows, (t) => t.portalStatus)} />
@@ -217,7 +294,13 @@ function TicketsList() {
                   <td className="px-4 py-3"><PriorityBadge priority={t.portalPriority} /></td>
                   <td className="px-4 py-3 text-[var(--muted)]">{t.queueOrBoard ?? '—'}</td>
                   {hasPeople && (
-                    <td className="px-4 py-3 text-[var(--muted)]">{t.people?.find((p) => p.holds)?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-[var(--muted)]">
+                      {/* The team as well as the person: a ticket with Level 2 and nobody on it yet
+                          is not the same thing as a ticket nobody has looked at. */}
+                      {t.people?.find((p) => p.holds)?.name
+                        ?? (t.assignedTeamName ? <span className="inline-flex items-center gap-1"><Users size={12} /> {t.assignedTeamName}</span> : '—')}
+                      {t.following && <Eye size={12} className="ml-1.5 inline align-[-1px] text-[var(--faint)]" aria-label="You follow this ticket" />}
+                    </td>
                   )}
                   <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">{t.timeWorkedHours > 0 ? fmtHours(t.timeWorkedHours) : '—'}</td>
                   {/* The raise date, not the import date: the from-filter works on this one, and

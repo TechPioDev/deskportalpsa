@@ -87,6 +87,24 @@ The board list shows the ticket number, when it last moved, the subject with its
 who holds it, the department, the priority, and when it is due — the columns a desk reads a queue
 with, newest activity first.
 
+## Finding work, and watching it
+
+These apply to every ticket — PSA queues and the team's own boards alike — and answer as the caller:
+a search can only find what that person's own list would show them.
+
+| Feature | What it does |
+|---|---|
+| **Search** (header box, Ctrl+/) | Looks up ticket numbers, provider references, subjects, customers and requesters, and — once four characters have been typed — the conversation itself. Runs in the database, so it finds the phrase three replies down that no list filter can reach. Enter opens the full result as a list; the result says how many matched rather than implying the first eight were all there was. |
+| **Views** | Above every list: All, Open, Mine, Unassigned, Overdue, Following, Closed. These are code rather than rows — they mean the same on every desk and cannot be deleted. **Mine** includes anything sitting with a team you are in. **Overdue** means past due *and* still open; a ticket closed late is history, not work. |
+| **Saved views** | Any filter set can be saved under a name, privately or shared with the team. A shared view still belongs to whoever made it; only they can change or delete it. Date filters are saved as a window ("last 30 days"), never a fixed date, so a view does not silently become "everything" a few months later. |
+| **Followers** | Anybody on the team can be put on a ticket to watch it without holding it. A follower is not accountable for the work, so following never changes who has it. Followers are staff only; a client's view of a ticket never lists them. |
+| **Team** | A ticket can be routed to a team (Level 2, NOC…) as well as, or before, a person. The two are independent: "sits with Level 2, being worked by Basit" is one sentence. Teams stay in the portal and are never sent to a PSA. |
+
+`GET /api/tickets/search`, `/api/tickets/views`, `/api/tickets/{id}/followers`; the team rides on the
+existing `PUT /api/tickets/{id}/assignment` as `teamId` / `clearTeam`. Migration
+`SearchViewsFollowers` adds `tickets.AssignedTeamId` and two tables, `ticket_followers` and
+`saved_ticket_views`; it is additive and its `Down` drops exactly those.
+
 ## Alerts from a monitoring tool
 
 A monitoring board can be fed by the tools that watch the estate. Each tool is registered as an

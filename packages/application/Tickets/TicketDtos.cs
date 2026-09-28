@@ -44,7 +44,85 @@ public sealed record TicketListItem(
     string? Source = null,
     DateTimeOffset? DueAt = null,
     int ReplyCount = 0,
-    DateTimeOffset? LastActivityAt = null);
+    DateTimeOffset? LastActivityAt = null,
+    // The team it sits with, when it is a team's job before it is a person's. Shown beside the
+    // assignee rather than instead of it: "Level 2 · Basit" is a different fact from either half.
+    // Both id and name: the name is what a row displays, the id is what "a team I am in" compares
+    // against — two departments can each have a "Level 2", so the name is not an identity.
+    Guid? AssignedTeamId = null,
+    string? AssignedTeamName = null,
+    // Whether the CALLER follows this ticket, so a list can be narrowed to what they are watching
+    // without a second round trip per row. False on the client list, which has no followers.
+    bool Following = false);
+
+/// <summary>
+/// A named, validated filter set. Every field is optional and an absent one means "do not narrow by
+/// this" — so the empty query is the whole visible list, which is what the list page asks for first.
+/// </summary>
+/// <param name="Q">
+/// Free text. Matched against the ticket number, the provider's reference, the title, the customer
+/// name, the requester, and — when <paramref name="IncludeNotes"/> is set — the conversation itself.
+/// </param>
+/// <param name="Openness">"open" or "resolved": each a SET of statuses, which is why it is not Status.</param>
+/// <param name="MineOnly">Tickets the caller holds, or that sit with a team the caller is in.</param>
+/// <param name="RaisedWithinDays">A window, never an absolute date — a saved view outlives the date it was saved on.</param>
+public sealed record TicketQuery(
+    string? Q = null,
+    Guid? BoardId = null,
+    Guid? DepartmentId = null,
+    Guid? TeamId = null,
+    Guid? ClientCompanyId = null,
+    string? Status = null,
+    string? Priority = null,
+    string? Openness = null,
+    bool MineOnly = false,
+    bool FollowingOnly = false,
+    bool UnassignedOnly = false,
+    bool OverdueOnly = false,
+    int? RaisedWithinDays = null,
+    bool IncludeNotes = false,
+    int Take = 50);
+
+/// <summary>
+/// What a search found, and honestly whether that was all of it: a result set silently cut at the
+/// limit reads as "there are no more", and somebody then concludes the ticket does not exist.
+/// </summary>
+public sealed record TicketSearchResult(
+    IReadOnlyList<TicketListItem> Items,
+    int Total,
+    bool Truncated);
+
+/// <summary>A filter set somebody named. Built-in views are not rows and never appear here.</summary>
+public sealed record SavedViewDto(
+    Guid Id,
+    string Name,
+    bool Shared,
+    bool IsMine,
+    string? OwnerName,
+    Guid? BoardId,
+    SavedViewFilters Filters,
+    int SortOrder);
+
+/// <summary>The filters a saved view carries, in the vocabulary the list page puts in its URL.</summary>
+public sealed record SavedViewFilters(
+    string? Search = null,
+    string? Status = null,
+    string? Priority = null,
+    string? Company = null,
+    string? Queue = null,
+    string? ConnectionName = null,
+    string? PersonKey = null,
+    Guid? DepartmentId = null,
+    Guid? TeamId = null,
+    string? Openness = null,
+    bool MineOnly = false,
+    bool FollowingOnly = false,
+    bool UnassignedOnly = false,
+    bool OverdueOnly = false,
+    int? RaisedWithinDays = null);
+
+/// <summary>Somebody watching a ticket they do not hold.</summary>
+public sealed record TicketFollowerDto(Guid AppUserId, string Name, string? Email, bool IsMe, DateTimeOffset AddedAt);
 
 public sealed record TicketNoteDto(
     Guid Id,
@@ -108,7 +186,15 @@ public sealed record TicketDetailDto(
     string? ContactName = null,
     bool HasReachableContact = false,
     /// <summary>The number a board's ticket is quoted by (INT-000123). Null for a PSA ticket.</summary>
-    string? Number = null);
+    string? Number = null,
+    /// <summary>The team it is routed to, before or alongside a person taking it.</summary>
+    Guid? AssignedTeamId = null,
+    string? AssignedTeamName = null,
+    /// <summary>
+    /// Who is watching it without holding it. Empty on the client detail: these are colleagues'
+    /// names, and a client has no business enumerating the desk.
+    /// </summary>
+    IReadOnlyList<TicketFollowerDto>? Followers = null);
 
 public sealed record AttachmentDto(
     Guid Id,

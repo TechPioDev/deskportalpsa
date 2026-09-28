@@ -106,8 +106,25 @@ story += [Paragraph("Assign or hand over", h2_s)]
 story += [Paragraph("<b>Assign technician</b> sets who is working the ticket. On an internal board you can also leave a "
                     "<b>handover note</b> — what the next person should read first — which is kept with the handover, "
                     "so a night shift picks up where the day shift left off instead of guessing.", body_s)]
+story += [Paragraph("You can also route a ticket to a <b>team</b> — Level 2, NOC — as well as to a person. A ticket can "
+                    "sit with a team before anyone picks it up, and stays with the team once someone does.", body_s)]
 story += [Paragraph("A ticket that came from a PSA also shows a link that opens it in that system, for the things the "
                     "portal deliberately does not duplicate.", note_s)]
+
+story += [Paragraph("Follow a ticket", h2_s)]
+story += [Paragraph("<b>Follow</b> puts a ticket in your own <b>Following</b> view without taking it on — for the ticket "
+                    "you escalated, or the customer you look after. <b>Add somebody</b> does the same for a colleague. "
+                    "Following never changes who is working the ticket.", body_s)]
+
+story += [Paragraph("Find a ticket", h2_s)]
+story += [bullets([
+    "The <b>search box</b> at the top of every page (Ctrl+/) finds ticket numbers, subjects, customers and, once you "
+    "have typed four characters, words in the replies. Press Enter to see every match as a list.",
+    "The <b>views</b> above the ticket list — Open, Mine, Unassigned, Overdue, Following, Closed — are one click each. "
+    "<b>Mine</b> includes tickets sitting with a team you are in.",
+    "Set any filters you use often, then <b>Save this view</b>. Tick <b>Share with the team</b> to offer it to "
+    "everyone; only you can change or delete it.",
+])]
 
 # ---- 4. Internal boards ----
 story += [Paragraph("4. Internal boards (staff)", h1_s), hr()]

@@ -9,6 +9,8 @@ import {
   type TicketDetail, type TicketListItem, type Notification, type Profile,
   type TechnicianResponse, type TeamResponse, type TrendPoint,
   type ConnectionSummary, type Health, type Job, type AuditEntry,
+  TicketFollowerSchema, type TicketFollower,
+  SavedViewSchema, type SavedView, type SavedViewFilters,
 } from './types';
 
 // All API calls go through the same-origin BFF proxy, which attaches the bearer token from the
@@ -130,6 +132,10 @@ export type Enquiry = z.infer<typeof EnquirySchema>;
 
 export const MeSchema = z.object({
   subject: z.string().nullable(),
+  // The caller's own portal user id and teams: what "my tickets" and "my team's queue" mean.
+  // Defaulted so an API from before they existed still parses.
+  userId: z.string().nullable().default(null),
+  teamIds: z.array(z.string()).default([]),
   email: z.string().nullable(),
   displayName: z.string().nullable(),
   organizationId: z.string().nullable(),
@@ -167,6 +173,48 @@ export const api = {
   tickets: (boardId: string) =>
     request(`/api/tickets?boardId=${boardId}`, z.array(TicketListItemSchema)) as Promise<TicketListItem[]>,
   getTicket: (id: string) => request(`/api/tickets/${id}`, TicketDetailSchema) as Promise<TicketDetail>,
+
+  /**
+   * Free-text search, run in the database. The list page filters what it has already loaded, which
+   * cannot reach a phrase three replies down a conversation — this can, when asked to.
+   */
+  searchTickets: (params: {
+    q?: string; boardId?: string; departmentId?: string; teamId?: string; status?: string;
+    priority?: string; openness?: string; mine?: boolean; following?: boolean; unassigned?: boolean;
+    overdue?: boolean; withinDays?: number; notes?: boolean; take?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '' || v === false) continue;
+      qs.set(k, String(v));
+    }
+    return request(`/api/tickets/search?${qs}`, z.object({
+      items: z.array(TicketListItemSchema),
+      total: z.number(),
+      // Whether the limit cut the result: a set silently truncated reads as "there is no more", and
+      // somebody then concludes the ticket does not exist.
+      truncated: z.boolean(),
+    })) as Promise<{ items: TicketListItem[]; total: number; truncated: boolean }>;
+  },
+
+  /** The ids of the tickets I follow — enough for the list to mark and filter them. */
+  followingTicketIds: () => request('/api/tickets/following', z.array(z.string())),
+  ticketFollowers: (id: string) =>
+    request(`/api/tickets/${id}/followers`, z.array(TicketFollowerSchema)) as Promise<TicketFollower[]>,
+  /** No user id follows the ticket yourself, which is what the Follow button asks for. */
+  addTicketFollower: (id: string, appUserId?: string) =>
+    request(`/api/tickets/${id}/followers`, z.array(TicketFollowerSchema),
+      { method: 'POST', body: JSON.stringify({ appUserId: appUserId ?? null }) }) as Promise<TicketFollower[]>,
+  removeTicketFollower: (id: string, appUserId: string) =>
+    request(`/api/tickets/${id}/followers/${appUserId}`, z.array(TicketFollowerSchema),
+      { method: 'DELETE' }) as Promise<TicketFollower[]>,
+
+  ticketViews: (boardId?: string) =>
+    request(`/api/tickets/views${boardId ? `?boardId=${boardId}` : ''}`, z.array(SavedViewSchema)) as Promise<SavedView[]>,
+  saveTicketView: (body: { id?: string; name: string; shared?: boolean; boardId?: string; filters: SavedViewFilters }) =>
+    request('/api/tickets/views', SavedViewSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<SavedView>,
+  deleteTicketView: (id: string) =>
+    request(`/api/tickets/views/${id}`, z.unknown(), { method: 'DELETE' }),
   createTicket: (body: { title: string; description?: string; priority?: string; queueOrBoard?: string }) =>
     request('/api/tickets', z.object({ id: z.string(), externalTicketId: z.string().nullable() }), {
       method: 'POST',
@@ -195,12 +243,18 @@ export const api = {
     technicianExternalId?: string; queueOrBoardId?: string; roleId?: string; appUserId?: string;
     /** What the person handing over wants the next person to read first. */
     handoverNote?: string;
+    /** A team to route it to. Independent of appUserId — a ticket can sit with Level 2 AND with Basit. */
+    teamId?: string;
+    /** Take it off the team it is on, without naming another. */
+    clearTeam?: boolean;
   }) =>
     request(`/api/tickets/${id}/assignment`,
       z.object({
         assignedAppUserId: z.string().nullable().default(null),
         assignedTechnicianExternalId: z.string().nullable(),
         assignedTechnicianName: z.string().nullable(),
+        assignedTeamId: z.string().nullable().default(null),
+        assignedTeamName: z.string().nullable().default(null),
         queueOrBoard: z.string().nullable(),
       }).passthrough(),
       { method: 'PUT', body: JSON.stringify(body) }),
@@ -853,6 +907,9 @@ const AssigneeOptionsSchema = z.object({
     name: z.string(),
     email: z.string(),
   })).default([]),
+  // The teams a ticket can be routed to, named with their department: "Level 2" means little on its
+  // own when two departments each have one.
+  teams: z.array(z.object({ id: z.string(), name: z.string(), department: z.string() })).default([]),
 });
 export type AssigneeOptions = z.infer<typeof AssigneeOptionsSchema>;
 

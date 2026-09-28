@@ -46,7 +46,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 // People stays null on the client list: no technician identity reaches a client, and
                 // neither does a board or an assignee's name.
                 t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
-                null, null, null, null, 0, null))
+                null, null, null, null, 0, null, null, null, false))
             .ToListAsync(ct);
 
     /// <summary>
@@ -63,9 +63,155 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     {
         var visible = await StaffVisibleAsync(ct);
         if (boardId is { } board) visible = visible.Where(t => t.BoardId == board);
-        var rows = await visible
-            .AsNoTracking()
-            .OrderByDescending(t => t.CreatedAt)
+        return await ProjectStaffAsync(visible, take: null, byLastUpdate: false, ct);
+    }
+
+    /// <summary>
+    /// The same list, narrowed in the database. The list page filters an already-loaded page, which
+    /// is fine for what it holds — but it can only ever match the rows it loaded and the columns it
+    /// carries, and the answer to "which ticket was that failing disk on" is usually three replies
+    /// down where no client-side filter will ever find it.
+    ///
+    /// Answers as the caller: a client identity resolves against the same <see cref="Visible"/> rule
+    /// as their own list, so a search cannot surface a ticket the list would not. One rule in one
+    /// place — a second implementation is how a search ends up leaking.
+    /// </summary>
+    public async Task<TicketSearchResult> SearchAsync(
+        TicketQuery query, ClientAccess? access = null, CancellationToken ct = default)
+    {
+        var scope = access is { } a ? Visible(a) : await StaffVisibleAsync(ct);
+        scope = await NarrowAsync(scope, query, staff: access is null, ct);
+
+        // Counted before the limit, so the result can say how much it is not showing rather than
+        // implying there is nothing more to find.
+        var total = await scope.CountAsync(ct);
+        var take = Math.Clamp(query.Take, 1, 200);
+
+        // A client's results carry no technician identity, no board and no team, exactly as their
+        // list does. The projection difference IS the privacy rule, so it is not shared.
+        IReadOnlyList<TicketListItem> items = access is not null
+            ? await scope.AsNoTracking()
+                .OrderByDescending(t => t.UpdatedAt)
+                .Take(take)
+                .Select(t => new TicketListItem(
+                    t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
+                    t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
+                    db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
+                    db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
+                    t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
+                    null, null, null, null, 0, null, null, null, false))
+                .ToListAsync(ct)
+            : await ProjectStaffAsync(scope, take, byLastUpdate: true, ct);
+
+        return new TicketSearchResult(items, total, total > items.Count);
+    }
+
+    /// <summary>
+    /// Applies a query to an already visibility-scoped set. Every clause here only REMOVES rows —
+    /// nothing widens the set — so this can never be the place a search escapes its scope.
+    /// </summary>
+    private async Task<IQueryable<Ticket>> NarrowAsync(
+        IQueryable<Ticket> scope, TicketQuery q, bool staff, CancellationToken ct)
+    {
+        if (q.BoardId is { } board) scope = scope.Where(t => t.BoardId == board);
+        if (q.DepartmentId is { } dept) scope = scope.Where(t => t.DepartmentId == dept);
+        if (q.TeamId is { } team) scope = scope.Where(t => t.AssignedTeamId == team);
+        if (q.ClientCompanyId is { } company) scope = scope.Where(t => t.ClientCompanyId == company);
+        if (!string.IsNullOrWhiteSpace(q.Status)) scope = scope.Where(t => t.PortalStatus == q.Status);
+        if (!string.IsNullOrWhiteSpace(q.Priority)) scope = scope.Where(t => t.PortalPriority == q.Priority);
+
+        // "Open" and "resolved" are each a SET of statuses, and which statuses those are is one
+        // decision that already lives in one place; a second list here would drift from the first.
+        if (string.Equals(q.Openness, "open", StringComparison.OrdinalIgnoreCase))
+            scope = scope.Where(TicketStatusRules.Open());
+        else if (string.Equals(q.Openness, "resolved", StringComparison.OrdinalIgnoreCase))
+            scope = scope.Where(TicketStatusRules.Resolved());
+
+        if (q.UnassignedOnly)
+            scope = scope.Where(t => t.AssignedAppUserId == null
+                && (t.AssignedTechnicianExternalId == null || t.AssignedTechnicianExternalId == ""));
+
+        // Overdue means past its due date AND still open. A ticket closed late is history, not work
+        // to do, and a list that keeps showing it is a list nobody can ever empty.
+        if (q.OverdueOnly)
+        {
+            var now = DateTimeOffset.UtcNow;
+            scope = scope.Where(TicketStatusRules.Open()).Where(t => t.SlaDueAt != null && t.SlaDueAt < now);
+        }
+
+        // The window is relative on purpose: see SavedTicketView.RaisedWithinDays. Measured on the
+        // date the ticket was RAISED, falling back to the import date only where the provider gave
+        // none — the same axis every other windowed figure in the portal uses.
+        if (q.RaisedWithinDays is { } days && days > 0)
+        {
+            var since = DateTimeOffset.UtcNow.AddDays(-days);
+            scope = scope.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) >= since);
+        }
+
+        // Mine and Following are about the caller, so they mean nothing without one: asked for by a
+        // caller with no portal identity they return nothing rather than everything.
+        if (q.MineOnly || q.FollowingOnly)
+        {
+            if (!staff || user.UserId is not { } uid) return scope.Where(_ => false);
+
+            if (q.MineOnly)
+            {
+                // A ticket sitting with a team I am in is mine to pick up — that is the point of
+                // routing to a team — so "mine" covers both without a separate view for it.
+                var myTeams = await db.UserTeams.AsNoTracking()
+                    .Where(m => m.AppUserId == uid).Select(m => m.TeamId).ToListAsync(ct);
+                scope = scope.Where(t => t.AssignedAppUserId == uid
+                    || (t.AssignedTeamId != null && myTeams.Contains(t.AssignedTeamId.Value)));
+            }
+            if (q.FollowingOnly)
+                scope = scope.Where(t => db.TicketFollowers.Any(f => f.TicketId == t.Id && f.AppUserId == uid));
+        }
+
+        if (!string.IsNullOrWhiteSpace(q.Q))
+        {
+            // ToLower().Contains() rather than ILIKE or EF.Functions: it translates on Postgres and
+            // on the SQLite local mode runs, and a search that works on only one of them is a search
+            // nobody can develop against.
+            var needle = q.Q.Trim().ToLowerInvariant();
+            var notes = q.IncludeNotes;
+            scope = scope.Where(t =>
+                (t.Number != null && t.Number.ToLower().Contains(needle))
+                || (t.ExternalTicketId != null && t.ExternalTicketId.ToLower().Contains(needle))
+                || t.Title.ToLower().Contains(needle)
+                || t.RequesterName.ToLower().Contains(needle)
+                || db.ClientCompanies.Any(c => c.Id == t.ClientCompanyId && c.Name.ToLower().Contains(needle))
+                // The conversation, when asked for. Off by default because it is the expensive half
+                // and most searches are for a number or a subject; on, it is the half that makes the
+                // search worth having.
+                || (notes && t.Notes.Any(n => n.Body.ToLower().Contains(needle))));
+        }
+
+        return scope;
+    }
+
+    /// <summary>
+    /// The staff projection, and the people enrichment that goes with it. One method because the
+    /// list and the search have to agree column for column: rows built somewhere else are rows that
+    /// quietly state a different set of facts.
+    /// </summary>
+    /// <param name="take">
+    /// Null for the whole set. Given a limit, the time entries are fetched by the ids that came back
+    /// rather than by joining the limited query — joining a query with a limit is a subquery the
+    /// provider may or may not push down, and the id list is bounded by the limit anyway.
+    /// </param>
+    private async Task<List<TicketListItem>> ProjectStaffAsync(
+        IQueryable<Ticket> visible, int? take, bool byLastUpdate, CancellationToken ct)
+    {
+        // Who is asking, for the Following column. Null only for a caller with no portal identity,
+        // who then follows nothing — which is true, not a failure.
+        var me = user.UserId;
+
+        var ordered = byLastUpdate
+            ? visible.AsNoTracking().OrderByDescending(t => t.UpdatedAt)
+            : visible.AsNoTracking().OrderByDescending(t => t.CreatedAt);
+        var limited = take is { } n ? ordered.Take(n) : ordered;
+
+        var rows = await limited
             .Select(t => new
             {
                 Item = new TicketListItem(
@@ -81,7 +227,10 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     t.Source, t.SlaDueAt,
                     t.Notes.Count,
                     // When it last moved, which is what a queue is sorted by in every desk tool.
-                    t.Notes.Max(n => (DateTimeOffset?)n.NoteCreatedAt) ?? t.UpdatedAt),
+                    t.Notes.Max(n => (DateTimeOffset?)n.NoteCreatedAt) ?? t.UpdatedAt,
+                    t.AssignedTeamId,
+                    db.Teams.Where(x => x.Id == t.AssignedTeamId).Select(x => x.Name).FirstOrDefault(),
+                    me != null && db.TicketFollowers.Any(f => f.TicketId == t.Id && f.AppUserId == me)),
                 t.AssignedAppUserId,
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,
@@ -92,12 +241,15 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         // Who worked each ticket: its holder, and everyone who logged time on it - the same rule, and
         // the same PersonKey, that Client workload's People figure counts by. That is what lets a name
         // in that list open this one and land on exactly the tickets it was counted from.
-        var logged = await db.TicketTimeEntries.AsNoTracking()
-            .Where(e => e.AppUserId != null || (e.TechnicianExternalId != null && e.TechnicianExternalId != ""))
-            .Join(visible, e => e.TicketId, t => t.Id,
-                (e, t) => new { e.TicketId, t.PsaConnectionId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName })
-            .Distinct()
-            .ToListAsync(ct);
+        var entries = db.TicketTimeEntries.AsNoTracking()
+            .Where(e => e.AppUserId != null || (e.TechnicianExternalId != null && e.TechnicianExternalId != ""));
+        var logged = take is null
+            ? await entries
+                .Join(visible, e => e.TicketId, t => t.Id,
+                    (e, t) => new LoggedEntry(e.TicketId, t.PsaConnectionId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName))
+                .Distinct()
+                .ToListAsync(ct)
+            : await FetchLoggedByIdAsync(entries, rows.Select(r => r.Item.Id).ToList(), ct);
         var loggedByTicket = logged.ToLookup(e => e.TicketId);
         var account = await IntegrationIdentity.LoadAsync(db, ct);
 
@@ -148,6 +300,23 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             return r.Item with { People = people };
         }).ToList();
     }
+
+    /// <summary>Time entries for a known, bounded set of tickets — the limited path above.</summary>
+    private static async Task<List<LoggedEntry>> FetchLoggedByIdAsync(
+        IQueryable<TicketTimeEntry> entries, List<Guid> ticketIds, CancellationToken ct)
+        => ticketIds.Count == 0
+            ? []
+            : await entries
+                .Where(e => ticketIds.Contains(e.TicketId))
+                .Select(e => new LoggedEntry(
+                    e.TicketId, e.Ticket!.PsaConnectionId, e.AppUserId, e.TechnicianExternalId, e.TechnicianName))
+                .Distinct()
+                .ToListAsync(ct);
+
+    /// <summary>Who logged time on a ticket, and on which connection — a name for what both paths above return.</summary>
+    private sealed record LoggedEntry(
+        Guid TicketId, Guid? PsaConnectionId, Guid? AppUserId, string? TechnicianExternalId, string? TechnicianName);
+
 
     /// <summary>Staff callers always resolve against TicketsViewAll — it is the only permission that
     /// reaches these two methods (the controller branches to the client-scoped path otherwise) — so
@@ -234,6 +403,22 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         var account = await IntegrationIdentity.LoadAsync(db, ct);
         var psaAssigneeIsAccount = account.IsAccount(ticket.PsaConnectionId, ticket.AssignedTechnicianExternalId);
 
+        var teamName = ticket.AssignedTeamId is null ? null : await db.Teams.AsNoTracking()
+            .Where(t => t.Id == ticket.AssignedTeamId).Select(t => t.Name).FirstOrDefaultAsync(ct);
+
+        // Who is watching it. Read here rather than by a second request from the page, so the
+        // detail arrives complete and the Follow button is right the first time it renders.
+        var followers = includeInternal
+            ? await db.TicketFollowers.AsNoTracking()
+                .Where(f => f.TicketId == ticketId)
+                .Join(db.AppUsers.AsNoTracking(), f => f.AppUserId, u => u.Id, (f, u) => new { f.CreatedAt, u.Id, u.DisplayName, u.Email })
+                // Ordered on the column, not on the DTO: ordering by a property of a constructed
+                // record does not translate to SQL, and only the in-memory test provider accepts it.
+                .OrderBy(x => x.DisplayName)
+                .Select(x => new TicketFollowerDto(x.Id, x.DisplayName, x.Email, x.Id == user.UserId, x.CreatedAt))
+                .ToListAsync(ct)
+            : [];
+
         return new TicketDetailDto(
             ticket.Id, ticket.ExternalTicketId, ticket.Provider, ticket.Title, ticket.Description,
             ticket.PortalStatus, ticket.PortalPriority, ticket.PortalCategory, ticket.QueueOrBoard,
@@ -288,7 +473,12 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             AssignedAppUserName: assignedAppUserName,
             ContactName: Desk.Domain.Tickets.TicketContact.Name(ticket),
             HasReachableContact: Desk.Domain.Tickets.TicketContact.IsReachable(ticket),
-            Number: ticket.Number);
+            Number: ticket.Number,
+            AssignedTeamId: ticket.AssignedTeamId,
+            AssignedTeamName: teamName,
+            // Colleagues' names, so they reach the staff detail only. The client detail carries the
+            // same empty list either way, rather than a shorter one that hints there is more.
+            Followers: includeInternal ? followers : []);
     }
 
     public Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)

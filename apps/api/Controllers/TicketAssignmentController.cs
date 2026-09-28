@@ -51,11 +51,20 @@ public sealed class TicketAssignmentController(
         // A board with no provider has no PSA resources to offer: the only people who can hold such
         // a ticket are portal users, which is exactly what an internal board wants.
         if (ticket.Origin != TicketOrigin.Psa || ticket.PsaConnectionId is not { } assigneeConnectionId)
+            // The SAME shape as the PSA branch below, with the provider-side halves empty. It used
+            // to answer with a different set of keys ("queues", and no queueOrBoardId or
+            // filteredBy* at all), which the web client parses strictly — so asking who could take
+            // an internal board's ticket failed at the parse rather than returning the portal
+            // technicians it had just gone to the trouble of listing.
             return Ok(new
             {
-                queues = Array.Empty<object>(),
+                queueOrBoardId = (string?)null,
+                filteredByRole = false,
+                filteredByQueue = false,
+                queuesOrBoards = Array.Empty<object>(),
                 technicians = Array.Empty<object>(),
                 portalTechnicians = await PortalTechniciansAsync(ct),
+                teams = await TeamsAsync(ct),
             });
 
         var fields = await admin.GetFieldsAsync(assigneeConnectionId, ct);
@@ -104,6 +113,7 @@ public sealed class TicketAssignmentController(
         {
             queueOrBoardId = queueId,
             portalTechnicians,
+            teams = await TeamsAsync(ct),
             // Reported separately: narrowing by role and narrowing to this queue are different
             // promises, and claiming the stronger one when only the weaker happened misleads.
             filteredByRole = rolesByTechnician.Count > 0,
@@ -122,6 +132,17 @@ public sealed class TicketAssignmentController(
             .Select(u => (object)new { id = u.Id, name = u.DisplayName, email = u.Email })
             .ToListAsync(ct);
 
+    /// <summary>
+    /// The teams a ticket can be routed to, with the department they belong to — "Level 2" means
+    /// little on its own when two departments each have one.
+    /// </summary>
+    private async Task<IReadOnlyList<object>> TeamsAsync(CancellationToken ct)
+        => await db.Teams.AsNoTracking()
+            .Where(t => t.IsActive)
+            .OrderBy(t => t.Department!.Name).ThenBy(t => t.SortOrder).ThenBy(t => t.Name)
+            .Select(t => (object)new { id = t.Id, name = t.Name, department = t.Department!.Name })
+            .ToListAsync(ct);
+
     [HttpPut("{id:guid}/assignment")]
     [RequirePermission(Permissions.TicketsUpdate)]
     public async Task<IActionResult> Assign(Guid id, [FromBody] AssignRequest req, CancellationToken ct)
@@ -133,14 +154,40 @@ public sealed class TicketAssignmentController(
 
         var technicianId = Blank(req.TechnicianExternalId);
         var queueId = Blank(req.QueueOrBoardId);
-        if (technicianId is null && queueId is null && req.AppUserId is null)
-            throw new ValidationFailedException("Choose a technician or a queue to change.");
+        if (technicianId is null && queueId is null && req.AppUserId is null && req.TeamId is null && !req.ClearTeam)
+            throw new ValidationFailedException("Choose a technician, a team or a queue to change.");
 
         // A board with no provider has no PSA resource to assign and no provider queue to move to.
         // Handing the ticket to a colleague is the whole point of it, and that is the portal
         // assignee below, so only the provider-side halves of the request are refused.
         if (!isPsaTicket && (technicianId is not null || queueId is not null))
             throw new ValidationFailedException("This ticket is on an internal board, so it can only be assigned to a portal user.");
+
+        // The team the work is routed to. Portal-side only — a PSA has no notion of these teams, so
+        // there is nothing to send — and independent of the person: a ticket normally lands with a
+        // team and is then taken by one of its members, and both facts stay true at once.
+        if (req.TeamId is { } teamId)
+        {
+            var team = await db.Teams.AsNoTracking().FirstOrDefaultAsync(t => t.Id == teamId && t.IsActive, ct)
+                ?? throw new ValidationFailedException("That team does not exist, or is not active.");
+            ticket.AssignedTeamId = team.Id;
+            ticket.AssignedByUserId = user.UserId;
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("ticket.assigned.team", "Ticket", ticket.Id.ToString(),
+                new { ticket.ExternalTicketId, teamId = team.Id, team.Name }, ct);
+        }
+        else if (req.ClearTeam)
+        {
+            ticket.AssignedTeamId = null;
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("ticket.unassigned.team", "Ticket", ticket.Id.ToString(),
+                new { ticket.ExternalTicketId }, ct);
+        }
+
+        // Nothing but the team was asked for, so nothing else is attempted — in particular not a
+        // provider round trip that could fail and report an error for work that succeeded.
+        if (technicianId is null && queueId is null && req.AppUserId is null)
+            return Ok(await AssignmentStateAsync(ticket, ct));
 
         // A portal assignee is recorded here and NEVER pushed. The person has no resource in the
         // PSA — that is what "portal technician" means — so there is nothing to send and any
@@ -178,14 +225,7 @@ public sealed class TicketAssignmentController(
             // Nothing else was asked for, so nothing else should be attempted — in particular not a
             // provider round trip that could fail and report an error for work that succeeded.
             if (technicianId is null && queueId is null)
-                return Ok(new
-                {
-                    assignedAppUserId = ticket.AssignedAppUserId,
-                    assignedAppUserName = assignee.DisplayName,
-                    assignedTechnicianExternalId = ticket.AssignedTechnicianExternalId,
-                    assignedTechnicianName = ticket.AssignedTechnicianName,
-                    queueOrBoard = ticket.QueueOrBoard,
-                });
+                return Ok(await AssignmentStateAsync(ticket, ct));
         }
 
         var fields = await admin.GetFieldsAsync(ticket.PsaConnectionId!.Value, ct);
@@ -242,14 +282,27 @@ public sealed class TicketAssignmentController(
         await audit.WriteAsync("ticket.assigned", "Ticket", ticket.Id.ToString(),
             new { ticket.ExternalTicketId, technicianId, queueId }, ct);
 
-        return Ok(new
+        return Ok(await AssignmentStateAsync(ticket, ct));
+    }
+
+    /// <summary>
+    /// Who and what the ticket now sits with. One shape for every path out of Assign, so a caller
+    /// that changed the team gets the same answer as one that changed the technician — a response
+    /// that varies by which half of the request was filled in is a response nobody can rely on.
+    /// </summary>
+    private async Task<object> AssignmentStateAsync(Desk.Domain.Tickets.Ticket ticket, CancellationToken ct)
+        => new
         {
             assignedAppUserId = ticket.AssignedAppUserId,
+            assignedAppUserName = ticket.AssignedAppUserId is null ? null : await db.AppUsers.AsNoTracking()
+                .Where(u => u.Id == ticket.AssignedAppUserId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct),
             assignedTechnicianExternalId = ticket.AssignedTechnicianExternalId,
             assignedTechnicianName = ticket.AssignedTechnicianName,
+            assignedTeamId = ticket.AssignedTeamId,
+            assignedTeamName = ticket.AssignedTeamId is null ? null : await db.Teams.AsNoTracking()
+                .Where(t => t.Id == ticket.AssignedTeamId).Select(t => t.Name).FirstOrDefaultAsync(ct),
             queueOrBoard = ticket.QueueOrBoard,
-        });
-    }
+        };
 
     /// <summary>
     /// The role this technician works the ticket's queue in. Queue-scoped coverage wins over
@@ -319,7 +372,12 @@ public sealed class TicketAssignmentController(
     /// PSA has it on the integration account, and Basit is working it" in one sentence.
     /// </param>
     /// <param name="HandoverNote">What the person handing over wants the next person to read first.</param>
+    /// <param name="TeamId">
+    /// A team to route the ticket to. Independent of <paramref name="AppUserId"/>: a ticket that sits
+    /// with Level 2 and is being worked by Basit is one sentence, not a contradiction.
+    /// </param>
+    /// <param name="ClearTeam">Take it off the team it is on, without naming another.</param>
     public sealed record AssignRequest(
         string? TechnicianExternalId, string? QueueOrBoardId, string? RoleId = null, Guid? AppUserId = null,
-        string? HandoverNote = null);
+        string? HandoverNote = null, Guid? TeamId = null, bool ClearTeam = false);
 }
