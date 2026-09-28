@@ -68,6 +68,25 @@ deleted: every board and ticket stays in the database and returns the moment it 
 The feature switch is the reversible option and should be tried first. The tag is there for the case
 where the code itself must go.
 
+## What a ticket carries
+
+Beyond the title, detail, priority and status every ticket has:
+
+| Field | What it is for |
+|---|---|
+| **Department** | Which part of the team owns the work. The desk is organised this way, so the board is filtered and sorted by it. |
+| **Topic** | What the ticket is about — Patching, Access request, Site visit. Choosing one fills in the department, priority, assignee and due date that kind of work usually has. It is a shortcut, never a rule: everything it sets stays editable. |
+| **Due by** | When it should be done. Overdue is shown in the list, and anything due within eight hours is marked "soon". |
+| **How it reached us** | Phone, Email, Chat, Walk-in, Meeting, Monitoring or Other. A short fixed list, because the only reason to record it is to count it later and free text cannot be counted. |
+| **Client** | Who the work was for, when it was for somebody. It records that; it never shows the ticket to them. |
+
+Topics are managed per board by leads and administrators, under **Topics** on the board. Retiring a
+topic leaves every ticket raised under it untouched and only stops new ones choosing it.
+
+The board list shows the ticket number, when it last moved, the subject with its topic and source,
+who holds it, the department, the priority, and when it is due — the columns a desk reads a queue
+with, newest activity first.
+
 ## Alerts from a monitoring tool
 
 A monitoring board can be fed by the tools that watch the estate. Each tool is registered as an

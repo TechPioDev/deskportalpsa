@@ -25,6 +25,13 @@ export const TicketListItemSchema = z.object({
   boardId: z.string().nullable().default(null),
   number: z.string().nullable().default(null),
   assignedToName: z.string().nullable().default(null),
+  // The columns a desk organised by department reads its queue with.
+  departmentName: z.string().nullable().default(null),
+  topic: z.string().nullable().default(null),
+  source: z.string().nullable().default(null),
+  dueAt: z.string().nullable().default(null),
+  replyCount: z.number().default(0),
+  lastActivityAt: z.string().nullable().default(null),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 

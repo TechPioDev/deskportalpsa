@@ -36,7 +36,15 @@ public sealed record TicketListItem(
     Guid? BoardId = null,
     string? Number = null,
     // Who holds it, by name, so a board reads as a list of people's work rather than of ids.
-    string? AssignedToName = null);
+    string? AssignedToName = null,
+    // The columns a desk organised by department reads its queue with: who owns it, when it is due,
+    // how much conversation it has had, and when it last moved.
+    string? DepartmentName = null,
+    string? Topic = null,
+    string? Source = null,
+    DateTimeOffset? DueAt = null,
+    int ReplyCount = 0,
+    DateTimeOffset? LastActivityAt = null);
 
 public sealed record TicketNoteDto(
     Guid Id,

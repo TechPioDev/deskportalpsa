@@ -233,4 +233,110 @@ public class InternalBoardTests
             ClientHours = 4m, InternalHours = 2.5m,
         }, o => o.ExcludingMissingMembers());
     }
+
+    [Fact]
+    public async Task A_topic_fills_in_what_usually_follows_from_it()
+    {
+        var (boards, tickets, h) = Build();
+        var me = await StaffAsync(h, "Raiser");
+        var onCall = await StaffAsync(h, "OnCall");
+        var dept = new Desk.Domain.Organization.Department { MspOrganizationId = Org, Name = "NOC", IsActive = true };
+        h.Db.Departments.Add(dept);
+        await h.Db.SaveChangesAsync();
+        var board = await boards.CreateAsync(new BoardInput("Internal IT", "INT", null));
+
+        var topic = await boards.AddTopicAsync(board.Id, new BoardTopicInput(
+            "Patching", DefaultDepartmentId: dept.Id, DefaultPriority: "high",
+            DefaultAssigneeUserId: onCall, DueInHours: 8));
+        topic.Should().BeEquivalentTo(new { Name = "Patching", DefaultDepartmentName = "NOC", DefaultPriority = "HIGH" });
+
+        var created = await tickets.CreateAsync(me, new InternalTicketInput(
+            board.Id, "September patch run", null, BoardTopicId: topic.Id, Source: "Meeting"));
+
+        var ticket = await h.Db.Tickets.SingleAsync(t => t.Id == created.TicketId);
+        ticket.Should().BeEquivalentTo(new
+        {
+            DepartmentId = (Guid?)dept.Id,
+            BoardTopicId = (Guid?)topic.Id,
+            PortalPriority = "HIGH",
+            AssignedAppUserId = (Guid?)onCall,
+            Source = "Meeting",
+        });
+        ticket.SlaDueAt.Should().Be(h.Clock.GetUtcNow().AddHours(8));
+    }
+
+    [Fact]
+    public async Task What_the_person_typed_beats_what_the_topic_would_have_chosen()
+    {
+        var (boards, tickets, h) = Build();
+        var me = await StaffAsync(h);
+        var other = await StaffAsync(h, "Someone else");
+        var noc = new Desk.Domain.Organization.Department { MspOrganizationId = Org, Name = "NOC", IsActive = true };
+        var helpdesk = new Desk.Domain.Organization.Department { MspOrganizationId = Org, Name = "HelpDesk", IsActive = true };
+        h.Db.Departments.AddRange(noc, helpdesk);
+        await h.Db.SaveChangesAsync();
+        var board = await boards.CreateAsync(new BoardInput("Internal IT", "INT", null));
+        var topic = await boards.AddTopicAsync(board.Id, new BoardTopicInput(
+            "Patching", DefaultDepartmentId: noc.Id, DefaultPriority: "HIGH", DueInHours: 8));
+
+        var due = h.Clock.GetUtcNow().AddDays(3);
+        var created = await tickets.CreateAsync(me, new InternalTicketInput(
+            board.Id, "Special case", null, Priority: "LOW", BoardTopicId: topic.Id,
+            DepartmentId: helpdesk.Id, AssignedAppUserId: other, DueAt: due));
+
+        var ticket = await h.Db.Tickets.SingleAsync(t => t.Id == created.TicketId);
+        ticket.Should().BeEquivalentTo(new
+        {
+            DepartmentId = (Guid?)helpdesk.Id,
+            PortalPriority = "LOW",
+            AssignedAppUserId = (Guid?)other,
+        });
+        ticket.SlaDueAt.Should().Be(due);
+    }
+
+    [Fact]
+    public async Task A_source_outside_the_list_is_refused_rather_than_stored_as_typed()
+    {
+        var (boards, tickets, h) = Build();
+        var me = await StaffAsync(h);
+        var board = await boards.CreateAsync(new BoardInput("Internal IT", "INT", null));
+
+        var act = () => tickets.CreateAsync(me, new InternalTicketInput(board.Id, "Anything", null, Source: "carrier pigeon"));
+
+        (await act.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Contain("Phone");
+        // Counting where work comes from is the only reason to record it, and free text cannot be counted.
+        (await tickets.CreateAsync(me, new InternalTicketInput(board.Id, "By phone", null, Source: "phone"))).Should().NotBeNull();
+        (await h.Db.Tickets.SingleAsync(t => t.Title == "By phone")).Source.Should().Be("Phone");
+    }
+
+    [Fact]
+    public async Task A_retired_topic_keeps_its_tickets_and_takes_no_new_ones()
+    {
+        var (boards, tickets, h) = Build();
+        var me = await StaffAsync(h);
+        var board = await boards.CreateAsync(new BoardInput("Internal IT", "INT", null));
+        var topic = await boards.AddTopicAsync(board.Id, new BoardTopicInput("Old process"));
+        await tickets.CreateAsync(me, new InternalTicketInput(board.Id, "Raised while it existed", null, BoardTopicId: topic.Id));
+
+        await boards.SetTopicActiveAsync(topic.Id, false);
+
+        (await boards.TopicsAsync(board.Id)).Should().BeEmpty();
+        (await boards.TopicsAsync(board.Id, includeInactive: true)).Should().ContainSingle();
+        (await h.Db.Tickets.SingleAsync()).BoardTopicId.Should().Be(topic.Id, "history keeps the topic it was raised under");
+
+        var act = () => tickets.CreateAsync(me, new InternalTicketInput(board.Id, "Too late", null, BoardTopicId: topic.Id));
+        (await act.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Contain("retired");
+    }
+
+    [Fact]
+    public async Task Two_topics_on_one_board_cannot_share_a_name()
+    {
+        var (boards, _, _) = Build();
+        var board = await boards.CreateAsync(new BoardInput("Internal IT", "INT", null));
+        await boards.AddTopicAsync(board.Id, new BoardTopicInput("Patching"));
+
+        var act = () => boards.AddTopicAsync(board.Id, new BoardTopicInput(" patching "));
+
+        (await act.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Contain("already has a topic");
+    }
 }

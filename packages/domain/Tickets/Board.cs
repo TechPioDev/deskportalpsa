@@ -43,6 +43,37 @@ public class Board : TenantEntity
     public Guid? CreatedByUserId { get; set; }
 
     public ICollection<BoardMember> Members { get; set; } = new List<BoardMember>();
+    public ICollection<BoardTopic> Topics { get; set; } = new List<BoardTopic>();
+}
+
+/// <summary>
+/// What a ticket on this board is about — "Patching", "Access request", "Site visit". Chosen when
+/// the ticket is raised, and it fills in the answers that usually follow from it: which department
+/// owns it, how urgent it starts, and who tends to get it.
+///
+/// A topic is a shortcut, never a rule: whoever raises the ticket can change anything it filled in.
+/// </summary>
+public class BoardTopic : TenantEntity
+{
+    public Guid BoardId { get; set; }
+    public Board? Board { get; set; }
+
+    public required string Name { get; set; }
+
+    /// <summary>The department this kind of work belongs to, when it always belongs to one.</summary>
+    public Guid? DefaultDepartmentId { get; set; }
+
+    /// <summary>Where this kind of work starts on the priority scale. Null keeps the board's default.</summary>
+    public string? DefaultPriority { get; set; }
+
+    /// <summary>Who usually picks this up. Null leaves the ticket for anyone.</summary>
+    public Guid? DefaultAssigneeUserId { get; set; }
+
+    /// <summary>Hours from raising to when it is due, when this kind of work has a usual deadline.</summary>
+    public int? DueInHours { get; set; }
+
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
 }
 
 /// <summary>
