@@ -3,6 +3,7 @@ using Desk.Application.Boards;
 using Desk.Application.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Desk.Api.Controllers;
 
@@ -20,6 +21,8 @@ namespace Desk.Api.Controllers;
 [ApiController]
 [Route("api/intake")]
 [AllowAnonymous]
+// Its own budget, per source key: see the policy for why sharing the anonymous one is not safe.
+[EnableRateLimiting("alert-intake")]
 public sealed class AlertIntakeController(IAlertIntakeService intake, BoardFeatureOptions features) : ControllerBase
 {
     /// <summary>Header the key travels in. Every vendor's webhook form allows a custom header.</summary>

@@ -87,6 +87,17 @@ builder.Services.AddRateLimiter(o =>
     // The public forms are the one unauthenticated write in the product, so they get their own
     // much tighter budget, partitioned by IP: the global allowance is sized for a signed-in app
     // session and would let a single host post thousands of enquiries an hour.
+    // Alerts from monitoring tools get their own budget, PER SOURCE KEY. Every delivery arrives
+    // through the web app, so to the API they share one remote address: without this, one noisy
+    // tool would spend the whole anonymous allowance and silence every other tool — and the desk's
+    // own traffic with it. Sized for a tool reporting a few conditions a second during a storm.
+    o.AddPolicy("alert-intake", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: ctx.Request.Headers.TryGetValue("X-Desk-Alert-Key", out var alertKey) && alertKey.Count > 0
+            ? "alert:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(alertKey.ToString())))[..16]
+            : "alert:anon",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1) }));
+
     o.AddPolicy("public-forms", ctx => RateLimitPartition.GetFixedWindowLimiter(
         partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(10) }));

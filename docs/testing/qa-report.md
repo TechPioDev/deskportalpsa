@@ -53,10 +53,43 @@ All found defects resolved. **No open critical or high defects.**
 | Ref | Item | Plan |
 |---|---|---|
 | ~~K-1~~ Resolved | Attachment upload + malware scanning/quarantine/signed URLs | **Built**: validate → scan (EICAR/PE) → quarantine → randomized key → HMAC signed time-limited URLs → audited downloads. Production wires ClamAV + MinIO behind the same interfaces. |
-| K-2 (part) | Live DAST, penetration test, load run | Production-readiness gates — still to commission. **The DR restore drill is done (28 Sep 2026)**: last night's set restored into scratch on the live host, every table matching, attachments byte-for-byte with a checksum check. See `docs/deployment/backup-and-recovery.md`. |
+| K-2 (part) | Live DAST, penetration test | Production-readiness gates — still to commission. **The DR restore drill is done (28 Sep 2026)**: last night's set restored into scratch on the live host, every table matching, attachments byte-for-byte with a checksum check. See `docs/deployment/backup-and-recovery.md`. |
 | K-3 | Dev-only ESLint `brace-expansion` advisory (not shipped) | ESLint 10 upgrade |
 | ~~K-4~~ Resolved | Cross-browser validation on Firefox/Safari | **Done (Sep 2026)**: the browser suite runs in Chromium, Firefox and WebKit. Chromium on every push; all three on main (`e2e-cross-browser`), locally with `PLAYWRIGHT_BROWSERS=all`. WebKit found one real weakness — a test that matched two rows once earlier data existed — now fixed. |
 | ~~K-5~~ Resolved | Keycloak login flow in the web app | **Built**: OIDC auth-code + PKCE (S256), tokens in httpOnly cookies (BFF pattern — no token in JS), same-origin proxy with refresh-on-401, middleware guard, login/logout/session. End-to-end verified up to the Keycloak redirect (live IdP still needed for the full round-trip). |
+
+## Load probe, 28 September 2026
+
+`tests/load/k6-smoke.js` states the performance targets but needs k6, a full stack and a token, so
+the targets had never been measured. `tests/load/probe.mjs` needs nothing installed: it hits the same
+routes through the same path a technician's browser uses, and reports the percentiles the targets are
+written in.
+
+Run against 5,001 tickets and 15,002 notes — thirty times production's current volume — with four
+concurrent callers for 25 seconds:
+
+| Route | p50 | p95 | p99 | Target p95 | Verdict |
+|---|---|---|---|---|---|
+| Health | 138 ms | 215 ms | 357 ms | 500 ms | met |
+| Ticket list | 320 ms | 921 ms | 1,014 ms | 2,000 ms | met |
+| Dashboard (daily) | 325 ms | 415 ms | 462 ms | 3,000 ms | met |
+| Client workload | 176 ms | 365 ms | 411 ms | 3,000 ms | met |
+
+436 requests, none failed. The ticket list is the slowest by some way and the one to watch as volume
+grows; everything else has room to spare.
+
+**What this is not.** A development machine with SQLite, not the production host with PostgreSQL, and
+one caller's worth of concurrency rather than a full desk. It answers "do these screens stay usable
+at thirty times today's data" — they do — and leaves "how does the production host behave under a
+full desk" to a run against production-like infrastructure.
+
+**Found while doing it.** The global rate limiter allows 300 requests a minute **per organization**,
+not per person. One dashboard page load is several requests, so a busy desk of 41 people shares a
+budget that a handful of them can spend. Nothing has hit it in production, and raising or
+re-partitioning it is the owner's call rather than a change to make quietly — but it is the first
+ceiling this product will meet, and it will be met by ordinary use rather than by abuse. Alerts from
+monitoring tools no longer share that budget: they were given their own, per source key, in the same
+pass.
 
 ## Cross-browser / mobile / accessibility
 - **Rendering engine tested**: Chromium (in-app browser) — light + dark, mobile viewport, no horizontal scroll, 0 console errors.
