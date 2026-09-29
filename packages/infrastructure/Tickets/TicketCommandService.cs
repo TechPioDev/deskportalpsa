@@ -356,6 +356,47 @@ public sealed class TicketCommandService(
         return new TicketNoteDto(note.Id, note.AuthorName, false, note.Body, note.NoteCreatedAt);
     }
 
+    public async Task PostTrailNoteAsync(Guid ticketId, string authorName, bool authoredByClient, string body, CancellationToken ct = default)
+    {
+        var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.Id == ticketId, ct) ?? throw new NotFoundException("Ticket");
+        var now = clock.GetUtcNow();
+        string? externalId = null;
+        string? idempotencyKey = null;
+
+        // A PSA ticket's thread is the provider's: the note goes there first, and is kept here only
+        // once the provider has it, exactly like a reply.
+        if (ticket.Origin == TicketOrigin.Psa && ticket.PsaConnectionId is { } connectionId)
+        {
+            if (string.IsNullOrEmpty(ticket.ExternalTicketId))
+                throw new ValidationFailedException("This ticket is not yet synced to the PSA.");
+            idempotencyKey = Guid.NewGuid().ToString("N");
+            var connector = await connectors.ResolveAsync(connectionId, ct);
+            var result = await connector.AddPublicNoteAsync(
+                ticket.ExternalTicketId, new UnifiedTicketNoteCreateRequest(body, IsPublic: true, idempotencyKey), ct);
+            if (!result.Success)
+                throw new ValidationFailedException(result.Error ?? "The PSA rejected the note.");
+            externalId = result.ExternalId;
+        }
+
+        db.TicketNotes.Add(new TicketNote
+        {
+            MspOrganizationId = ticket.MspOrganizationId,
+            TicketId = ticket.Id,
+            ExternalNoteId = externalId,
+            AuthorName = authorName,
+            AuthoredByClient = authoredByClient,
+            Body = body,
+            // Public on a board ticket too: approvals are only asked on tickets the client can see.
+            IsPublic = true,
+            NoteCreatedAt = now,
+            OriginCorrelationId = ticket.CorrelationId,
+        });
+        await db.SaveChangesAsync(ct);
+
+        if (idempotencyKey is not null)
+            await RecordPortalEventAsync(ticket.MspOrganizationId, ticket.PsaConnectionId!.Value, ticket, idempotencyKey, "note.created", ct);
+    }
+
     /// <summary>
     /// A note on a ticket that belongs to no PSA. Stored and counted exactly as any other staff
     /// note, minus the provider push and the sync event — there is no provider to echo it back.

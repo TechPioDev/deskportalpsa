@@ -165,6 +165,33 @@ public sealed class AttentionService(
                 poor.Count, "/dashboard/analytics/satisfaction"));
         }
 
+        // ── Approvals nobody has answered ─────────────────────────────────────
+        // The ticket waits on the customer while an approval is open, so its SLA is paused and it is
+        // on no overdue list. Without this, a question the approver never saw would sit there quietly
+        // for as long as nobody looked - the pause is exactly what hides it.
+        var approvalCutoff = now.AddDays(-2);
+        var unanswered = await db.TicketApprovals.AsNoTracking()
+            .Where(a => a.State == ApprovalState.Pending && a.RequestedAt <= approvalCutoff)
+            .OrderBy(a => a.RequestedAt)
+            .Select(a => new
+            {
+                a.TicketId, a.ApproverName, a.RequestedAt,
+                Client = db.ClientCompanies.Where(c => c.Id == a.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
+                Reference = db.Tickets.Where(t => t.Id == a.TicketId).Select(t => t.Number ?? t.ExternalTicketId).FirstOrDefault(),
+            })
+            .ToListAsync(ct);
+        if (unanswered.Count > 0)
+        {
+            var oldest = unanswered[0];
+            var days = Math.Max(2, (int)(now - oldest.RequestedAt).TotalDays);
+            items.Add(new AttentionItem(
+                "approval-waiting", "warning",
+                $"{Plural(unanswered.Count, "approval")} waiting more than 2 days",
+                $"Oldest: {oldest.Reference ?? "a ticket"} has waited {days} days for {oldest.ApproverName}" +
+                $"{(oldest.Client is null ? "" : $" at {oldest.Client}")}. Chase them by phone and record the answer, or withdraw the request.",
+                unanswered.Count, $"/dashboard/tickets/{oldest.TicketId}"));
+        }
+
         // ── Background jobs (inbound events, pushes retried by the worker) ────
         var deadLettered = await db.BackgroundJobs.AsNoTracking()
             .Where(j => j.Status == BackgroundJobStatus.DeadLettered)

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { MyApprovalsBanner } from '@/components/MyApprovalsBanner';
 import { Suspense, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
@@ -221,6 +222,8 @@ function TicketsList() {
           <Plus size={16} /> New ticket
         </Link>
       </div>
+
+      <MyApprovalsBanner />
 
       {!isError && rows.length > 0 && (
         <TicketViewBar filters={filters} onApply={applyView} canSave={hasPeople} />

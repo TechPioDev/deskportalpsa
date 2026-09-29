@@ -55,6 +55,13 @@ public interface ITicketCommandService
     Task<CreateTicketResultDto> CreateAsync(ClientAccess access, CreateTicketInput input, CancellationToken ct = default);
     Task<TicketNoteDto> AddCommentAsync(ClientAccess access, Guid ticketId, string body, CancellationToken ct = default);
 
+    /// <summary>
+    /// A note that records something the portal did on the ticket - an approval asked for or
+    /// answered - as a public note, so it reaches the PSA and the client's thread like any reply.
+    /// The caller has already decided the person may do the thing being recorded; this does not scope.
+    /// </summary>
+    Task PostTrailNoteAsync(Guid ticketId, string authorName, bool authoredByClient, string body, CancellationToken ct = default);
+
     /// <summary>A technician reply on a ticket within the caller's effective TicketsAddPublicNote
     /// scope, attributed by display name.</summary>
     Task<TicketNoteDto> AddStaffCommentAsync(Guid appUserId, string authorName, Guid ticketId, string body, bool isPublic = true, CancellationToken ct = default);

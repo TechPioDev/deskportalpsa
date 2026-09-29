@@ -16,6 +16,7 @@ import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPr
 import { TasksPanel } from '@/components/TasksPanel';
 import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
+import { ApprovalPanel } from '@/components/ApprovalPanel';
 import { api, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 
@@ -843,6 +844,10 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             {/* The client's one question, once the ticket is done. Clients only: staff cannot rate
                 on a client's behalf, and see the answer in the rail instead. */}
             {!isStaff && <SatisfactionPanel ticketId={id} />}
+
+            {/* Approvals: staff ask the client's approver and record phone answers; the approver
+                answers here. Absent on the team's own internal work, where there is nobody to ask. */}
+            <ApprovalPanel ticketId={id} isStaff={isStaff} canUpdate={canUpdate} />
 
             {/* Reply launcher — closed by default, above Time entries. A composer pinned to the
                 bottom of a long thread is half off-screen exactly when it is needed.

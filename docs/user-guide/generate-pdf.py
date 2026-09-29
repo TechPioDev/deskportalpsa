@@ -96,6 +96,13 @@ story += [Paragraph("When one of your tickets is resolved, the ticket page asks 
                     "1 (very poor) to 5 (excellent) and, if you like, add a comment. You can change your rating for "
                     "30 days after the ticket was resolved. Your answer goes to the team that worked the ticket.", body_s)]
 
+story += [Paragraph("Approve a request", h2_s)]
+story += [Paragraph("If your company lists you as an approver, a request that needs your agreement - a licence, a "
+                    "purchase, out-of-hours work - appears at the top of your Overview and Tickets pages. Read it, add "
+                    "a comment if you like, and choose <b>Approve</b> or <b>Reject</b>. The team is told at once, and "
+                    "your answer is recorded on the ticket with your name and the time. Your company administrator "
+                    "keeps the approver list in the Control Panel, under Approvers.", body_s)]
+
 story += [Paragraph("3. Working a ticket (staff)", h1_s), hr()]
 story += [Paragraph("Open a ticket and use the box at the top of the conversation. One action covers the three things "
                     "you usually do at once: say what happened, move the ticket on, and record your time.", body_s)]
@@ -213,6 +220,15 @@ story += [Paragraph("<b>Satisfaction</b> shows how clients rated resolved ticket
                     "comment and poor rating. A rating counts for whoever held the ticket when it was rated. Ratings "
                     "of 1 or 2 in the last week also appear on the needs-attention list, and each client's business "
                     "review shows their satisfaction for the quarter.", body_s)]
+
+story += [Paragraph("Client approvals", h2_s)]
+story += [Paragraph("On a client's ticket, <b>Ask for approval</b> sends a request to one of the approvers the client "
+                    "listed in their Control Panel: say who, and what needs agreeing (\"Adobe Acrobat licence, "
+                    "Rs 18,000\"). The ticket moves to Waiting customer, so its SLA clock stops, and a note goes into "
+                    "its thread. The approver answers in the portal; if they answer by phone or email instead, "
+                    "<b>Record their answer</b> writes it down and says it was recorded by you. Either answer moves "
+                    "the ticket back to In progress. A request nobody has answered for two days appears on the "
+                    "needs-attention list.", body_s)]
 
 story += [Paragraph("Technician hours", h2_s)]
 story += [Paragraph("<b>Technician hours</b> shows each person's hours and output over any period — today, yesterday, "

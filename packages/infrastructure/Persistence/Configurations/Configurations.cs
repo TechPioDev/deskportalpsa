@@ -343,6 +343,25 @@ public sealed class TicketSatisfactionConfig : IEntityTypeConfiguration<TicketSa
     }
 }
 
+public sealed class TicketApprovalConfig : IEntityTypeConfiguration<TicketApproval>
+{
+    public void Configure(EntityTypeBuilder<TicketApproval> b)
+    {
+        b.ToTable("ticket_approvals");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.ApproverName).HasMaxLength(200);
+        b.Property(x => x.ApproverEmail).HasMaxLength(320);
+        b.Property(x => x.Request).HasMaxLength(TicketApproval.MaxRequestLength);
+        b.Property(x => x.RequestedByName).HasMaxLength(200);
+        b.Property(x => x.DecisionComment).HasMaxLength(TicketApproval.MaxCommentLength);
+        b.Property(x => x.RecordedByName).HasMaxLength(200);
+        // The ticket page reads its approvals; the approver's list reads what is waiting at their company.
+        b.HasIndex(x => x.TicketId);
+        b.HasIndex(x => new { x.ClientCompanyId, x.State });
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class DeskHolidayConfig : IEntityTypeConfiguration<DeskHoliday>
 {
     public void Configure(EntityTypeBuilder<DeskHoliday> b)

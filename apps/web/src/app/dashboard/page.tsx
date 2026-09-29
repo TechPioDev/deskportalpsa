@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { MyApprovalsBanner } from '@/components/MyApprovalsBanner';
 import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -115,6 +116,8 @@ export default function Overview() {
           <Link href="/dashboard/tickets/new" className="inline-flex items-center gap-2 rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-brand-fg hover:opacity-90"><Plus size={16} /> New Ticket</Link>
         </div>
       </div>
+
+      <MyApprovalsBanner />
 
       {(pastSla > 0 || dueSoon > 0) && (
         <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm dark:border-red-900/60 dark:bg-red-950/30">

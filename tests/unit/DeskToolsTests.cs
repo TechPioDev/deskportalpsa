@@ -205,7 +205,7 @@ public class DeskToolsTests
         var list = await tasks.AddAsync(ticketId, "Update the asset register", null);
         var me = new TestCurrentUser(Org, userId: k.Me);
         // A board ticket never reaches the provider branch, so no connector is needed.
-        var status = new TicketStatusController(k.H.Db, null!, null!, new NoopTicketScopeQuery(), me);
+        var status = new TicketStatusController(k.H.Db, new TicketStatusWriter(k.H.Db, null!, null!), new NoopTicketScopeQuery(), me);
 
         var refused = await Assert.ThrowsAsync<ValidationFailedException>(
             () => status.SetStatus(ticketId, new TicketStatusController.SetStatusRequest("CLOSED"), default));

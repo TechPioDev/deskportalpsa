@@ -419,7 +419,7 @@ tier is platform work that only pays off once the product is sold to more than o
 3. **SLA engine with breach warnings.** *(Built 29 Sep 2026: SLA plans, pause, night shifts; breached / at-risk / reply-owed on needs-attention; Due soon view; Overview banner.)* SLA data arrives from both providers, and the needs-attention
    list is the natural place to surface "three tickets will breach within two hours". This turns a
    reporting product into an operational one. **Effort: medium. Impact: high.**
-4. **Approval workflows.** The approvers table exists and is unused. Change approvals, quote
+4. **Approval workflows.** *(Built 29 Sep 2026: technician asks the client's approver, ticket waits with SLA paused, approver answers in the portal or technician records a phone answer, notes in the PSA thread, needs-attention after 2 days.)* The approvers table exists and is unused. Change approvals, quote
    approvals and after-hours authorization are the requests MSP clients actually make of a portal.
    **Effort: medium. Impact: medium to high.**
 5. **Assets and devices in the client portal.** Both connectors report assets, and a devices table

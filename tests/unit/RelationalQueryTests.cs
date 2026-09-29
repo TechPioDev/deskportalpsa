@@ -232,6 +232,58 @@ public sealed class RelationalQueryTests : IDisposable
         (await Reads.SearchAsync(new TicketQuery(DueSoonOnly: true))).Total.Should().Be(0);
     }
 
+    [Fact]
+    public async Task Approvals_translate()
+    {
+        var connection = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "TechPio AT", Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://at.test", CredentialSecretRef = "ref",
+        };
+        var company = new Desk.Domain.Tenancy.ClientCompany { MspOrganizationId = Org, Name = "Acme", ExternalCompanyId = "9", PsaConnectionId = connection.Id };
+        var board = new Board { MspOrganizationId = Org, Name = "Acme monitoring", Key = "ACP", Kind = BoardKind.Rmm, ClientVisible = true };
+        var rahul = new Desk.Domain.Tenancy.ClientUser { MspOrganizationId = Org, ClientCompanyId = company.Id, Email = "Rahul@Acme.test", DisplayName = "Rahul" };
+        var approver = new Desk.Domain.ControlPanel.Approver { MspOrganizationId = Org, ClientCompanyId = company.Id, Name = "Rahul", Email = "rahul@acme.test" };
+        var ticket = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Internal, BoardId = board.Id, Number = "ACP-000001", ClientCompanyId = company.Id,
+            RequesterName = "Priya", RequesterEmail = "p@acme.test", Title = "Acrobat", PortalStatus = "NEW", SyncStatus = TicketSyncStatus.Synced,
+        };
+        _db.AddRange(connection, company, board, rahul, approver, ticket);
+        await _db.SaveChangesAsync();
+
+        var svc = new ApprovalService(_db, new NoopTicketScopeQuery(), new TicketStatusWriter(_db, null!, null!), new NoTrail(),
+            new AuditWriter(_db, User, _tenant, _clock), _clock, Microsoft.Extensions.Logging.Abstractions.NullLogger<ApprovalService>.Instance);
+        (await svc.StaffViewAsync(_me, ticket.Id)).Approvers.Should().ContainSingle().Which.CanAnswerInPortal.Should().BeTrue();
+        var asked = await svc.RequestAsync(_me, "Dalbir", ticket.Id, new ApprovalRequestInput(approver.Id, "Acrobat licence"));
+
+        var access = new ClientAccess(Org, company.Id, rahul.Id, IsCompanyAdministrator: true);
+        (await svc.MineAsync(access)).Should().ContainSingle().Which.Reference.Should().Be("ACP-000001");
+        (await svc.ClientViewAsync(access, ticket.Id)).Should().ContainSingle().Which.CanAnswer.Should().BeTrue();
+
+        // The needs-attention query, run against a request old enough to be listed.
+        var row = await _db.TicketApprovals.SingleAsync(a => a.Id == asked.Id);
+        row.RequestedAt = DateTimeOffset.UtcNow.AddDays(-3);
+        await _db.SaveChangesAsync();
+        var attention = new AttentionService(_db, _tenant, new NoResync(), new NoMail(),
+            new AuditWriter(_db, User, _tenant, _clock), _clock, Microsoft.Extensions.Logging.Abstractions.NullLogger<AttentionService>.Instance);
+        (await attention.ListAsync()).Items.Should().Contain(i => i.Kind == "approval-waiting" && i.Count == 1);
+
+        (await svc.DecideAsync(access, asked.Id, true, null)).State.Should().Be("Approved");
+        (await _db.Tickets.SingleAsync(t => t.Id == ticket.Id)).PortalStatus.Should().Be("IN_PROGRESS");
+    }
+
+    private sealed class NoTrail : ITicketCommandService
+    {
+        public Task PostTrailNoteAsync(Guid ticketId, string authorName, bool authoredByClient, string body, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<CreateTicketResultDto> CreateAsync(ClientAccess access, CreateTicketInput input, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<TicketNoteDto> AddCommentAsync(ClientAccess access, Guid ticketId, string body, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<TicketNoteDto> AddStaffCommentAsync(Guid appUserId, string authorName, Guid ticketId, string body, bool isPublic = true, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<TicketNoteDto> AddStaffCommentAsync(Guid appUserId, string authorName, Guid ticketId, string body, bool isPublic, bool emailContact, IReadOnlyList<string> emailCc, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ReplyRecipientsDto> ListReplyRecipientsAsync(Guid appUserId, Guid ticketId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> RefreshContactAsync(Guid appUserId, Guid ticketId, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
     public void Dispose()
     {
         _db.Dispose();

@@ -487,6 +487,24 @@ export const api = {
   setSlaPlanActive: (id: string, active: boolean) =>
     request(`/api/boards/sla-plans/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
 
+  // ── Approvals ── staff ask the client's approver; the approver answers in the portal.
+  ticketApprovals: (ticketId: string) =>
+    request(`/api/tickets/${ticketId}/approvals`, StaffApprovalsSchema) as Promise<StaffApprovals>,
+  requestApproval: (ticketId: string, approverId: string, requestText: string) =>
+    request(`/api/tickets/${ticketId}/approvals`, TicketApprovalSchema,
+      { method: 'POST', body: JSON.stringify({ approverId, request: requestText }) }) as Promise<TicketApproval>,
+  recordApproval: (approvalId: string, approved: boolean, channel: 'Phone' | 'Email' | 'InPerson', comment: string | null) =>
+    request(`/api/approvals/${approvalId}/record`, TicketApprovalSchema,
+      { method: 'POST', body: JSON.stringify({ approved, channel, comment }) }) as Promise<TicketApproval>,
+  cancelApproval: (approvalId: string) =>
+    request(`/api/approvals/${approvalId}/cancel`, TicketApprovalSchema, { method: 'POST' }) as Promise<TicketApproval>,
+  clientTicketApprovals: (ticketId: string) =>
+    request(`/api/client/tickets/${ticketId}/approvals`, z.array(TicketApprovalSchema)) as Promise<TicketApproval[]>,
+  myApprovals: () => request('/api/client/approvals', z.array(MyApprovalSchema)) as Promise<MyApproval[]>,
+  decideApproval: (approvalId: string, approved: boolean, comment: string | null) =>
+    request(`/api/client/approvals/${approvalId}/decide`, TicketApprovalSchema,
+      { method: 'POST', body: JSON.stringify({ approved, comment }) }) as Promise<TicketApproval>,
+
   satisfactionState: (ticketId: string) =>
     request(`/api/tickets/${ticketId}/satisfaction`, SatisfactionStateSchema) as Promise<SatisfactionState>,
   rateTicket: (ticketId: string, rating: number, comment: string | null) =>
@@ -1254,6 +1272,41 @@ export type SlaPlanInput = {
   businessHoursOnly: boolean; workdayStartHour: number; workdayEndHour: number; workingDays: number;
   sortOrder?: number; skipHolidays: boolean; pauseWhileWaiting: boolean;
 };
+
+/** One approval request on a ticket, as staff and the client both see it. */
+export const TicketApprovalSchema = z.object({
+  id: z.string(),
+  approverName: z.string(),
+  request: z.string(),
+  requestedByName: z.string(),
+  requestedAt: z.string(),
+  state: z.enum(['Pending', 'Approved', 'Rejected', 'Cancelled']),
+  decidedAt: z.string().nullable(),
+  decisionComment: z.string().nullable(),
+  /** "Portal" when the approver clicked; otherwise how the technician says the answer came. */
+  channel: z.enum(['Portal', 'Phone', 'Email', 'InPerson']).nullable(),
+  recordedByName: z.string().nullable(),
+  canAnswer: z.boolean(),
+});
+export type TicketApproval = z.infer<typeof TicketApprovalSchema>;
+
+export const StaffApprovalsSchema = z.object({
+  applies: z.boolean(),
+  canAsk: z.boolean(),
+  reason: z.string().nullable(),
+  approvals: z.array(TicketApprovalSchema),
+  approvers: z.array(z.object({
+    id: z.string(), name: z.string(), email: z.string().nullable(), scope: z.string().nullable(),
+    canAnswerInPortal: z.boolean(),
+  })),
+});
+export type StaffApprovals = z.infer<typeof StaffApprovalsSchema>;
+
+export const MyApprovalSchema = z.object({
+  id: z.string(), ticketId: z.string(), reference: z.string(), ticketTitle: z.string(),
+  request: z.string(), requestedByName: z.string(), requestedAt: z.string(),
+});
+export type MyApproval = z.infer<typeof MyApprovalSchema>;
 
 /** What a client sees under a finished ticket: whether they can rate it, and their answer. */
 export const SatisfactionStateSchema = z.object({
