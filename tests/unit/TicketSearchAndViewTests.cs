@@ -163,6 +163,23 @@ public class TicketSearchAndViewTests
     }
 
     [Fact]
+    public async Task Due_soon_means_not_late_yet_due_within_eight_hours_open_and_not_paused()
+    {
+        var h = Harness();
+        var now = DateTimeOffset.UtcNow;
+        var soon = Psa("Soon", "IN_PROGRESS"); soon.SlaDueAt = now.AddHours(3);
+        var later = Psa("Later", "IN_PROGRESS"); later.SlaDueAt = now.AddHours(20);
+        var late = Psa("Late", "IN_PROGRESS"); late.SlaDueAt = now.AddHours(-1);
+        var paused = Psa("Paused", "IN_PROGRESS"); paused.SlaDueAt = now.AddHours(2); paused.SlaPausedAt = now;
+        var done = Psa("Done", "RESOLVED"); done.SlaDueAt = now.AddHours(2);
+        h.Db.Tickets.AddRange(soon, later, late, paused, done);
+        await h.Db.SaveChangesAsync();
+
+        var reads = Reads(As(h, await StaffAsync(h, "reader")));
+        (await reads.SearchAsync(new TicketQuery(DueSoonOnly: true))).Items.Select(t => t.Title).Should().BeEquivalentTo("Soon");
+    }
+
+    [Fact]
     public async Task Mine_covers_a_team_the_caller_is_in_as_well_as_their_own_name()
     {
         var h = Harness();

@@ -34,7 +34,7 @@ public sealed class TicketViewService(DeskDbContext db, ICurrentUser user, ITena
                 new SavedViewFilters(
                     v.Search, v.Status, v.Priority, v.Company, v.Queue, v.ConnectionName, v.PersonKey,
                     v.DepartmentId, v.TeamId, v.Openness,
-                    v.MineOnly, v.FollowingOnly, v.UnassignedOnly, v.OverdueOnly, v.RaisedWithinDays),
+                    v.MineOnly, v.FollowingOnly, v.UnassignedOnly, v.OverdueOnly, v.RaisedWithinDays, v.DueSoonOnly),
                 v.SortOrder))
             .ToListAsync(ct);
     }
@@ -89,6 +89,7 @@ public sealed class TicketViewService(DeskDbContext db, ICurrentUser user, ITena
         view.FollowingOnly = filters.FollowingOnly;
         view.UnassignedOnly = filters.UnassignedOnly;
         view.OverdueOnly = filters.OverdueOnly;
+        view.DueSoonOnly = filters.DueSoonOnly;
         view.RaisedWithinDays = filters.RaisedWithinDays is { } d && d > 0 ? Math.Min(d, 3650) : null;
 
         if (id is null) db.SavedTicketViews.Add(view);
@@ -113,7 +114,7 @@ public sealed class TicketViewService(DeskDbContext db, ICurrentUser user, ITena
         || !string.IsNullOrWhiteSpace(f.Queue) || !string.IsNullOrWhiteSpace(f.ConnectionName)
         || !string.IsNullOrWhiteSpace(f.PersonKey) || !string.IsNullOrWhiteSpace(f.Openness)
         || f.DepartmentId is not null || f.TeamId is not null
-        || f.MineOnly || f.FollowingOnly || f.UnassignedOnly || f.OverdueOnly
+        || f.MineOnly || f.FollowingOnly || f.UnassignedOnly || f.OverdueOnly || f.DueSoonOnly
         || f.RaisedWithinDays is > 0;
 
     private static string? Trim(string? value, int max)

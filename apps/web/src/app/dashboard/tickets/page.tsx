@@ -14,6 +14,9 @@ import { fmtHours } from '@/lib/format';
 
 const ALL = '__all__';
 
+/** The same window the server's Due soon filter and the board's "soon" label use. */
+const DUE_SOON_HOURS = 8;
+
 /** Distinct, sorted values for a column — the filter options come from the data itself, so they
  *  stay correct for any PSA without hard-coding provider vocabulary. */
 function optionsFor(rows: TicketListItem[], pick: (t: TicketListItem) => string | null | undefined) {
@@ -83,6 +86,7 @@ function TicketsList() {
   const [following, setFollowing] = useState(() => params.get('following') === '1');
   const [unassigned, setUnassigned] = useState(() => params.get('unassigned') === '1');
   const [overdue, setOverdue] = useState(() => params.get('overdue') === '1');
+  const [dueSoon, setDueSoon] = useState(() => params.get('due') === 'soon');
 
   // Who is asking. "Mine" is a question about them, and without an answer it would quietly mean
   // "nobody's" — so the chip is only offered once this has arrived.
@@ -140,10 +144,15 @@ function TicketsList() {
         && (!unassigned || holder === undefined)
         // Overdue means past due AND still open. A ticket closed late is history, not work to do,
         // and a list that keeps showing it can never be emptied.
-        && (!overdue || (t.dueAt !== null && new Date(t.dueAt).getTime() < now && !resolved));
+        // ...and not paused: a ticket waiting on the customer is not late, which is what the server's
+        // own Overdue filter and the needs-attention list already say.
+        && (!overdue || (t.dueAt !== null && new Date(t.dueAt).getTime() < now && !resolved && !t.slaPausedAt))
+        // Due soon: not late yet, due within the same 8 hours the board's "soon" label uses.
+        && (!dueSoon || (t.dueAt !== null && !resolved && !t.slaPausedAt
+            && new Date(t.dueAt).getTime() >= now && new Date(t.dueAt).getTime() <= now + DUE_SOON_HOURS * 3_600_000));
     });
   }, [rows, q, status, priority, source, company, queue, openness, from, tech,
-      mine, following, unassigned, overdue, myKey, myTeams]);
+      mine, following, unassigned, overdue, dueSoon, myKey, myTeams]);
 
   // The hours behind what is on screen. Opened from a client's hours figure, this is the same
   // sum - which is what makes that link honest rather than approximate.
@@ -151,12 +160,12 @@ function TicketsList() {
   const totalBillable = filtered.reduce((a, t) => a + t.billableHours, 0);
 
   const active = q.trim() !== '' || openness !== null || from !== null
-    || mine || following || unassigned || overdue
+    || mine || following || unassigned || overdue || dueSoon
     || [status, priority, source, company, queue, tech].some((v) => v !== ALL);
   const router = useRouter();
   const clear = () => {
     setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL); setTech(ALL);
-    setOpenness(null); setMine(false); setFollowing(false); setUnassigned(false); setOverdue(false);
+    setOpenness(null); setMine(false); setFollowing(false); setUnassigned(false); setOverdue(false); setDueSoon(false);
     // Drops the URL's own filters as well. Leaving them would clear every visible control and still
     // filter the list, which reads as the page ignoring the button.
     if (params.toString()) router.replace('/dashboard/tickets');
@@ -178,6 +187,7 @@ function TicketsList() {
     followingOnly: following,
     unassignedOnly: unassigned,
     overdueOnly: overdue,
+    dueSoonOnly: dueSoon,
   };
   const applyView = (f: SavedViewFilters) => {
     setQ(f.search ?? '');
@@ -192,6 +202,7 @@ function TicketsList() {
     setFollowing(f.followingOnly);
     setUnassigned(f.unassignedOnly);
     setOverdue(f.overdueOnly);
+    setDueSoon(f.dueSoonOnly);
     // A view and a URL filter would fight; the view wins, because it is the thing just clicked.
     if (params.toString()) router.replace('/dashboard/tickets');
   };

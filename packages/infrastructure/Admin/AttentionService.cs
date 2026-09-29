@@ -5,6 +5,7 @@ using Desk.Application.Admin;
 using Desk.Application.Common;
 using Desk.Application.Reporting;
 using Desk.Domain.Enums;
+using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,6 +38,8 @@ public sealed class AttentionService(
     public static readonly TimeSpan UndeliveredReportWindow = TimeSpan.FromDays(14);
 
     private Guid Org => tenant.OrganizationId ?? throw new TenantScopeMissingException();
+
+    private static string Clip(string text) => text.Length > 60 ? text[..60] + "…" : text;
 
     public async Task<AttentionDto> ListAsync(CancellationToken ct = default)
     {
@@ -73,6 +76,68 @@ public sealed class AttentionService(
                     "If the worker is running, open the connection and run Sync now to see the error.",
                     1, "/dashboard/connections"));
             }
+        }
+
+        // ── SLA: breached, about to breach, and replies owed ──────────────────
+        // Open tickets with a due date that somebody on the desk can act on. Waiting on the customer
+        // or on hold is excluded, as is a board ticket whose clock is paused: nobody can fix those
+        // by working harder, and listing them buries the ones that can be.
+        var atRiskBy = now.AddHours(TicketStatusRules.AtRiskHours);
+        var actionable = db.Tickets.AsNoTracking()
+            .Where(TicketStatusRules.Open())
+            .Where(t => t.SlaPausedAt == null
+                && !t.PortalStatus.ToUpper().Contains("WAITING")
+                && !t.PortalStatus.ToUpper().Contains("HOLD"));
+        var breached = await actionable
+            .Where(t => t.SlaDueAt != null && t.SlaDueAt < now)
+            .OrderBy(t => t.SlaDueAt)
+            .Select(t => new { Ref = t.Number ?? t.ExternalTicketId, t.Title, Due = t.SlaDueAt!.Value })
+            .ToListAsync(ct);
+        if (breached.Count > 0)
+        {
+            var oldest = breached[0];
+            // The Overdue list this links to shows every late open ticket, including those waiting on
+            // the customer; say how many this count left out, so the two numbers do not look like a bug.
+            var waitingLate = await db.Tickets.AsNoTracking()
+                .Where(TicketStatusRules.Open())
+                .Where(t => t.SlaPausedAt == null && t.SlaDueAt != null && t.SlaDueAt < now
+                    && (t.PortalStatus.ToUpper().Contains("WAITING") || t.PortalStatus.ToUpper().Contains("HOLD")))
+                .CountAsync(ct);
+            items.Add(new AttentionItem(
+                "sla-breached", "critical",
+                $"{Plural(breached.Count, "open ticket")} past {(breached.Count == 1 ? "its" : "their")} SLA",
+                $"Longest overdue: {oldest.Ref ?? "a ticket"} \u201c{Clip(oldest.Title)}\u201d, due {Age(now - oldest.Due)} ago. " +
+                (waitingLate > 0 ? $"Not counted: {waitingLate} more waiting on the customer or on hold. " : "") +
+                "Resolve them, or set a realistic date with the client — a date everyone knows is wrong measures nothing.",
+                breached.Count, "/dashboard/tickets?overdue=1"));
+        }
+        var atRisk = await actionable
+            .Where(t => t.SlaDueAt != null && t.SlaDueAt >= now && t.SlaDueAt <= atRiskBy)
+            .OrderBy(t => t.SlaDueAt)
+            .Select(t => new { Ref = t.Number ?? t.ExternalTicketId, t.Title, Due = t.SlaDueAt!.Value })
+            .ToListAsync(ct);
+        if (atRisk.Count > 0)
+        {
+            var next = atRisk[0];
+            items.Add(new AttentionItem(
+                "sla-at-risk", "warning",
+                $"{Plural(atRisk.Count, "ticket")} will breach {(atRisk.Count == 1 ? "its" : "their")} SLA within {TicketStatusRules.AtRiskHours} hours",
+                $"Next: {next.Ref ?? "a ticket"} \u201c{Clip(next.Title)}\u201d, due in {Age(next.Due - now)}.",
+                atRisk.Count, "/dashboard/tickets?due=soon"));
+        }
+        var replyOwed = await actionable
+            .Where(t => t.FirstResponseDueAt != null && t.FirstResponseDueAt < now && t.FirstRespondedAt == null)
+            .OrderBy(t => t.FirstResponseDueAt)
+            .Select(t => new { Ref = t.Number ?? t.ExternalTicketId, t.Title, t.BoardId })
+            .ToListAsync(ct);
+        if (replyOwed.Count > 0)
+        {
+            var first = replyOwed[0];
+            items.Add(new AttentionItem(
+                "sla-reply-overdue", "warning",
+                $"{Plural(replyOwed.Count, "board ticket")} still waiting for a first reply",
+                $"Oldest: {first.Ref ?? "a ticket"} \u201c{Clip(first.Title)}\u201d. A note from anyone on the team counts as the reply.",
+                replyOwed.Count, first.BoardId is { } b ? $"/dashboard/boards/{b}" : "/dashboard/boards"));
         }
 
         // ── Unhappy clients ───────────────────────────────────────────────────

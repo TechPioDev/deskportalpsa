@@ -15,6 +15,15 @@ namespace Desk.Domain.Tickets;
 public static class TicketStatusRules
 {
     public const string ResolvedMarker = "RESOLV";
+
+    /// <summary>
+    /// "Due soon" wherever a list or view says it: due within this many hours. The board list's
+    /// "soon" label has always meant eight hours; the view and the filter mean the same.
+    /// </summary>
+    public const int DueSoonHours = 8;
+
+    /// <summary>The needs-attention list's tighter warning: a ticket that will breach within this many hours.</summary>
+    public const int AtRiskHours = 2;
     public const string ClosedMarker = "CLOSED";
 
     /// <summary>Finished: resolved or closed, however the provider spells it.</summary>

@@ -416,7 +416,7 @@ tier is platform work that only pays off once the product is sold to more than o
    ticket and the technician, reported per client and per period. It is a small feature that gives
    the MSP something to sell with, and the reporting pipeline to carry it already exists.
    **Effort: small. Impact: high.**
-3. **SLA engine with breach warnings.** SLA data arrives from both providers, and the needs-attention
+3. **SLA engine with breach warnings.** *(Built 29 Sep 2026: SLA plans, pause, night shifts; breached / at-risk / reply-owed on needs-attention; Due soon view; Overview banner.)* SLA data arrives from both providers, and the needs-attention
    list is the natural place to surface "three tickets will breach within two hours". This turns a
    reporting product into an operational one. **Effort: medium. Impact: high.**
 4. **Approval workflows.** The approvers table exists and is unused. Change approvals, quote

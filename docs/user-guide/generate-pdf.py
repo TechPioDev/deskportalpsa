@@ -140,7 +140,8 @@ story += [Paragraph("Find a ticket", h2_s)]
 story += [bullets([
     "The <b>search box</b> at the top of every page (Ctrl+/) finds ticket numbers, subjects, customers and, once you "
     "have typed four characters, words in the replies. Press Enter to see every match as a list.",
-    "The <b>views</b> above the ticket list — Open, Mine, Unassigned, Overdue, Following, Closed — are one click each. "
+    "The <b>views</b> above the ticket list — Open, Mine, Unassigned, Overdue, Due soon (the next 8 hours), Following, "
+    "Closed — are one click each. "
     "<b>Mine</b> includes tickets sitting with a team you are in.",
     "Set any filters you use often, then <b>Save this view</b>. Tick <b>Share with the team</b> to offer it to "
     "everyone; only you can change or delete it.",
@@ -279,6 +280,10 @@ story += [Paragraph("Reports need an account to send from. On <b>Integration Hea
                     "<b>Send test email</b> proves it before anyone relies on it.", body_s)]
 
 story += [Paragraph("Needs attention", h2_s)]
+story += [Paragraph("It also lists tickets past their SLA, tickets that will breach within two hours, board tickets "
+                    "still waiting for a first reply, and poor client ratings from the last week. Tickets waiting on "
+                    "the customer or on hold are left out, and the item says how many. The Overview page shows the "
+                    "same SLA picture as a banner that opens the Overdue and Due soon lists.", body_s)]
 story += [Paragraph("Integration Health opens with one list of what is quietly going wrong: connections that failed or "
                     "stopped syncing, tickets that never reached the PSA, closed tickets with no closed date, and "
                     "reports nobody received. Add recipients and the same list is emailed each morning, but only on "

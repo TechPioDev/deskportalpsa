@@ -55,6 +55,7 @@ public class SavedTicketView : TenantEntity
     public bool FollowingOnly { get; set; }
     public bool UnassignedOnly { get; set; }
     public bool OverdueOnly { get; set; }
+    public bool DueSoonOnly { get; set; }
 
     /// <summary>Raised within the last N days. Null means no date window at all.</summary>
     public int? RaisedWithinDays { get; set; }

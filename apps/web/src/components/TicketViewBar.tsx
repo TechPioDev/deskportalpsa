@@ -20,6 +20,7 @@ export const EMPTY_FILTERS: SavedViewFilters = {
   search: null, status: null, priority: null, company: null, queue: null, connectionName: null,
   personKey: null, departmentId: null, teamId: null, openness: null,
   mineOnly: false, followingOnly: false, unassignedOnly: false, overdueOnly: false, raisedWithinDays: null,
+  dueSoonOnly: false,
 };
 
 /** The views every desk has. Order is the order a day is worked in. */
@@ -29,6 +30,7 @@ const BUILT_IN: { key: string; label: string; title: string; filters: Partial<Sa
   { key: 'mine', label: 'Mine', title: 'Yours, and anything sitting with a team you are in', filters: { mineOnly: true, openness: 'open' } },
   { key: 'unassigned', label: 'Unassigned', title: 'Open tickets nobody holds', filters: { unassignedOnly: true, openness: 'open' } },
   { key: 'overdue', label: 'Overdue', title: 'Past its due date and still open', filters: { overdueOnly: true } },
+  { key: 'due-soon', label: 'Due soon', title: 'Due within the next 8 hours and not late yet', filters: { dueSoonOnly: true } },
   { key: 'following', label: 'Following', title: 'Tickets you are watching without holding', filters: { followingOnly: true } },
   { key: 'closed', label: 'Closed', title: 'Resolved and closed tickets', filters: { openness: 'resolved' } },
 ];

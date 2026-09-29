@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw, Plus, Calendar, TrendingUp, Clock, ShieldCheck, Plug, Ticket as TicketIcon,
   CheckCircle2, Inbox, ArrowUpRight,
+  AlarmClock,
 } from 'lucide-react';
 import { MiniSpark, TrendChart, Donut } from '@/components/charts';
 import { StatusBadge, PriorityBadge } from '@/components/badges';
@@ -77,6 +78,17 @@ export default function Overview() {
     .map(([label, value]) => ({ label, value, color: PRIORITY_META[label]?.color ?? '#94a3b8', order: PRIORITY_META[label]?.order ?? 9 }))
     .sort((a, b) => a.order - b.order);
 
+  // SLA at a glance, counted with exactly the rules the linked lists use (the ticket list's Overdue
+  // and Due soon views), so the number on the banner is the number of rows the click shows. A
+  // client's list carries no due dates, so for a client this is always nothing and never shows.
+  const nowMs = Date.now();
+  const openDue = ts.filter((t) => t.dueAt && !isResolvedStatus(t.portalStatus) && !t.slaPausedAt);
+  const pastSla = openDue.filter((t) => new Date(t.dueAt!).getTime() < nowMs).length;
+  const dueSoon = openDue.filter((t) => {
+    const due = new Date(t.dueAt!).getTime();
+    return due >= nowMs && due <= nowMs + 8 * 3_600_000;
+  }).length;
+
   const stats = [
     { label: 'Open Tickets', value: open, sub: `${ts.length} total`, icon: Inbox, tone: 'blue', spark: created, color: '#3b82f6', href: '/dashboard/tickets?view=open' },
     { label: 'Resolved', value: resolved, sub: 'last 7 days', icon: CheckCircle2, tone: 'green', spark: resolvedSeries, color: '#22c55e', href: '/dashboard/tickets?view=resolved' },
@@ -103,6 +115,23 @@ export default function Overview() {
           <Link href="/dashboard/tickets/new" className="inline-flex items-center gap-2 rounded-lg bg-brand px-3.5 py-2 text-sm font-medium text-brand-fg hover:opacity-90"><Plus size={16} /> New Ticket</Link>
         </div>
       </div>
+
+      {(pastSla > 0 || dueSoon > 0) && (
+        <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm dark:border-red-900/60 dark:bg-red-950/30">
+          <AlarmClock size={16} className="text-red-600 dark:text-red-400" aria-hidden="true" />
+          {pastSla > 0 && (
+            <Link href="/dashboard/tickets?overdue=1" className="font-medium text-red-700 hover:underline dark:text-red-300">
+              {pastSla} open ticket{pastSla === 1 ? '' : 's'} past {pastSla === 1 ? 'its' : 'their'} SLA
+            </Link>
+          )}
+          {dueSoon > 0 && (
+            <Link href="/dashboard/tickets?due=soon" className="font-medium text-amber-800 hover:underline dark:text-amber-300">
+              {dueSoon} due within 8 hours
+            </Link>
+          )}
+          <span className="text-xs text-[var(--muted)]">Tickets whose SLA is paused while waiting are not counted.</span>
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

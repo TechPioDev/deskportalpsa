@@ -45,6 +45,7 @@ public sealed class TicketSearchController(
             // header search asks for it once the shorter search has been typed out; a two-letter
             // prefix does not need to read every note in the tenant to prove it matches everything.
             IncludeNotes: req.Notes ?? false,
+            DueSoonOnly: req.DueSoon ?? false,
             Take: req.Take ?? 25);
 
         // Staff first, exactly as the list endpoint does: the local dev admin is both, and a staff
@@ -124,6 +125,7 @@ public sealed class TicketSearchController(
         bool? Overdue = null,
         [Range(1, 3650)] int? WithinDays = null,
         bool? Notes = null,
+        bool? DueSoon = null,
         [Range(1, 200)] int? Take = null);
 
     public sealed record FollowerRequest(Guid? AppUserId = null);

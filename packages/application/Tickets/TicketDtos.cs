@@ -89,6 +89,7 @@ public sealed record TicketQuery(
     bool OverdueOnly = false,
     int? RaisedWithinDays = null,
     bool IncludeNotes = false,
+    bool DueSoonOnly = false,
     int Take = 50);
 
 /// <summary>
@@ -127,7 +128,8 @@ public sealed record SavedViewFilters(
     bool FollowingOnly = false,
     bool UnassignedOnly = false,
     bool OverdueOnly = false,
-    int? RaisedWithinDays = null);
+    int? RaisedWithinDays = null,
+    bool DueSoonOnly = false);
 
 /// <summary>Somebody watching a ticket they do not hold.</summary>
 public sealed record TicketFollowerDto(Guid AppUserId, string Name, string? Email, bool IsMe, DateTimeOffset AddedAt);

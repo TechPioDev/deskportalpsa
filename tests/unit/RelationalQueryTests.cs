@@ -207,6 +207,31 @@ public sealed class RelationalQueryTests : IDisposable
             .Should().Be(1);
     }
 
+    private sealed class NoResync : Desk.Application.Admin.ITicketResyncService
+    {
+        public Task<Desk.Application.Admin.UnsyncedTicketsDto> ListAsync(Guid? connectionId = null, CancellationToken ct = default)
+            => Task.FromResult(new Desk.Application.Admin.UnsyncedTicketsDto(0, []));
+        public Task<Desk.Application.Admin.ResyncResultDto> ResyncAsync(Guid ticketId, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    private sealed class NoMail : Desk.Application.Common.IEmailSender
+    {
+        public Task<Desk.Application.Common.EmailSenderStatus> StatusAsync(Guid organizationId, CancellationToken ct = default)
+            => Task.FromResult(Desk.Application.Common.EmailSenderStatus.None);
+        public Task SendAsync(Guid organizationId, Desk.Application.Common.EmailMessage message, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Sla_warnings_and_due_soon_translate()
+    {
+        // The seeded ticket is IN_PROGRESS and two hours overdue: it is exactly a breached one.
+        var attention = new AttentionService(_db, _tenant, new NoResync(), new NoMail(),
+            new AuditWriter(_db, User, _tenant, _clock), _clock, Microsoft.Extensions.Logging.Abstractions.NullLogger<AttentionService>.Instance);
+        (await attention.ListAsync()).Items.Should().Contain(i => i.Kind == "sla-breached" && i.Count == 1);
+
+        (await Reads.SearchAsync(new TicketQuery(DueSoonOnly: true))).Total.Should().Be(0);
+    }
+
     public void Dispose()
     {
         _db.Dispose();

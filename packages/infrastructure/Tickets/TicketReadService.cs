@@ -146,6 +146,15 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             scope = scope.Where(TicketStatusRules.Open()).Where(t => t.SlaDueAt != null && t.SlaDueAt < now && t.SlaPausedAt == null);
         }
 
+        // Due soon: not late yet, due within the window, still open and not paused.
+        if (q.DueSoonOnly)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var by = now.AddHours(TicketStatusRules.DueSoonHours);
+            scope = scope.Where(TicketStatusRules.Open())
+                .Where(t => t.SlaDueAt != null && t.SlaDueAt >= now && t.SlaDueAt <= by && t.SlaPausedAt == null);
+        }
+
         // The window is relative on purpose: see SavedTicketView.RaisedWithinDays. Measured on the
         // date the ticket was RAISED, falling back to the import date only where the provider gave
         // none — the same axis every other windowed figure in the portal uses.

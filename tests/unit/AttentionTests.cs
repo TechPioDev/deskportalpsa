@@ -225,4 +225,62 @@ public class AttentionTests
         item.Title.Should().Be("1 poor rating from clients this week");
         item.Detail.Should().Contain("1/5 on 4410").And.Contain("Nobody called back");
     }
+
+    private static Desk.Domain.Tickets.Ticket Sla(string reference, string status, DateTimeOffset? due,
+        DateTimeOffset? replyDue = null, DateTimeOffset? paused = null) => new()
+    {
+        MspOrganizationId = Org, Origin = Desk.Domain.Enums.TicketOrigin.Internal, Number = reference,
+        RequesterName = "d", RequesterEmail = "d@t", Title = "Ticket " + reference, PortalStatus = status,
+        SlaDueAt = due, FirstResponseDueAt = replyDue, SlaPausedAt = paused,
+        SyncStatus = Desk.Domain.Enums.TicketSyncStatus.Synced,
+    };
+
+    [Fact]
+    public async Task Breached_and_about_to_breach_tickets_are_listed_but_waiting_and_finished_ones_are_not()
+    {
+        var (svc, h, _) = await BuildAsync();
+        var now = h.Clock.GetUtcNow();
+        h.Db.Tickets.AddRange(
+            Sla("INT-1", "IN_PROGRESS", now.AddHours(-30)),          // breached, longest
+            Sla("INT-2", "NEW", now.AddHours(-1)),                    // breached
+            Sla("INT-3", "NEW", now.AddMinutes(90)),                  // at risk
+            Sla("INT-4", "NEW", now.AddHours(5)),                     // due, not yet at risk
+            Sla("INT-5", "WAITING_CUSTOMER", now.AddHours(-3)),       // the customer has it
+            Sla("INT-6", "ON_HOLD", now.AddHours(-3)),
+            Sla("INT-7", "IN_PROGRESS", now.AddHours(-3), paused: now.AddHours(-4)),
+            Sla("INT-8", "CLOSED", now.AddHours(-3)));                // finished late is history
+        await h.Db.SaveChangesAsync();
+
+        var items = (await svc.ListAsync()).Items;
+
+        var breached = items.Single(i => i.Kind == "sla-breached");
+        breached.Should().BeEquivalentTo(new { Severity = "critical", Count = 2, Title = "2 open tickets past their SLA" });
+        breached.Detail.Should().StartWith("Longest overdue: INT-1");
+        // The linked list shows the waiting ones too; the item says why its count is smaller.
+        breached.Detail.Should().Contain("Not counted: 2 more waiting on the customer or on hold.");
+        items.Single(i => i.Kind == "sla-at-risk").Should().BeEquivalentTo(new { Count = 1, Title = "1 ticket will breach its SLA within 2 hours" });
+    }
+
+    [Fact]
+    public async Task A_board_ticket_nobody_has_answered_past_its_reply_time_is_listed_until_someone_does()
+    {
+        var (svc, h, _) = await BuildAsync();
+        var now = h.Clock.GetUtcNow();
+        var waiting = Sla("INT-9", "NEW", now.AddHours(20), replyDue: now.AddHours(-1));
+        var answered = Sla("INT-10", "NEW", now.AddHours(20), replyDue: now.AddHours(-1));
+        answered.FirstRespondedAt = now.AddHours(-2);
+        h.Db.Tickets.AddRange(waiting, answered);
+        await h.Db.SaveChangesAsync();
+
+        var item = (await svc.ListAsync()).Items.Single(i => i.Kind == "sla-reply-overdue");
+        item.Count.Should().Be(1);
+        item.Detail.Should().Contain("INT-9");
+    }
+
+    [Fact]
+    public async Task No_sla_trouble_means_no_sla_items()
+    {
+        var (svc, _, _) = await BuildAsync();
+        (await svc.ListAsync()).Items.Should().NotContain(i => i.Kind.StartsWith("sla-"));
+    }
 }

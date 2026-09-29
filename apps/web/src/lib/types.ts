@@ -100,6 +100,7 @@ export const SavedViewFiltersSchema = z.object({
   followingOnly: z.boolean().default(false),
   unassignedOnly: z.boolean().default(false),
   overdueOnly: z.boolean().default(false),
+  dueSoonOnly: z.boolean().default(false),
   raisedWithinDays: z.number().nullable().default(null),
 });
 export type SavedViewFilters = z.infer<typeof SavedViewFiltersSchema>;
