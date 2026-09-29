@@ -51,12 +51,17 @@ say "Where is the bucket?"
 say "  1) Backblaze B2    2) Wasabi    3) AWS S3    4) Cloudflare R2    5) Other S3-compatible"
 ask PROVIDER "Choose 1-5" "1"
 
+# People paste the whole Endpoint line from the bucket page; keep only the region from it.
+region_of() { local r="${1#https://}"; r="${r#http://}"; r="${r#s3.}"; r="${r%%.backblazeb2.com*}"
+  r="${r%%.wasabisys.com*}"; r="${r%%.amazonaws.com*}"; printf '%s' "${r%%/*}"; }
+
 case "$PROVIDER" in
-  1) ask REGION "B2 region, shown on the bucket page (e.g. us-west-004, eu-central-003)"; need "Region" "$REGION"
+  1) ask REGION "B2 region: paste the bucket's Endpoint (e.g. s3.us-west-004.backblazeb2.com)"; need "Region" "$REGION"
+     REGION="$(region_of "$REGION")"; say "  Region: $REGION"
      ENDPOINT="https://s3.$REGION.backblazeb2.com" ;;
-  2) ask REGION "Wasabi region (e.g. eu-central-1, us-east-1)"; need "Region" "$REGION"
+  2) ask REGION "Wasabi region or endpoint (e.g. eu-central-1)"; need "Region" "$REGION"; REGION="$(region_of "$REGION")"
      ENDPOINT="https://s3.$REGION.wasabisys.com" ;;
-  3) ask REGION "AWS region (e.g. eu-west-2, ap-south-1)"; need "Region" "$REGION"
+  3) ask REGION "AWS region or endpoint (e.g. ap-south-1)"; need "Region" "$REGION"; REGION="$(region_of "$REGION")"
      ENDPOINT="https://s3.$REGION.amazonaws.com" ;;
   4) ask ACCOUNT "Cloudflare account ID (from the R2 overview page)"; need "Account ID" "$ACCOUNT"
      ENDPOINT="https://$ACCOUNT.r2.cloudflarestorage.com"; REGION="auto" ;;
