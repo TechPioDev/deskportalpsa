@@ -109,6 +109,8 @@ story += [Paragraph("Administrators see the company's devices under <b>Control P
                     "each shows its type, serial and warranty, and a warning when the warranty has ended or ends "
                     "within 60 days. Open a device to see every ticket raised about it. You can add notes to any "
                     "device, and add devices of your own by hand.", body_s)]
+story += [Paragraph("When you raise a ticket, <b>Which device?</b> lets you say which of your company's devices it "
+                    "is about - it goes to your IT team with the ticket.", body_s)]
 
 story += [Paragraph("3. Working a ticket (staff)", h1_s), hr()]
 story += [Paragraph("Open a ticket and use the box at the top of the conversation. One action covers the three things "
@@ -227,6 +229,12 @@ story += [Paragraph("<b>Satisfaction</b> shows how clients rated resolved ticket
                     "comment and poor rating. A rating counts for whoever held the ticket when it was rated. Ratings "
                     "of 1 or 2 in the last week also appear on the needs-attention list, and each client's business "
                     "review shows their satisfaction for the quarter.", body_s)]
+
+story += [Paragraph("Devices on tickets", h2_s)]
+story += [Paragraph("The ticket page shows the device a ticket is about, with its serial and warranty. <b>Set device</b> "
+                    "(or <b>Change</b>) picks one of the client's devices; on a PSA ticket the PSA is updated first. "
+                    "A PSA ticket can only use devices the PSA knows - one added by hand in the portal is shown greyed "
+                    "out with the reason. Monitoring alerts that name a device by its exact name are linked to it.", body_s)]
 
 story += [Paragraph("Client approvals", h2_s)]
 story += [Paragraph("On a client's ticket, <b>Ask for approval</b> sends a request to one of the approvers the client "

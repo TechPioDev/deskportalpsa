@@ -33,6 +33,13 @@ public interface IServiceManagementConnector
     Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default);
 
     /// <summary>
+    /// Points a ticket at a device (or at none). <paramref name="previousDeviceExternalId"/> is the
+    /// device the portal set before: a provider that allows several devices per ticket removes only
+    /// that one, never the others someone added in the PSA itself.
+    /// </summary>
+    Task SetTicketDeviceAsync(string ticketId, string? deviceExternalId, string? previousDeviceExternalId, CancellationToken ct = default);
+
+    /// <summary>
     /// Agreements/contracts the provider holds for a company (CW agreements, Autotask contracts).
     /// Only meaningful when <see cref="ProviderCapabilities.SupportsContracts"/> — callers must
     /// check, and connectors without the concept return an empty list rather than throwing.

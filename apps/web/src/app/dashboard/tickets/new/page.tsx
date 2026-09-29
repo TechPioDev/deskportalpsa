@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
@@ -16,13 +16,18 @@ const FormSchema = z.object({
 
 export default function NewTicketPage() {
   const router = useRouter();
-  const [form, setForm] = useState({ title: '', description: '', priority: 'NORMAL' });
+  const [form, setForm] = useState({ title: '', description: '', priority: 'NORMAL', deviceId: '' });
   const [error, setError] = useState<string | null>(null);
+  // The company's devices the PSA knows. Only shown when there are some: an empty "Which device?"
+  // is a question nobody can answer.
+  const { data: devices } = useQuery({ queryKey: ['client-device-choices'], queryFn: api.clientDeviceChoices, retry: false });
 
   const create = useMutation({
-    mutationFn: (body: { title: string; description?: string; priority?: string }) => api.createTicket(body),
+    mutationFn: (body: { title: string; description?: string; priority?: string; deviceId?: string }) => api.createTicket(body),
     onSuccess: (r) => router.push(`/dashboard/tickets/${r.id}`),
-    onError: () => setError('Could not submit right now. This preview runs without a live backend.'),
+    // The server's own words: "That device is not one of your company's devices" is something the
+    // person can act on; a generic "could not submit" is not.
+    onError: (e) => setError((e as Error).message || 'Could not submit the ticket. Please try again.'),
   });
 
   function submit(e: React.FormEvent) {
@@ -33,7 +38,7 @@ export default function NewTicketPage() {
       setError(parsed.error.issues[0].message);
       return;
     }
-    create.mutate(parsed.data);
+    create.mutate({ ...parsed.data, deviceId: form.deviceId || undefined });
   }
 
   return (
@@ -67,6 +72,18 @@ export default function NewTicketPage() {
             <option value="CRITICAL">Critical</option>
           </select>
         </Field>
+        {devices && devices.length > 0 && (
+          <Field label="Which device? (optional)">
+            <select
+              value={form.deviceId}
+              onChange={(e) => setForm({ ...form, deviceId: e.target.value })}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand"
+            >
+              <option value="">Not about a particular device</option>
+              {devices.map((d) => <option key={d.id} value={d.id}>{d.name}{d.type ? ` — ${d.type}` : ''}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="Description">
           <textarea
             value={form.description}

@@ -161,6 +161,12 @@ internal sealed class CwTimeEntry
     [JsonPropertyName("workType")] public CwRef? WorkType { get; set; }
 }
 
+/// <summary>A configuration linked to a ticket (service/tickets/{id}/configurations).</summary>
+internal sealed class CwTicketConfiguration
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+}
+
 internal sealed class CwConfiguration
 {
     [JsonPropertyName("id")] public long Id { get; set; }

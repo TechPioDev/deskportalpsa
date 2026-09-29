@@ -260,4 +260,56 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
         (await act.Should().ThrowAsync<ConnectorException>())
             .Which.Message.Should().Contain(body);
     }
+
+    [Fact]
+    public async Task A_ticket_carries_every_configuration_on_it_and_a_failed_read_says_nothing()
+    {
+        var server = new FakeConnectWiseServer(Clock);
+        var c = Build(server);
+        var one = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Disk failing", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c1" });
+        var two = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Printer", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c2" });
+        var three = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "VPN", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c3" });
+        server.LinkConfiguration(long.Parse(one.ExternalId!), 90);
+        server.LinkConfiguration(long.Parse(one.ExternalId!), 81);
+        server.ConfigurationReadFailsFor.Add(long.Parse(three.ExternalId!));
+
+        var page = await c.GetTicketsAsync(new TicketFilter());
+
+        page.Items.Single(t => t.ExternalId == one.ExternalId).Should().BeEquivalentTo(new
+        {
+            DeviceKnown = true, DeviceExternalId = "81", DeviceExternalIds = new[] { "81", "90" },
+        });
+        page.Items.Single(t => t.ExternalId == two.ExternalId).Should().BeEquivalentTo(new { DeviceKnown = true, DeviceExternalId = (string?)null });
+        // Unread is not "none": the sync must not clear a device on the strength of a failed request.
+        page.Items.Single(t => t.ExternalId == three.ExternalId).DeviceKnown.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Setting_the_device_removes_only_the_one_the_portal_set_before()
+    {
+        var server = new FakeConnectWiseServer(Clock);
+        var c = Build(server);
+        var t = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Disk failing", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "s1" });
+        var id = long.Parse(t.ExternalId!);
+        server.LinkConfiguration(id, 55); // attached by a technician in ConnectWise itself
+        server.LinkConfiguration(id, 81); // the portal's earlier choice
+
+        await c.SetTicketDeviceAsync(t.ExternalId!, "90", previousDeviceExternalId: "81");
+
+        server.ConfigurationsOf(id).Should().BeEquivalentTo(new[] { 55L, 90L });
+        await c.SetTicketDeviceAsync(t.ExternalId!, null, previousDeviceExternalId: "90");
+        server.ConfigurationsOf(id).Should().BeEquivalentTo(new[] { 55L });
+    }
+
+    [Fact]
+    public async Task A_new_ticket_is_linked_to_the_device_it_names()
+    {
+        var server = new FakeConnectWiseServer(Clock);
+        var c = Build(server);
+
+        var t = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "Laptop will not boot", ExternalCompanyId = SeededOrganizationId, DeviceExternalId = "81", IdempotencyKey = "n1" });
+
+        server.ConfigurationsOf(long.Parse(t.ExternalId!)).Should().Equal(81L);
+    }
 }

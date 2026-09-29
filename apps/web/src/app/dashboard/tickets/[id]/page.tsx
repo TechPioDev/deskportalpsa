@@ -18,6 +18,7 @@ import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
 import { ApprovalPanel } from '@/components/ApprovalPanel';
 import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
+import { TicketDevicePicker } from '@/components/TicketDevicePicker';
 import { api, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 
@@ -481,6 +482,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // Provider 2 = Autotask, which rejects a time entry whose summary notes are blank.
   const notesRequired = Number(ticket?.provider) === 2;
   const canUpdate = me?.permissions.includes('tickets.update') ?? false;
+  const [pickingDevice, setPickingDevice] = useState(false);
   // A ticket with no provider came from one of the team's own boards, so the PSA-side rows below
   // have nothing true to say and are left out rather than shown empty.
   const isFromPsa = ticket?.provider !== null && ticket?.provider !== undefined;
@@ -758,23 +760,40 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <Meta label="Category" value={ticket.portalCategory ?? '—'} />
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 {/* The device it is about, when the PSA or the portal knows one. Serial and warranty
-                    reach staff only; a client sees the name and type. */}
-                {ticket.device && (
+                    reach staff only; a client sees the name and type. A technician can set or change
+                    it on any ticket with a client. */}
+                {(ticket.device || (isStaff && canUpdate && ticket.customerName)) && (
                   <div className="lg:py-2">
-                    <dt className="text-[10px] uppercase tracking-wide text-[var(--faint)]">Device</dt>
-                    <dd className="mt-0.5 font-medium">
-                      <span className="block truncate" title={ticket.device.name}>
-                        {ticket.device.name}{!ticket.device.isActive && <span className="font-normal text-[var(--muted)]"> (retired)</span>}
-                      </span>
-                      {(ticket.device.type || ticket.device.identifier) && (
-                        <span className="block truncate text-xs font-normal text-[var(--muted)]">
-                          {[ticket.device.type, ticket.device.identifier].filter(Boolean).join(' · ')}
-                        </span>
+                    <dt className="flex items-center justify-between text-[10px] uppercase tracking-wide text-[var(--faint)]">
+                      Device
+                      {isStaff && canUpdate && ticket.customerName && !pickingDevice && (
+                        <button type="button" onClick={() => setPickingDevice(true)}
+                          className="text-[10px] font-medium normal-case tracking-normal text-brand hover:underline">
+                          {ticket.device ? 'Change' : 'Set device'}
+                        </button>
                       )}
-                      {(() => {
-                        const w = warrantyState(ticket.device.warrantyExpiresAt);
-                        return w && w.tone !== 'ok' ? <span className={`block text-xs font-normal ${WARRANTY_TONE[w.tone]}`}>{w.text}</span> : null;
-                      })()}
+                    </dt>
+                    <dd className="mt-0.5 font-medium">
+                      {pickingDevice ? (
+                        <TicketDevicePicker ticketId={id} currentId={ticket.device?.id ?? null} onClose={() => setPickingDevice(false)} />
+                      ) : ticket.device ? (
+                        <>
+                          <span className="block truncate" title={ticket.device.name}>
+                            {ticket.device.name}{!ticket.device.isActive && <span className="font-normal text-[var(--muted)]"> (retired)</span>}
+                          </span>
+                          {(ticket.device.type || ticket.device.identifier) && (
+                            <span className="block truncate text-xs font-normal text-[var(--muted)]">
+                              {[ticket.device.type, ticket.device.identifier].filter(Boolean).join(' · ')}
+                            </span>
+                          )}
+                          {(() => {
+                            const w = warrantyState(ticket.device.warrantyExpiresAt);
+                            return w && w.tone !== 'ok' ? <span className={`block text-xs font-normal ${WARRANTY_TONE[w.tone]}`}>{w.text}</span> : null;
+                          })()}
+                        </>
+                      ) : (
+                        <span className="text-[var(--muted)]">—</span>
+                      )}
                     </dd>
                   </div>
                 )}

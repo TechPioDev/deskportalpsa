@@ -49,16 +49,21 @@ public sealed class TicketSyncService(
         var existing = await db.Tickets.FirstOrDefaultAsync(
             t => t.PsaConnectionId == psaConnectionId && t.ExternalTicketId == incoming.ExternalId, ct);
 
-        // A provider that does not carry the device on the ticket leaves the one the portal holds in
-        // the hash, so the portal's own hash of the row still agrees with the sync's.
-        var existingDeviceExternalId = incoming.DeviceKnown ? null : existing?.DeviceExternalId;
+        // The device the ticket is about. A provider that does not carry it leaves the portal's; one
+        // that lists several (ConnectWise) keeps the portal's while it is still among them, rather
+        // than swapping it for whichever the provider happens to list first.
+        var deviceExternalId = !incoming.DeviceKnown
+            ? existing?.DeviceExternalId
+            : existing?.DeviceExternalId is { } held && incoming.DeviceExternalIds.Contains(held)
+                ? held
+                : string.IsNullOrWhiteSpace(incoming.DeviceExternalId) ? null : incoming.DeviceExternalId;
 
         var hash = UpdateHasher.ForTicketState(
             portalStatus, portalPriority, portalCategory, incoming.Title, incoming.Description,
             incoming.ResolvedAt, incoming.ClosedAt, incoming.SlaDueAt, incoming.CreatedAt, portalQueue,
             string.IsNullOrWhiteSpace(incoming.RequesterName) ? null : incoming.RequesterName,
             string.IsNullOrWhiteSpace(incoming.RequesterEmail) ? null : incoming.RequesterEmail,
-            incoming.DeviceKnown ? incoming.DeviceExternalId : existingDeviceExternalId);
+            deviceExternalId);
 
         if (existing is not null)
         {
@@ -115,7 +120,7 @@ public sealed class TicketSyncService(
         // device sync links the id up when it arrives.
         if (incoming.DeviceKnown)
         {
-            ticket.DeviceExternalId = string.IsNullOrWhiteSpace(incoming.DeviceExternalId) ? null : incoming.DeviceExternalId;
+            ticket.DeviceExternalId = deviceExternalId;
             ticket.DeviceId = ticket.DeviceExternalId is null ? null : await db.Devices.AsNoTracking()
                 .Where(d => d.PsaConnectionId == psaConnectionId && d.ExternalId == ticket.DeviceExternalId)
                 .Select(d => (Guid?)d.Id).FirstOrDefaultAsync(ct);

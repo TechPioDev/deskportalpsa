@@ -49,7 +49,7 @@ public sealed class TicketsController(
     public async Task<IActionResult> Create([FromBody] CreateTicketRequest req, CancellationToken ct)
     {
         var result = await commands.CreateAsync(await AccessAsync(ct),
-            new CreateTicketInput(req.Title, req.Description, req.Priority, req.Category, req.QueueOrBoard), ct);
+            new CreateTicketInput(req.Title, req.Description, req.Priority, req.Category, req.QueueOrBoard, req.DeviceId), ct);
         return CreatedAtAction(nameof(Detail), new { id = result.Id }, result);
     }
 
@@ -110,7 +110,8 @@ public sealed class TicketsController(
         string? Description,
         string? Priority,
         string? Category,
-        string? QueueOrBoard);
+        string? QueueOrBoard,
+        Guid? DeviceId = null);
 
     public sealed record AddCommentRequest(
         [Required, StringLength(10000, MinimumLength = 1)] string Body,

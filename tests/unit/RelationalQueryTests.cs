@@ -302,6 +302,12 @@ public sealed class RelationalQueryTests : IDisposable
         var device = (await settings.ListDevicesAsync(admin)).Should().ContainSingle().Subject;
         device.OpenTickets.Should().Be(1);
         (await settings.GetDeviceAsync(admin, device.Id)).Tickets.Should().ContainSingle();
+
+        // The pickers' queries: a client's list, a technician's list and a change on a PSA ticket.
+        var pickers = new Desk.Infrastructure.Tickets.TicketDeviceService(_db, new NoopTicketScopeQuery(), new OneConnector(psa));
+        (await pickers.ClientChoicesAsync(admin)).Should().ContainSingle().Which.Name.Should().Be("ACME-SRV01");
+        (await pickers.ChoicesAsync(_me, ticket.Id)).Should().ContainSingle().Which.Unavailable.Should().BeNull();
+        (await pickers.SetAsync(_me, ticket.Id, null)).Should().BeNull();
     }
 
     private sealed class OneConnector(Desk.PsaCore.Contracts.IServiceManagementConnector c) : Desk.Application.Connectors.IConnectorResolver

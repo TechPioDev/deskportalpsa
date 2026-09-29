@@ -243,7 +243,9 @@ public sealed record CreateTicketInput(
     string? Description,
     string? Priority,
     string? Category,
-    string? QueueOrBoard);
+    string? QueueOrBoard,
+    /// <summary>The device the ticket is about - one of the company's devices the PSA knows.</summary>
+    Guid? DeviceId = null);
 
 public sealed record CreateTicketResultDto(Guid Id, string? ExternalTicketId);
 

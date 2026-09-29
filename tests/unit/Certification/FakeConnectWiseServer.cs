@@ -42,6 +42,22 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
 
     // Documents keyed by id, holding what the real API stores: the record it hangs off, plus bytes.
     private readonly Dictionary<long, (long RecordId, string FileName, byte[] Content)> _documents = [];
+    /// <summary>Configurations linked to each ticket, as service/tickets/{id}/configurations holds them.</summary>
+    private readonly Dictionary<long, List<long>> _ticketConfigurations = [];
+
+    /// <summary>Links a configuration to a ticket, as a technician attaching a device in ConnectWise would.</summary>
+    public void LinkConfiguration(long ticketId, long configurationId)
+    {
+        if (!_ticketConfigurations.TryGetValue(ticketId, out var list)) _ticketConfigurations[ticketId] = list = [];
+        if (!list.Contains(configurationId)) list.Add(configurationId);
+    }
+
+    public IReadOnlyList<long> ConfigurationsOf(long ticketId)
+        => _ticketConfigurations.TryGetValue(ticketId, out var list) ? [.. list] : [];
+
+    /// <summary>Tickets whose configuration list answers with a server error.</summary>
+    public HashSet<long> ConfigurationReadFailsFor { get; } = [];
+
     private readonly List<Dictionary<string, object?>> _tickets = [];
     private readonly List<Dictionary<string, object?>> _notes = [];
 
@@ -87,6 +103,28 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
             var ticketId = ExtractTicketId(path);
             if (request.Method == HttpMethod.Post) return CreateNote(ticketId, body);
             return Arr("[" + string.Join(",", _notes.Where(n => (long)n["ticketID"]! == ticketId).Select(Serialize)) + "]");
+        }
+
+        // A ticket's configurations: their own resource, read, added to and removed from one by one.
+        var configurations = System.Text.RegularExpressions.Regex.Match(path, @"service/tickets/(\d+)/configurations(?:/(\d+))?$");
+        if (configurations.Success)
+        {
+            var ticketId = long.Parse(configurations.Groups[1].Value);
+            if (request.Method == HttpMethod.Get)
+                return ConfigurationReadFailsFor.Contains(ticketId)
+                    ? Resp(HttpStatusCode.InternalServerError, "{\"code\":\"boom\"}")
+                    : Arr("[" + string.Join(",", ConfigurationsOf(ticketId).Select(id => $"{{\"id\":{id}}}")) + "]");
+            if (request.Method == HttpMethod.Post)
+            {
+                var id = System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("id").GetInt64();
+                LinkConfiguration(ticketId, id);
+                return Ok($"{{\"id\":{id}}}");
+            }
+            if (request.Method == HttpMethod.Delete && configurations.Groups[2].Success)
+            {
+                if (_ticketConfigurations.TryGetValue(ticketId, out var list)) list.Remove(long.Parse(configurations.Groups[2].Value));
+                return Resp(HttpStatusCode.NoContent, "");
+            }
         }
 
         // Tickets

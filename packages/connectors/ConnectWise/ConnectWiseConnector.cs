@@ -218,14 +218,68 @@ public sealed class ConnectWiseConnector(
         // A full page means there is probably another; ConnectWise does not report a total, so the
         // last page costs one extra request that comes back empty. Cheaper than missing tickets.
         var hasMore = items.Count >= filter.PageSize;
+        var devices = await TicketDevicesAsync(items.Select(i => i.Id), ct);
         return new PaginatedResult<UnifiedTicket>(
-            items.Select(ToUnified).ToList(), hasMore ? (page + 1).ToString() : null, hasMore);
+            items.Select(t => WithDevices(ToUnified(t), devices)).ToList(), hasMore ? (page + 1).ToString() : null, hasMore);
     }
 
     public async Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
     {
         var t = await GetOneAsync<CwTicket>($"service/tickets/{ticketId}", ct);
-        return t is null ? null : ToUnified(t);
+        return t is null ? null : WithDevices(ToUnified(t), await TicketDevicesAsync([t.Id], ct));
+    }
+
+    /// <summary>
+    /// The configurations on each ticket. ConnectWise keeps them on their own resource, so this is one
+    /// request per ticket - made only for the tickets a sync actually fetched, a few at a time. A ticket
+    /// whose list could not be read is left out, and so says nothing about its device: a failed read
+    /// must not clear a device the portal knows about.
+    /// </summary>
+    private async Task<Dictionary<long, List<string>>> TicketDevicesAsync(IEnumerable<long> ticketIds, CancellationToken ct)
+    {
+        var found = new System.Collections.Concurrent.ConcurrentDictionary<long, List<string>>();
+        using var gate = new SemaphoreSlim(4);
+        await Task.WhenAll(ticketIds.Distinct().Select(async id =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                var linked = await GetListAsync<CwTicketConfiguration>(
+                    $"service/tickets/{id}/configurations", new() { ["pageSize"] = "100" }, ct);
+                found[id] = [.. linked.OrderBy(c => c.Id).Select(c => c.Id.ToString())];
+            }
+            catch (ConnectorException)
+            {
+                // Unknown for this ticket; see above.
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }));
+        return new Dictionary<long, List<string>>(found);
+    }
+
+    private static UnifiedTicket WithDevices(UnifiedTicket ticket, Dictionary<long, List<string>> devices)
+        => long.TryParse(ticket.ExternalId, out var id) && devices.TryGetValue(id, out var ids)
+            ? ticket with { DeviceKnown = true, DeviceExternalIds = ids, DeviceExternalId = ids.FirstOrDefault() }
+            : ticket;
+
+    /// <summary>
+    /// A ConnectWise ticket can carry several configurations. The portal's device is one of them: the
+    /// new one is added, and only the one the portal set before is removed - never the others a
+    /// technician attached in ConnectWise.
+    /// </summary>
+    public async Task SetTicketDeviceAsync(string ticketId, string? deviceExternalId, string? previousDeviceExternalId, CancellationToken ct = default)
+    {
+        var current = (await GetListAsync<CwTicketConfiguration>(
+                $"service/tickets/{ticketId}/configurations", new() { ["pageSize"] = "100" }, ct))
+            .Select(c => c.Id.ToString()).ToHashSet();
+
+        if (previousDeviceExternalId is not null && previousDeviceExternalId != deviceExternalId && current.Contains(previousDeviceExternalId))
+            await SendVoidAsync(HttpMethod.Delete, $"service/tickets/{ticketId}/configurations/{previousDeviceExternalId}", null, ct);
+        if (deviceExternalId is not null && !current.Contains(deviceExternalId) && long.TryParse(deviceExternalId, out var id))
+            await SendAsync<CwTicketConfiguration>(HttpMethod.Post, $"service/tickets/{ticketId}/configurations", new { id }, ct);
     }
 
     public async Task<CreateTicketResult> CreateTicketAsync(UnifiedTicketCreateRequest ticket, CancellationToken ct = default)
@@ -250,6 +304,15 @@ public sealed class ConnectWiseConnector(
         if (ticket.SubIssueType is not null) body["item"] = Ref(ticket.SubIssueType);
 
         var created = await SendAsync<CwTicket>(HttpMethod.Post, "service/tickets", body, ct);
+
+        // The device lives on its own resource, so it follows the create. The ticket exists by now:
+        // a refused link must not report the create as failed (the customer would raise it twice).
+        // The next sync reads the ticket's real configurations either way.
+        if (ticket.DeviceExternalId is { } device)
+        {
+            try { await SetTicketDeviceAsync(created!.Id.ToString(), device, null, ct); }
+            catch (ConnectorException) { }
+        }
         return new CreateTicketResult(true, created!.Id.ToString(), null);
     }
 

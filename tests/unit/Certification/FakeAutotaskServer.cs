@@ -230,6 +230,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             ["queueID"] = input.GetValueOrDefault("queueID"),
             ["ticketCategory"] = input.GetValueOrDefault("ticketCategory"),
             ["companyID"] = input.GetValueOrDefault("companyID"),
+            ["configurationItemID"] = input.GetValueOrDefault("configurationItemID"),
             ["createDate"] = now,
             ["lastActivityDate"] = now,
         };

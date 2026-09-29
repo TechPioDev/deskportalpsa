@@ -120,6 +120,15 @@ public sealed class TicketCommandService(
         var requester = await db.ClientUsers.FirstOrDefaultAsync(u => u.Id == access.ClientUserId, ct)
             ?? throw new NotFoundException("Client user");
 
+        // The device, when the customer named one: theirs, in use, and known to the PSA the ticket is
+        // going to - the same list the "Which device?" picker offers.
+        Desk.Domain.ControlPanel.Device? device = null;
+        if (input.DeviceId is { } deviceId)
+            device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d =>
+                    d.Id == deviceId && d.ClientCompanyId == company.Id && d.IsActive
+                    && d.ExternalId != null && d.PsaConnectionId == connection.Id, ct)
+                ?? throw new ValidationFailedException("That device is not one of your company's devices. Choose another, or leave it blank.");
+
         var rules = await LoadRulesAsync(access.MspOrganizationId, connection.Provider, ct);
         var ctx = new MappingContext
         {
@@ -153,6 +162,7 @@ public sealed class TicketCommandService(
             ExternalCompanyId = company.ExternalCompanyId,
             RequesterExternalId = requester.ExternalContactId,
             RequesterEmail = requester.Email,
+            DeviceExternalId = device?.ExternalId,
             IdempotencyKey = idempotencyKey,
             }, ct);
         }
@@ -179,6 +189,8 @@ public sealed class TicketCommandService(
             PortalPriority = input.Priority ?? "NORMAL",
             PortalCategory = input.Category,
             QueueOrBoard = input.QueueOrBoard,
+            DeviceId = device?.Id,
+            DeviceExternalId = device?.ExternalId,
             // Recorded either way. A rejected create used to throw before anything was written, so
             // the customer's ticket vanished with nothing to retry from and no count of what was
             // lost. It is kept here as Error, listed for staff, and resyncable.

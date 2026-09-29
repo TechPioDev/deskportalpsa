@@ -72,6 +72,11 @@ public record UnifiedTicket
     /// </summary>
     public string? DeviceExternalId { get; init; }
     public bool DeviceKnown { get; init; }
+
+    /// <summary>Every device on the ticket, for a provider that allows several (ConnectWise).
+    /// <see cref="DeviceExternalId"/> is the first; the sync keeps the one the portal already holds
+    /// when it is still among these, rather than swapping it for whichever the provider lists first.</summary>
+    public IReadOnlyList<string> DeviceExternalIds { get; init; } = [];
     public IReadOnlyDictionary<string, string?> CustomFields { get; init; }
         = new Dictionary<string, string?>();
 }
@@ -91,6 +96,9 @@ public record UnifiedTicketCreateRequest
     public string? IssueType { get; init; }
     public string? SubIssueType { get; init; }
     public required string ExternalCompanyId { get; init; }
+
+    /// <summary>The device the new ticket is about, as the provider's own id.</summary>
+    public string? DeviceExternalId { get; init; }
     public string? RequesterExternalId { get; init; }
     public string? RequesterEmail { get; init; }
     /// <summary>Idempotency key so retried creates never duplicate a PSA ticket.</summary>

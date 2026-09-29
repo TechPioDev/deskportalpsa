@@ -178,6 +178,7 @@ public sealed class AutotaskConnector(
         if (ticket.TicketType is not null) body["ticketType"] = ticket.TicketType;
         if (ticket.IssueType is not null) body["issueType"] = ticket.IssueType;
         if (ticket.SubIssueType is not null) body["subIssueType"] = ticket.SubIssueType;
+        if (long.TryParse(ticket.DeviceExternalId, out var configurationItem)) body["configurationItemID"] = configurationItem;
         var result = await SendAsync<AtCreateResult>(HttpMethod.Post, "V1.0/Tickets", body, ct);
         return new CreateTicketResult(true, result!.ItemId.ToString(), null);
     }
@@ -206,6 +207,14 @@ public sealed class AutotaskConnector(
 
         await SendAsync<AtCreateResult>(HttpMethod.Patch, "V1.0/Tickets", body, ct);
         return new UpdateTicketResult(true, null);
+    }
+
+    /// <summary>Autotask holds one configuration item per ticket, so setting it replaces whatever was there.</summary>
+    public async Task SetTicketDeviceAsync(string ticketId, string? deviceExternalId, string? previousDeviceExternalId, CancellationToken ct = default)
+    {
+        long? item = long.TryParse(deviceExternalId, out var id) ? id : null;
+        await SendAsync<AtCreateResult>(HttpMethod.Patch, "V1.0/Tickets",
+            new Dictionary<string, object?> { ["id"] = long.Parse(ticketId), ["configurationItemID"] = item }, ct);
     }
 
     public async Task<IReadOnlyList<ExternalHoliday>> GetHolidaysAsync(CancellationToken ct = default)

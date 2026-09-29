@@ -215,7 +215,7 @@ export const api = {
     request('/api/tickets/views', SavedViewSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<SavedView>,
   deleteTicketView: (id: string) =>
     request(`/api/tickets/views/${id}`, z.unknown(), { method: 'DELETE' }),
-  createTicket: (body: { title: string; description?: string; priority?: string; queueOrBoard?: string }) =>
+  createTicket: (body: { title: string; description?: string; priority?: string; queueOrBoard?: string; deviceId?: string }) =>
     request('/api/tickets', z.object({ id: z.string(), externalTicketId: z.string().nullable() }), {
       method: 'POST',
       body: JSON.stringify(body),
@@ -846,6 +846,14 @@ export const api = {
       agreementsUnavailable: z.boolean().default(false),
     })),
   cpDevices: () => request('/api/control-panel/devices', z.array(DeviceSchema)) as Promise<Device[]>,
+  // ── Ticket devices ── staff choose from the ticket's client's devices; a client names one when raising a ticket.
+  ticketDeviceChoices: (ticketId: string) =>
+    request(`/api/tickets/${ticketId}/device-choices`, z.array(DeviceChoiceSchema)) as Promise<DeviceChoice[]>,
+  setTicketDevice: (ticketId: string, deviceId: string | null) =>
+    request(`/api/tickets/${ticketId}/device`, z.object({ device: z.unknown().nullable() }),
+      { method: 'PUT', body: JSON.stringify({ deviceId }) }),
+  clientDeviceChoices: () =>
+    request('/api/client/device-choices', z.array(z.object({ id: z.string(), name: z.string(), type: z.string().nullable() }))),
   cpDevice: (id: string) => request(`/api/control-panel/devices/${id}`, DeviceDetailSchema) as Promise<DeviceDetail>,
   cpSaveDevice: (body: DeviceInput) => request('/api/control-panel/devices', DeviceSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<Device>,
   cpDeleteDevice: (id: string) => request(`/api/control-panel/devices/${id}`, z.unknown(), { method: 'DELETE' }),
@@ -941,6 +949,13 @@ const DeviceSchema = z.object({
   openTickets: z.number(),
   totalTickets: z.number(),
 });
+const DeviceChoiceSchema = z.object({
+  id: z.string(), name: z.string(), type: z.string().nullable(), identifier: z.string().nullable(),
+  isActive: z.boolean(), fromPsa: z.boolean(),
+  /** Why this device cannot be this ticket's, when it cannot. */
+  unavailable: z.string().nullable(),
+});
+export type DeviceChoice = z.infer<typeof DeviceChoiceSchema>;
 const DeviceDetailSchema = z.object({
   device: DeviceSchema,
   tickets: z.array(z.object({

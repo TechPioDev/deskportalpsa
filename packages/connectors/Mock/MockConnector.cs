@@ -215,6 +215,12 @@ public sealed class MockConnector : IServiceManagementConnector
     public Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default)
     { Guard(); return Task.FromResult<IReadOnlyList<ExternalDevice>>([new ExternalDevice("D-1", "Mock Workstation", "Workstation", "SN-1", true)]); }
 
+    /// <summary>Devices set on tickets, by ticket id. The mock's tickets do not report them back.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, string?> TicketDevices { get; } = new();
+
+    public Task SetTicketDeviceAsync(string ticketId, string? deviceExternalId, string? previousDeviceExternalId, CancellationToken ct = default)
+    { Guard(); TicketDevices[ticketId] = deviceExternalId; return Task.CompletedTask; }
+
     public Task<TimeEntryReadiness> CheckTimeEntryReadinessAsync(CancellationToken ct = default)
     { Guard(); return Task.FromResult(new TimeEntryReadiness(true, "Ready — the mock provider accepts any time entry.")); }
 

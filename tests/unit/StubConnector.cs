@@ -106,6 +106,19 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     public Task<IReadOnlyList<ExternalContact>> GetContactsAsync(string organizationId, CancellationToken ct = default) => No<IReadOnlyList<ExternalContact>>();
     public Task<IReadOnlyList<ExternalTechnician>> GetTechniciansAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnician>>();
     public Task<IReadOnlyList<ExternalTechnicianAssignment>> GetTechnicianAssignmentsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnicianAssignment>>();
+    /// <summary>Every device change asked for: ticket, new device, the one it replaced.</summary>
+    public List<(string TicketId, string? Device, string? Previous)> DeviceChanges { get; } = [];
+
+    /// <summary>Set to make device changes fail, as a PSA refusing them would.</summary>
+    public ConnectorException? DeviceChangeFailure { get; set; }
+
+    public Task SetTicketDeviceAsync(string ticketId, string? deviceExternalId, string? previousDeviceExternalId, CancellationToken ct = default)
+    {
+        if (DeviceChangeFailure is { } failure) throw failure;
+        DeviceChanges.Add((ticketId, deviceExternalId, previousDeviceExternalId));
+        return Task.CompletedTask;
+    }
+
     /// <summary>Each company's devices, keyed by its id in the PSA.</summary>
     public Dictionary<string, List<ExternalDevice>> Devices { get; } = [];
 

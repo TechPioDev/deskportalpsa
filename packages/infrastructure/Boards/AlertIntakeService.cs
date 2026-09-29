@@ -92,6 +92,7 @@ public sealed class AlertIntakeService(
         // Timed from when we were told, not from when the tool says the fault began: nobody can be
         // late answering an alert that had not arrived yet.
         var sla = await SlaPlanner.ForAsync(db, board, null, now, ct);
+        var device = await MatchDeviceAsync(client?.Id, message.Device, ct);
 
         var ticket = new Ticket
         {
@@ -111,6 +112,9 @@ public sealed class AlertIntakeService(
             PortalStatus = "NEW",
             PortalPriority = Priority(message.Severity),
             PortalCategory = Trim(message.Device, 200),
+            // The device the alert is about, when the client's list has one by that exact name:
+            // "ACME-SRV01 disk 95% full" then sits in ACME-SRV01's history with its other tickets.
+            DeviceId = device,
             QueueOrBoard = board.Name,
             PsaCreatedAt = message.OccurredAt ?? now,
             SyncStatus = TicketSyncStatus.Synced,
@@ -223,6 +227,24 @@ public sealed class AlertIntakeService(
         source.LastReceivedAt = clock.GetUtcNow();
         await db.SaveChangesAsync(ct);
         throw new ValidationFailedException(why);
+    }
+
+    /// <summary>
+    /// The client's device an alert names, matched on the whole name ignoring case, among devices in
+    /// use. Only within the matched client: two clients can each have a "SERVER01", and an alert must
+    /// never land in the other company's device history. No client, no match, no guess.
+    /// </summary>
+    private async Task<Guid?> MatchDeviceAsync(Guid? clientCompanyId, string? name, CancellationToken ct)
+    {
+        if (clientCompanyId is null || string.IsNullOrWhiteSpace(name)) return null;
+        var wanted = name.Trim().ToLower();
+        var matches = await db.Devices.AsNoTracking()
+            .Where(d => d.ClientCompanyId == clientCompanyId && d.IsActive && d.Name.ToLower() == wanted)
+            .Select(d => d.Id)
+            .Take(2)
+            .ToListAsync(ct);
+        // Two devices with the same name: which one is unknowable, so neither.
+        return matches.Count == 1 ? matches[0] : null;
     }
 
     /// <summary>

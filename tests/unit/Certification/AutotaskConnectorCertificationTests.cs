@@ -85,6 +85,22 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
         page.Items.Single(t => t.ExternalId == general.ExternalId).Should().BeEquivalentTo(new { DeviceExternalId = (string?)null, DeviceKnown = true });
     }
 
+    [Fact]
+    public async Task A_ticket_can_be_raised_about_a_device_and_moved_to_another_or_to_none()
+    {
+        var c = Build(new FakeAutotaskServer(Clock));
+
+        var t = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "Disk failing", ExternalCompanyId = SeededOrganizationId, DeviceExternalId = "70", IdempotencyKey = "dv1" });
+        (await c.GetTicketAsync(t.ExternalId!))!.DeviceExternalId.Should().Be("70");
+
+        await c.SetTicketDeviceAsync(t.ExternalId!, "71", previousDeviceExternalId: "70");
+        (await c.GetTicketAsync(t.ExternalId!))!.DeviceExternalId.Should().Be("71");
+
+        await c.SetTicketDeviceAsync(t.ExternalId!, null, previousDeviceExternalId: "71");
+        (await c.GetTicketAsync(t.ExternalId!))!.Should().BeEquivalentTo(new { DeviceExternalId = (string?)null, DeviceKnown = true });
+    }
+
     protected override IServiceManagementConnector CreateFailingConnector(ConnectorFailureKind kind)
     {
         var status = kind switch
