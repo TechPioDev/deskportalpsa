@@ -5,13 +5,18 @@ import { usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Ticket, Plug, Bell, User, BarChart3, Activity, ListChecks, ShieldCheck,
-  SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile,
+  SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile, BookOpen, LifeBuoy,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
 // `permissions` is ANY-OF: "Productivity" is rightly visible to a technician who may only see
 // their own numbers AND to a manager who holds only the team-wide permission.
-type NavItem = { href: string; label: string; icon: LucideIcon; permissions?: string[]; feature?: 'internalBoards' };
+type NavItem = {
+  href: string; label: string; icon: LucideIcon; permissions?: string[]; feature?: 'internalBoards';
+  /** Staff-only or client-only, for a page that means nothing to the other side - a technician has
+   *  no use for the client's Help page, and a client has none for the team's article editor. */
+  audience?: 'staff' | 'client';
+};
 /**
  * One accent per section. Colour here is navigation, not decoration: a glance at the icon tint
  * tells you which part of the product you are in, and the active row is unmistakable without
@@ -67,6 +72,8 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
       { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket },
       // The team's own work, kept apart from the provider queues above so the two never blur.
       { href: '/dashboard/boards', label: 'Internal boards', icon: ClipboardList, permissions: ['tickets.create'], feature: 'internalBoards' },
+      { href: '/dashboard/knowledge', label: 'Knowledge base', icon: BookOpen, permissions: ['tickets.view.all'], audience: 'staff' },
+      { href: '/dashboard/help', label: 'Help', icon: LifeBuoy, audience: 'client' },
       { href: '/dashboard/analytics', label: 'Productivity', icon: BarChart3, permissions: ['productivity.own.view', 'productivity.team.view'] },
       { href: '/dashboard/analytics/technicians', label: 'Technician hours', icon: Clock, permissions: ['productivity.own.view', 'productivity.team.view'] },
       { href: '/dashboard/analytics/clients', label: 'Client workload', icon: Building2, permissions: ['productivity.team.view'] },
@@ -117,9 +124,13 @@ function useVisibleNav() {
   const held = new Set(me?.permissions ?? []);
   // A feature switched off on this installation is hidden rather than left to 404 when clicked.
   const features = me?.features;
+  // Staff hold the all-tickets view; client roles never do. Unknown until "me" loads, so an
+  // audience-bound item waits rather than flashing on the wrong side.
+  const isStaff = held.has('tickets.view.all');
   return (item: NavItem) =>
     (!item.permissions || item.permissions.some((p) => held.has(p)))
-    && (!item.feature || features?.[item.feature] !== false);
+    && (!item.feature || features?.[item.feature] !== false)
+    && (!item.audience || (!!me && (item.audience === 'staff') === isStaff));
 }
 
 /** Compact horizontal nav for below-md, filtered identically to the sidebar. */

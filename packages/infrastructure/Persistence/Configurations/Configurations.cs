@@ -365,6 +365,45 @@ public sealed class TicketApprovalConfig : IEntityTypeConfiguration<TicketApprov
     }
 }
 
+public sealed class KbArticleConfig : IEntityTypeConfiguration<Desk.Domain.Knowledge.KbArticle>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Knowledge.KbArticle> b)
+    {
+        b.ToTable("kb_articles");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Title).HasMaxLength(Desk.Domain.Knowledge.KbArticle.MaxTitleLength).IsRequired();
+        b.Property(x => x.Body).HasMaxLength(Desk.Domain.Knowledge.KbArticle.MaxBodyLength);
+        b.Property(x => x.Category).HasMaxLength(Desk.Domain.Knowledge.KbArticle.MaxCategoryLength);
+        b.Property(x => x.AuthorName).HasMaxLength(200);
+        b.Property(x => x.UpdatedByName).HasMaxLength(200);
+        b.HasMany(x => x.Clients).WithOne(x => x.Article).HasForeignKey(x => x.ArticleId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class KbArticleClientConfig : IEntityTypeConfiguration<Desk.Domain.Knowledge.KbArticleClient>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Knowledge.KbArticleClient> b)
+    {
+        b.ToTable("kb_article_clients");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => new { x.ArticleId, x.ClientCompanyId }).IsUnique();
+        b.HasIndex(x => x.ClientCompanyId);
+    }
+}
+
+public sealed class KbDeflectionConfig : IEntityTypeConfiguration<Desk.Domain.Knowledge.KbDeflection>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Knowledge.KbDeflection> b)
+    {
+        b.ToTable("kb_deflections");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Query).HasMaxLength(200);
+        // The stats read "since a date"; the article list reads counts per article.
+        b.HasIndex(x => new { x.MspOrganizationId, x.OccurredAt });
+        b.HasIndex(x => new { x.Source, x.ArticleId });
+    }
+}
+
 public sealed class DeskHolidayConfig : IEntityTypeConfiguration<DeskHoliday>
 {
     public void Configure(EntityTypeBuilder<DeskHoliday> b)

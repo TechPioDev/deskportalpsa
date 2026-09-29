@@ -181,9 +181,9 @@ function renderBlocks(body: string): ReactNode[] {
   return out;
 }
 
-export function NoteBody({ body }: { body: string }) {
+export function NoteBody({ body, full = false }: { body: string; /** An article reads in full; a note in a thread folds. */ full?: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const long = body.length > COLLAPSE_AT;
+  const long = !full && body.length > COLLAPSE_AT;
 
   return (
     <div className="mt-1 text-sm">

@@ -112,6 +112,11 @@ story += [Paragraph("Administrators see the company's devices under <b>Control P
 story += [Paragraph("When you raise a ticket, <b>Which device?</b> lets you say which of your company's devices it "
                     "is about - it goes to your IT team with the ticket.", body_s)]
 
+story += [Paragraph("Help", h2_s)]
+story += [Paragraph("<b>Help</b> in the menu has answers from your IT team and your company's own FAQ, grouped by "
+                    "subject, with a search box. While you type a new ticket's title, matching articles appear under "
+                    "it; if one fixes the problem, <b>This solved it</b> means you don't need to raise the ticket at all.", body_s)]
+
 story += [Paragraph("3. Working a ticket (staff)", h1_s), hr()]
 story += [Paragraph("Open a ticket and use the box at the top of the conversation. One action covers the three things "
                     "you usually do at once: say what happened, move the ticket on, and record your time.", body_s)]
@@ -235,6 +240,13 @@ story += [Paragraph("The ticket page shows the device a ticket is about, with it
                     "(or <b>Change</b>) picks one of the client's devices; on a PSA ticket the PSA is updated first. "
                     "A PSA ticket can only use devices the PSA knows - one added by hand in the portal is shown greyed "
                     "out with the reason. Monitoring alerts that name a device by its exact name are linked to it.", body_s)]
+
+story += [Paragraph("Knowledge base", h2_s)]
+story += [Paragraph("<b>Knowledge base</b> holds the team's articles. Each is <b>Staff only</b> (runbooks), for <b>All "
+                    "clients</b>, or for <b>Chosen clients</b>, and stays a draft until published. Articles use the same "
+                    "formatting as ticket notes, with a preview. Client articles appear on their Help page and are suggested "
+                    "while they type a new ticket; the top of the page counts the tickets they avoided and which articles "
+                    "helped most.", body_s)]
 
 story += [Paragraph("Client approvals", h2_s)]
 story += [Paragraph("On a client's ticket, <b>Ask for approval</b> sends a request to one of the approvers the client "

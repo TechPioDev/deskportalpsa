@@ -51,6 +51,9 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<DeskHoliday> DeskHolidays => Set<DeskHoliday>();
     public DbSet<TicketSatisfaction> TicketSatisfactions => Set<TicketSatisfaction>();
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
+    public DbSet<Desk.Domain.Knowledge.KbArticle> KbArticles => Set<Desk.Domain.Knowledge.KbArticle>();
+    public DbSet<Desk.Domain.Knowledge.KbArticleClient> KbArticleClients => Set<Desk.Domain.Knowledge.KbArticleClient>();
+    public DbSet<Desk.Domain.Knowledge.KbDeflection> KbDeflections => Set<Desk.Domain.Knowledge.KbDeflection>();
     public DbSet<RecurringTicket> RecurringTickets => Set<RecurringTicket>();
     public DbSet<AlertSource> AlertSources => Set<AlertSource>();
     public DbSet<TicketNote> TicketNotes => Set<TicketNote>();

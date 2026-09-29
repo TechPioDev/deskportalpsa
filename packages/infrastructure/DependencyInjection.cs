@@ -112,6 +112,7 @@ public static class DependencyInjection
         services.AddScoped<Tickets.TicketStatusWriter>();
         services.AddScoped<Desk.Application.Tickets.IApprovalService, Tickets.ApprovalService>();
         services.AddScoped<Desk.Application.Tickets.ITicketDeviceService, Tickets.TicketDeviceService>();
+        services.AddScoped<Desk.Application.Knowledge.IKnowledgeBaseService, Knowledge.KnowledgeBaseService>();
         services.AddScoped<Desk.Application.Tickets.ITicketViewService, Tickets.TicketViewService>();
         services.AddScoped<ITicketCommandService, TicketCommandService>();
         services.AddScoped<IEffectivePermissionService, EffectivePermissionService>();

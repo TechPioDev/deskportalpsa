@@ -846,6 +846,23 @@ export const api = {
       agreementsUnavailable: z.boolean().default(false),
     })),
   cpDevices: () => request('/api/control-panel/devices', z.array(DeviceSchema)) as Promise<Device[]>,
+  // ── Knowledge base ── the team writes and reads every article; a client reads theirs on the Help page.
+  kbList: (search?: string) =>
+    request(`/api/kb${search ? `?search=${encodeURIComponent(search)}` : ''}`, z.array(KbArticleSummarySchema)) as Promise<KbArticleSummary[]>,
+  kbGet: (id: string) => request(`/api/kb/${id}`, KbArticleSchema) as Promise<KbArticle>,
+  kbSave: (id: string | null, body: KbArticleInput) =>
+    request(id ? `/api/kb/${id}` : '/api/kb', KbArticleSchema, { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) }) as Promise<KbArticle>,
+  kbDelete: (id: string) => request(`/api/kb/${id}`, z.unknown(), { method: 'DELETE' }),
+  kbStats: (days = 30) => request(`/api/kb/stats?days=${days}`, KbStatsSchema) as Promise<KbStats>,
+  help: (search?: string) =>
+    request(`/api/client/help${search ? `?search=${encodeURIComponent(search)}` : ''}`, z.array(HelpSummarySchema)) as Promise<HelpSummary[]>,
+  helpArticle: (source: string, id: string) =>
+    request(`/api/client/help/${source}/${id}`, HelpArticleSchema) as Promise<HelpArticle>,
+  helpSuggest: (q: string) =>
+    request(`/api/client/help/suggest?q=${encodeURIComponent(q)}`, z.array(HelpSummarySchema)) as Promise<HelpSummary[]>,
+  helpSolved: (source: string, id: string, query: string) =>
+    request(`/api/client/help/${source}/${id}/solved`, z.unknown(), { method: 'POST', body: JSON.stringify({ query }) }),
+
   // ── Ticket devices ── staff choose from the ticket's client's devices; a client names one when raising a ticket.
   ticketDeviceChoices: (ticketId: string) =>
     request(`/api/tickets/${ticketId}/device-choices`, z.array(DeviceChoiceSchema)) as Promise<DeviceChoice[]>,
@@ -949,6 +966,36 @@ const DeviceSchema = z.object({
   openTickets: z.number(),
   totalTickets: z.number(),
 });
+export const KbArticleSummarySchema = z.object({
+  id: z.string(), title: z.string(), category: z.string().nullable(),
+  audience: z.enum(['Staff', 'AllClients', 'SelectedClients']), clientNames: z.array(z.string()),
+  isPublished: z.boolean(), updatedAt: z.string(), updatedByName: z.string().nullable(), solved: z.number(),
+});
+export type KbArticleSummary = z.infer<typeof KbArticleSummarySchema>;
+export const KbArticleSchema = z.object({
+  id: z.string(), title: z.string(), body: z.string(), category: z.string().nullable(),
+  audience: z.enum(['Staff', 'AllClients', 'SelectedClients']), clientIds: z.array(z.string()),
+  isPublished: z.boolean(), authorName: z.string().nullable(), updatedByName: z.string().nullable(), updatedAt: z.string(),
+});
+export type KbArticle = z.infer<typeof KbArticleSchema>;
+export type KbArticleInput = {
+  title: string; body: string; category: string | null; audience: KbArticle['audience']; clientIds: string[]; isPublished: boolean;
+};
+export const KbStatsSchema = z.object({
+  days: z.number(), ticketsAvoided: z.number(),
+  topArticles: z.array(z.object({ source: z.string(), id: z.string(), title: z.string(), solved: z.number() })),
+  recent: z.array(z.object({ title: z.string(), query: z.string().nullable(), clientName: z.string().nullable(), occurredAt: z.string() })),
+});
+export type KbStats = z.infer<typeof KbStatsSchema>;
+export const HelpSummarySchema = z.object({
+  source: z.enum(['Team', 'ClientFaq']), id: z.string(), title: z.string(), category: z.string().nullable(), excerpt: z.string(),
+});
+export type HelpSummary = z.infer<typeof HelpSummarySchema>;
+export const HelpArticleSchema = z.object({
+  source: z.enum(['Team', 'ClientFaq']), id: z.string(), title: z.string(), body: z.string(), category: z.string().nullable(), updatedAt: z.string(),
+});
+export type HelpArticle = z.infer<typeof HelpArticleSchema>;
+
 const DeviceChoiceSchema = z.object({
   id: z.string(), name: z.string(), type: z.string().nullable(), identifier: z.string().nullable(),
   isActive: z.boolean(), fromPsa: z.boolean(),

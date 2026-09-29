@@ -7,6 +7,8 @@ import { z } from 'zod';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { HelpSuggestions } from '@/components/HelpSuggestions';
+import { CheckCircle2 } from 'lucide-react';
 
 const FormSchema = z.object({
   title: z.string().min(3, 'Give your request a short title (3+ characters).'),
@@ -18,6 +20,8 @@ export default function NewTicketPage() {
   const router = useRouter();
   const [form, setForm] = useState({ title: '', description: '', priority: 'NORMAL', deviceId: '' });
   const [error, setError] = useState<string | null>(null);
+  // Set when an article answered the question: the form steps aside, and nothing is raised.
+  const [solvedBy, setSolvedBy] = useState<string | null>(null);
   // The company's devices the PSA knows. Only shown when there are some: an empty "Which device?"
   // is a question nobody can answer.
   const { data: devices } = useQuery({ queryKey: ['client-device-choices'], queryFn: api.clientDeviceChoices, retry: false });
@@ -51,6 +55,16 @@ export default function NewTicketPage() {
         <p className="text-sm text-[var(--muted)]">Describe what you need help with — it goes straight to your IT team.</p>
       </div>
 
+      {solvedBy ? (
+        <div role="status" className="space-y-2 rounded-xl border border-brand/30 bg-brand-tint p-6 dark:bg-brand/10">
+          <p className="flex items-center gap-2 font-medium"><CheckCircle2 size={18} className="text-brand" aria-hidden="true" /> Glad that helped.</p>
+          <p className="text-sm text-[var(--muted)]">&ldquo;{solvedBy}&rdquo; answered it, so no ticket was raised. Your IT team can see which articles are saving you time.</p>
+          <div className="flex gap-3 pt-1 text-sm">
+            <Link href="/dashboard/tickets" className="font-medium text-brand hover:underline">Back to tickets</Link>
+            <button type="button" onClick={() => setSolvedBy(null)} className="text-[var(--muted)] hover:underline">I still need help</button>
+          </div>
+        </div>
+      ) : (
       <form onSubmit={submit} className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
         <Field label="Title">
           <input
@@ -60,6 +74,7 @@ export default function NewTicketPage() {
             className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand"
           />
         </Field>
+        <HelpSuggestions query={form.title} onSolved={setSolvedBy} />
         <Field label="Priority">
           <select
             value={form.priority}
@@ -106,6 +121,7 @@ export default function NewTicketPage() {
           </button>
         </div>
       </form>
+      )}
     </div>
   );
 }

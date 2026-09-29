@@ -425,7 +425,7 @@ tier is platform work that only pays off once the product is sold to more than o
 5. **Assets and devices in the client portal.** *(Part 1 built 29 Sep 2026: daily device sync from Autotask configuration items and ConnectWise configurations, warranty, retire-not-delete, Autotask tickets linked to their device, device pages with tickets for client administrators, device on the staff ticket page. Part 2 built the same day: "Which device?" when a client raises a ticket, Set/Change device for technicians pushed to the PSA, ConnectWise ticket configurations read and written, monitoring alerts linked to devices by name.)* Both connectors report assets, and a devices table
    exists. Showing a client their own estate, with the tickets raised against each device, is a
    differentiator few PSA portals do well. **Effort: medium. Impact: medium.**
-6. **A knowledge base with client-visible and staff-only articles.** The FAQ table is the seed. Tied
+6. **A knowledge base with client-visible and staff-only articles.** *(Built 29 Sep 2026: team articles staff-only / all clients / chosen clients with drafts; client Help page with the client's own FAQ; suggestions while typing a ticket; "This solved it" counted as tickets avoided.)* The FAQ table is the seed. Tied
    to ticket deflection reporting, it is the clearest path to reducing ticket volume, which is what
    an MSP's own margin depends on. **Effort: medium. Impact: medium.**
 7. **Mobile-first technician view or progressive web app.** The interface is already responsive and

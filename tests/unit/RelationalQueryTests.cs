@@ -310,6 +310,32 @@ public sealed class RelationalQueryTests : IDisposable
         (await pickers.SetAsync(_me, ticket.Id, null)).Should().BeNull();
     }
 
+    [Fact]
+    public async Task Knowledge_base_translates()
+    {
+        var connection = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "TechPio AT", Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://at.test", CredentialSecretRef = "ref",
+        };
+        var company = new Desk.Domain.Tenancy.ClientCompany { MspOrganizationId = Org, Name = "Acme", ExternalCompanyId = "176", PsaConnectionId = connection.Id };
+        _db.AddRange(connection, company);
+        _db.FaqArticles.Add(new Desk.Domain.ControlPanel.FaqArticle { MspOrganizationId = Org, ClientCompanyId = company.Id, Question = "Where is the printer?", Answer = "Upstairs." });
+        await _db.SaveChangesAsync();
+
+        var kb = new Desk.Infrastructure.Knowledge.KnowledgeBaseService(_db, new AuditWriter(_db, User, _tenant, _clock), _clock);
+        var article = await kb.SaveAsync(null, new Desk.Application.Knowledge.KbArticleInput(
+            "Connect to the VPN", "Open FortiClient.", "VPN", "SelectedClients", [company.Id], true), _me, "Dalbir");
+        var access = new ClientAccess(Org, company.Id, Guid.NewGuid(), IsCompanyAdministrator: false);
+
+        (await kb.HelpAsync(access, null)).Should().HaveCount(2);
+        (await kb.SuggestAsync(access, "vpn at home")).Should().ContainSingle();
+        await kb.SolvedAsync(access, "Team", article.Id, "vpn at home");
+        (await kb.StatsAsync(30)).TicketsAvoided.Should().Be(1);
+        (await kb.ListAsync(null)).Single().Solved.Should().Be(1);
+        await kb.DeleteAsync(article.Id);
+    }
+
     private sealed class OneConnector(Desk.PsaCore.Contracts.IServiceManagementConnector c) : Desk.Application.Connectors.IConnectorResolver
     {
         public Task<Desk.PsaCore.Contracts.IServiceManagementConnector> ResolveAsync(Guid connectionId, CancellationToken ct = default) => Task.FromResult(c);
