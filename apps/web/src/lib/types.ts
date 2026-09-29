@@ -162,6 +162,11 @@ export const TicketDetailSchema = z.object({
     rating: z.number(), comment: z.string().nullable(), ratedAt: z.string(),
     ratedBy: z.string().nullable(), technicianName: z.string().nullable(),
   }).nullable().default(null),
+  // The device the ticket is about. Serial and warranty arrive for staff only.
+  device: z.object({
+    id: z.string(), name: z.string(), type: z.string().nullable(), identifier: z.string().nullable(),
+    isActive: z.boolean(), warrantyExpiresAt: z.string().nullable(),
+  }).nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

@@ -438,6 +438,12 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 .ToListAsync(ct)
             : [];
 
+        var device = ticket.DeviceId is null ? null : await db.Devices.AsNoTracking()
+            .Where(d => d.Id == ticket.DeviceId)
+            .Select(d => new TicketDeviceDto(d.Id, d.Name, d.Type,
+                includeInternal ? d.Identifier : null, d.IsActive, includeInternal ? d.WarrantyExpiresAt : null))
+            .FirstOrDefaultAsync(ct);
+
         return new TicketDetailDto(
             ticket.Id, ticket.ExternalTicketId, ticket.Provider, ticket.Title, ticket.Description,
             ticket.PortalStatus, ticket.PortalPriority, ticket.PortalCategory, ticket.QueueOrBoard,
@@ -498,6 +504,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             // Colleagues' names, so they reach the staff detail only. The client detail carries the
             // same empty list either way, rather than a shorter one that hints there is more.
             Followers: includeInternal ? followers : [],
+            Device: device,
             // The SLA is the team's promise about its own board, so it reaches staff only; a client
             // reading a published board sees the ticket, not how the desk times itself.
             SlaPlanName: includeInternal && ticket.SlaPlanId is { } planId

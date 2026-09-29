@@ -127,6 +127,14 @@ public class Ticket : TenantEntity
     /// </summary>
     public Guid? AssignedAppUserId { get; set; }
 
+    /// <summary>The device the ticket is about (Control Panel → Devices), when one is known.</summary>
+    public Guid? DeviceId { get; set; }
+
+    /// <summary>The PSA's own id for that device, as the ticket arrived carrying it. Kept beside
+    /// <see cref="DeviceId"/> because the ticket can arrive before the device does: the daily device
+    /// sync links the two up afterwards.</summary>
+    public string? DeviceExternalId { get; set; }
+
     /// <summary>
     /// When the PSA says the ticket was RAISED — distinct from <see cref="BaseEntity.CreatedAt"/>,
     /// which is when this row was first written and therefore when the portal happened to import it.

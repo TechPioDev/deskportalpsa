@@ -17,6 +17,7 @@ import { TasksPanel } from '@/components/TasksPanel';
 import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
 import { ApprovalPanel } from '@/components/ApprovalPanel';
+import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
 import { api, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 
@@ -756,6 +757,27 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 {ticket.assignedTeamName && <Meta label="Team" value={ticket.assignedTeamName} />}
                 <Meta label="Category" value={ticket.portalCategory ?? '—'} />
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
+                {/* The device it is about, when the PSA or the portal knows one. Serial and warranty
+                    reach staff only; a client sees the name and type. */}
+                {ticket.device && (
+                  <div className="lg:py-2">
+                    <dt className="text-[10px] uppercase tracking-wide text-[var(--faint)]">Device</dt>
+                    <dd className="mt-0.5 font-medium">
+                      <span className="block truncate" title={ticket.device.name}>
+                        {ticket.device.name}{!ticket.device.isActive && <span className="font-normal text-[var(--muted)]"> (retired)</span>}
+                      </span>
+                      {(ticket.device.type || ticket.device.identifier) && (
+                        <span className="block truncate text-xs font-normal text-[var(--muted)]">
+                          {[ticket.device.type, ticket.device.identifier].filter(Boolean).join(' · ')}
+                        </span>
+                      )}
+                      {(() => {
+                        const w = warrantyState(ticket.device.warrantyExpiresAt);
+                        return w && w.tone !== 'ok' ? <span className={`block text-xs font-normal ${WARRANTY_TONE[w.tone]}`}>{w.text}</span> : null;
+                      })()}
+                    </dd>
+                  </div>
+                )}
                 <Meta label="Opened" value={fmt(ticket.createdAt)} />
                 <Meta label="Updated" value={fmt(ticket.updatedAt)} />
                 {/* The SLA, where a board ticket has one. Staff only: the detail carries these as

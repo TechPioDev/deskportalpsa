@@ -232,6 +232,9 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         b.HasIndex(x => new { x.MspOrganizationId, x.DepartmentId });
         // A team's own queue: the list every member of that team opens first.
         b.HasIndex(x => new { x.MspOrganizationId, x.AssignedTeamId });
+        b.Property(x => x.DeviceExternalId).HasMaxLength(100);
+        // A device page lists its tickets.
+        b.HasIndex(x => x.DeviceId);
     }
 }
 
@@ -632,7 +635,13 @@ public sealed class DeviceConfig : IEntityTypeConfiguration<Device>
         b.Property(x => x.Type).HasMaxLength(100);
         b.Property(x => x.Identifier).HasMaxLength(200);
         b.Property(x => x.Notes).HasMaxLength(1000);
+        b.Property(x => x.ExternalId).HasMaxLength(100);
+        // Existing rows are devices somebody listed on purpose: they are active, not retired.
+        b.Property(x => x.IsActive).HasDefaultValue(true);
+        b.Ignore(x => x.FromPsa);
         b.HasIndex(x => x.ClientCompanyId);
+        // The sync matches on the PSA's own id, per connection.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalId });
         b.HasOne(x => x.ClientCompany).WithMany()
             .HasForeignKey(x => x.ClientCompanyId).OnDelete(DeleteBehavior.Cascade);
     }

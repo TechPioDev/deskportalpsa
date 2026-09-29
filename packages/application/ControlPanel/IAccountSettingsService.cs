@@ -24,6 +24,7 @@ public interface IAccountSettingsService
     Task DeleteHolidayAsync(ClientAccess access, Guid id, CancellationToken ct = default);
 
     Task<IReadOnlyList<DeviceDto>> ListDevicesAsync(ClientAccess access, CancellationToken ct = default);
+    Task<DeviceDetailDto> GetDeviceAsync(ClientAccess access, Guid id, CancellationToken ct = default);
     Task<DeviceDto> SaveDeviceAsync(ClientAccess access, DeviceInput input, CancellationToken ct = default);
     Task DeleteDeviceAsync(ClientAccess access, Guid id, CancellationToken ct = default);
 

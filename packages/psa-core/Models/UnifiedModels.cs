@@ -10,7 +10,8 @@ public record ExternalContact(string ExternalId, string Email, string DisplayNam
 public record ExternalTechnician(string ExternalId, string Email, string DisplayName, bool IsActive);
 
 /// <summary>A managed device/asset belonging to a company (CW "configuration", Autotask "installed product").</summary>
-public record ExternalDevice(string ExternalId, string Name, string? Type, string? Identifier, bool IsActive);
+public record ExternalDevice(string ExternalId, string Name, string? Type, string? Identifier, bool IsActive,
+    DateTimeOffset? WarrantyExpiresAt = null);
 
 /// <summary>A selectable option for a picklist field (status/priority/queue/category).</summary>
 /// <summary>
@@ -62,6 +63,15 @@ public record UnifiedTicket
     public DateTimeOffset? ModifiedAt { get; init; }
     public DateTimeOffset? ResolvedAt { get; init; }
     public DateTimeOffset? ClosedAt { get; init; }
+
+    /// <summary>
+    /// The device (configuration item) the ticket is about, as the PSA's own id. Only meaningful when
+    /// <see cref="DeviceKnown"/>: a provider that does not carry the device on the ticket itself leaves
+    /// both unset, and a null there means "not asked", not "none" — so the sync must not clear a
+    /// device on the strength of it.
+    /// </summary>
+    public string? DeviceExternalId { get; init; }
+    public bool DeviceKnown { get; init; }
     public IReadOnlyDictionary<string, string?> CustomFields { get; init; }
         = new Dictionary<string, string?>();
 }

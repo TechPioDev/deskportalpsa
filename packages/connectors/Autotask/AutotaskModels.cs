@@ -104,6 +104,21 @@ internal sealed class AtTicket
     [JsonPropertyName("resolvedDueDateTime")] public DateTimeOffset? ResolvedDueDateTime { get; set; }
     // Falls back to the ticket's own due date where no SLA applies to it.
     [JsonPropertyName("dueDateTime")] public DateTimeOffset? DueDateTime { get; set; }
+    // The configuration item (installed product) the ticket is about; absent when none is set.
+    [JsonPropertyName("configurationItemID")] public long? ConfigurationItemId { get; set; }
+}
+
+/// <summary>An Autotask configuration item: one of a client's devices, licences or installed products.</summary>
+internal sealed class AtConfigurationItem
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("companyID")] public long CompanyId { get; set; }
+    [JsonPropertyName("referenceTitle")] public string? ReferenceTitle { get; set; }
+    [JsonPropertyName("referenceNumber")] public string? ReferenceNumber { get; set; }
+    [JsonPropertyName("serialNumber")] public string? SerialNumber { get; set; }
+    [JsonPropertyName("configurationItemType")] public long? ConfigurationItemType { get; set; }
+    [JsonPropertyName("isActive")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsActive { get; set; } = true;
+    [JsonPropertyName("warrantyExpirationDate")] public DateTimeOffset? WarrantyExpirationDate { get; set; }
 }
 
 internal sealed class AtTicketNote

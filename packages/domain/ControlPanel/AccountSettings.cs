@@ -67,8 +67,30 @@ public class Device : TenantEntity, IAccountScoped
 
     public required string Name { get; set; }
     public string? Type { get; set; }
+
+    /// <summary>Serial or asset tag.</summary>
     public string? Identifier { get; set; }
     public string? Notes { get; set; }
+
+    // ---- From the PSA ----
+    // A device the daily sync brought in carries the PSA's own id, and its name, type, serial and
+    // warranty are the PSA's to change: edited here, they would be overwritten on the next sync.
+    // A device added by hand has none of these, and stays entirely the client's.
+
+    /// <summary>The connection it came from; null for a device added by hand.</summary>
+    public Guid? PsaConnectionId { get; set; }
+
+    /// <summary>Autotask configuration item or ConnectWise configuration id.</summary>
+    public string? ExternalId { get; set; }
+
+    /// <summary>False once the PSA marks it inactive or stops listing it. Kept rather than deleted,
+    /// because its tickets still point at it.</summary>
+    public bool IsActive { get; set; } = true;
+
+    public DateTimeOffset? WarrantyExpiresAt { get; set; }
+    public DateTimeOffset? LastSyncedAt { get; set; }
+
+    public bool FromPsa => ExternalId is not null;
 }
 
 /// <summary>

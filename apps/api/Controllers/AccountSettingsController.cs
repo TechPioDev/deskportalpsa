@@ -87,6 +87,10 @@ public sealed class AccountSettingsController(
     public async Task<IActionResult> SaveDevice([FromBody] DeviceInput input, CancellationToken ct)
         => Ok(await svc.SaveDeviceAsync(await AccessAsync(ct), input, ct));
 
+    [HttpGet("devices/{id:guid}")]
+    public async Task<IActionResult> GetDevice(Guid id, CancellationToken ct)
+        => Ok(await svc.GetDeviceAsync(await AccessAsync(ct), id, ct));
+
     [HttpDelete("devices/{id:guid}")]
     public async Task<IActionResult> DeleteDevice(Guid id, CancellationToken ct)
     { await svc.DeleteDeviceAsync(await AccessAsync(ct), id, ct); return NoContent(); }

@@ -41,6 +41,21 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         [new() { ["id"] = 20L, ["email"] = "tech@msp.test", ["firstName"] = "Tech", ["lastName"] = "One", ["isActive"] = true }];
     private readonly List<Dictionary<string, object?>> _contracts =
         [new() { ["id"] = 30L, ["companyID"] = 1L, ["contractName"] = "Managed Services", ["contractType"] = 7L, ["status"] = 1L, ["startDate"] = "2026-01-01T00:00:00Z", ["endDate"] = "2026-12-31T00:00:00Z" }];
+    /// <summary>Company 1's devices: a named, typed workstation with a warranty, and a retired item
+    /// with no title, only a serial - the two shapes a real tenant's list is made of.</summary>
+    private readonly List<Dictionary<string, object?>> _configurationItems =
+    [
+        new() { ["id"] = 70L, ["companyID"] = 1L, ["referenceTitle"] = "ACME-SRV01", ["serialNumber"] = "7XK29",
+                ["configurationItemType"] = 3L, ["isActive"] = true, ["warrantyExpirationDate"] = "2027-03-31T00:00:00Z" },
+        new() { ["id"] = 71L, ["companyID"] = 1L, ["referenceTitle"] = null, ["referenceNumber"] = "", ["serialNumber"] = "OLD-LAPTOP-9",
+                ["configurationItemType"] = 99L, ["isActive"] = false },
+        new() { ["id"] = 72L, ["companyID"] = 2L, ["referenceTitle"] = "GLOBEX-FW", ["isActive"] = true },
+    ];
+
+    /// <summary>Puts a configuration item on a ticket, as a technician picking the device in Autotask would.</summary>
+    public void SetTicketConfigurationItem(long ticketId, long configurationItemId)
+        => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["configurationItemID"] = configurationItemId;
+
     private readonly List<Dictionary<string, object?>> _holidays =
         [new() { ["id"] = 60L, ["holidayName"] = "Christmas Day", ["holidayDate"] = "2026-12-25T00:00:00Z" }];
     /// <summary>Which roles each resource actually holds — the pairing Autotask enforces.</summary>
@@ -82,6 +97,8 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             return Json("{\"fields\":[" +
                 "{\"name\":\"contractType\",\"picklistValues\":[{\"value\":\"7\",\"label\":\"Recurring Service\",\"isActive\":true}]}," +
                 "{\"name\":\"status\",\"picklistValues\":[{\"value\":\"1\",\"label\":\"Active\",\"isActive\":true}]}]}");
+        if (path.EndsWith("ConfigurationItems/entityInformation/fields", StringComparison.OrdinalIgnoreCase))
+            return Json("{\"fields\":[{\"name\":\"configurationItemType\",\"picklistValues\":[{\"value\":\"3\",\"label\":\"Server\",\"isActive\":true}]}]}");
         if (path.EndsWith("entityInformation/userDefinedFields", StringComparison.OrdinalIgnoreCase))
             return Json("{\"fields\":[{\"name\":\"cf_site\",\"picklistValues\":[]}]}");
 
@@ -90,6 +107,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         if (path.EndsWith("Contacts/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_contacts, body));
         if (path.EndsWith("Resources/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_resources, body));
         if (path.EndsWith("Contracts/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_contracts, body));
+        if (path.EndsWith("ConfigurationItems/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_configurationItems, body));
         if (path.EndsWith("ResourceRoles/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(ResourceRoles, body));
         // Autotask accepts ticket time only when the resource ACTUALLY HOLDS the role: an
         // unpaired combination is HTTP 500, not a validation 400. Modelling that here is the

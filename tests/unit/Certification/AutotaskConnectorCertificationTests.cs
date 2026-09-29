@@ -50,6 +50,41 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
         (await c.GetTicketAsync(withContact.ExternalId!))!.RequesterEmail.Should().Be("user@acme.test");
     }
 
+    [Fact]
+    public async Task A_clients_configuration_items_arrive_as_named_typed_devices()
+    {
+        var c = Build(new FakeAutotaskServer(Clock));
+
+        var devices = await c.GetDevicesAsync(SeededOrganizationId);
+
+        // Only company 1's: GLOBEX-FW belongs to company 2.
+        devices.Should().HaveCount(2);
+        devices.Should().ContainEquivalentOf(new
+        {
+            ExternalId = "70", Name = "ACME-SRV01", Type = "Server", Identifier = "7XK29", IsActive = true,
+            WarrantyExpiresAt = (DateTimeOffset?)DateTimeOffset.Parse("2027-03-31T00:00:00Z"),
+        });
+        // No title: named by its serial rather than by an id. Its type id has no label in the
+        // tenant's metadata, so it has no type - never the bare number.
+        devices.Should().ContainEquivalentOf(new { ExternalId = "71", Name = "OLD-LAPTOP-9", Type = (string?)null, IsActive = false });
+    }
+
+    [Fact]
+    public async Task A_ticket_carries_the_device_it_is_about_and_says_when_it_has_none()
+    {
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        var about = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Disk failing", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "d1" });
+        var general = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "New starter", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "d2" });
+        server.SetTicketConfigurationItem(long.Parse(about.ExternalId!), 70);
+
+        var page = await c.GetTicketsAsync(new TicketFilter());
+
+        page.Items.Single(t => t.ExternalId == about.ExternalId).Should().BeEquivalentTo(new { DeviceExternalId = "70", DeviceKnown = true });
+        // Autotask always says: no device is a real "none", which lets the sync clear one removed there.
+        page.Items.Single(t => t.ExternalId == general.ExternalId).Should().BeEquivalentTo(new { DeviceExternalId = (string?)null, DeviceKnown = true });
+    }
+
     protected override IServiceManagementConnector CreateFailingConnector(ConnectorFailureKind kind)
     {
         var status = kind switch

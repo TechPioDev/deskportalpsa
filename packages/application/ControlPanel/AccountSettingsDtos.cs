@@ -16,7 +16,21 @@ public sealed record EscalationLevelInput(Guid? Id, int Level, string Name, stri
 public sealed record HolidayDto(Guid Id, string Date, string Name);
 public sealed record HolidayInput(Guid? Id, string Date, string Name);
 
-public sealed record DeviceDto(Guid Id, string Name, string? Type, string? Identifier, string? Notes);
+public sealed record DeviceDto(
+    Guid Id, string Name, string? Type, string? Identifier, string? Notes,
+    /// <summary>Synced from the PSA: its name, type, serial and warranty are the PSA's to change, and
+    /// only the notes can be edited here.</summary>
+    bool FromPsa = false,
+    bool IsActive = true,
+    DateTimeOffset? WarrantyExpiresAt = null,
+    DateTimeOffset? LastSyncedAt = null,
+    int OpenTickets = 0,
+    int TotalTickets = 0);
+
+/// <summary>A ticket raised about a device, as the device page lists it.</summary>
+public sealed record DeviceTicketDto(Guid Id, string Reference, string Title, string Status, bool IsOpen, DateTimeOffset RaisedAt);
+
+public sealed record DeviceDetailDto(DeviceDto Device, IReadOnlyList<DeviceTicketDto> Tickets);
 public sealed record DeviceInput(Guid? Id, string Name, string? Type, string? Identifier, string? Notes);
 
 public sealed record BusinessHoursDto(string? TimeZone, string ScheduleJson, string? Notes);

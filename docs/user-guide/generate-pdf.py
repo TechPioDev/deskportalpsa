@@ -103,6 +103,13 @@ story += [Paragraph("If your company lists you as an approver, a request that ne
                     "your answer is recorded on the ticket with your name and the time. Your company administrator "
                     "keeps the approver list in the Control Panel, under Approvers.", body_s)]
 
+story += [Paragraph("Your devices", h2_s)]
+story += [Paragraph("Administrators see the company's devices under <b>Control Panel &gt; Accounts &amp; Devices</b>. "
+                    "Devices your IT provider tracks in their PSA appear automatically and are refreshed once a day; "
+                    "each shows its type, serial and warranty, and a warning when the warranty has ended or ends "
+                    "within 60 days. Open a device to see every ticket raised about it. You can add notes to any "
+                    "device, and add devices of your own by hand.", body_s)]
+
 story += [Paragraph("3. Working a ticket (staff)", h1_s), hr()]
 story += [Paragraph("Open a ticket and use the box at the top of the conversation. One action covers the three things "
                     "you usually do at once: say what happened, move the ticket on, and record your time.", body_s)]

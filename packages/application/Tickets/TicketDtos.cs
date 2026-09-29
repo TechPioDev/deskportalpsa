@@ -212,7 +212,13 @@ public sealed record TicketDetailDto(
     DateTimeOffset? FirstRespondedAt = null,
     DateTimeOffset? SlaPausedAt = null,
     /// <summary>The client's rating, for staff. The client reads their own through its own endpoint.</summary>
-    TicketRatingDto? Rating = null);
+    TicketRatingDto? Rating = null,
+    /// <summary>The device the ticket is about, when one is known.</summary>
+    TicketDeviceDto? Device = null);
+
+/// <summary>A ticket's device. The serial and warranty reach staff only: the client's own device list
+/// is for their administrators, and a ticket page is read by whoever raised it.</summary>
+public sealed record TicketDeviceDto(Guid Id, string Name, string? Type, string? Identifier, bool IsActive, DateTimeOffset? WarrantyExpiresAt);
 
 public sealed record AttachmentDto(
     Guid Id,

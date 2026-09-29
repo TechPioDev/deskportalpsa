@@ -45,10 +45,11 @@ public sealed class ApprovalService(
         var approvals = await ListAsync(ticket.Id, null, ct);
         var reason = await WhyNotAskAsync(ticket, ct);
         var approvers = ticket.ClientCompanyId is { } company ? await ApproversAsync(company, ct) : [];
-        if (reason is null && approvers.Count == 0)
+        var missingApprovers = reason is null && approvers.Count == 0;
+        if (missingApprovers)
             reason = "This client has no approvers listed yet. Their administrator adds them in the Control Panel, under Approvers.";
         var applies = ticket.ClientCompanyId is not null && await ClientCanSeeAsync(ticket, ct);
-        return new StaffApprovalsDto(applies, reason is null, reason, approvals, approvers);
+        return new StaffApprovalsDto(applies, reason is null, reason, approvals, approvers, missingApprovers);
     }
 
     public async Task<TicketApprovalDto> RequestAsync(

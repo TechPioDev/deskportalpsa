@@ -66,6 +66,9 @@ function StaffApprovals({ ticketId, canUpdate }: { ticketId: string; canUpdate: 
   const [recording, setRecording] = useState(false);
 
   if (!view || !view.applies) return null;
+  // Nothing asked and nothing askable - a finished ticket, say - is not worth a panel on every
+  // ticket. The one reason kept is the actionable one: the client has nobody on their list yet.
+  if (view.approvals.length === 0 && !view.canAsk && !view.missingApprovers) return null;
   const pending = view.approvals.find((a) => a.state === 'Pending');
   const settled = view.approvals.filter((a) => a.state !== 'Pending');
 

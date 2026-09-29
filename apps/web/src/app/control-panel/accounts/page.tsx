@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Server, Building2, Plus, Pencil, Trash2, Check, X, CheckCircle2, Info, DownloadCloud, FileSignature, ListTree } from 'lucide-react';
 import { api, type Device, type DeviceInput } from '@/lib/api';
 import { CpHeader, AccessError, Field } from '../_ui';
+import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
 
 export default function AccountsPage() {
   const qc = useQueryClient();
@@ -35,7 +37,7 @@ export default function AccountsPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
-      <CpHeader icon={Server} title="Accounts & Devices" subtitle="Your account details (synced from the PSA) and the devices you want your technicians to know about." />
+      <CpHeader icon={Server} title="Accounts & Devices" subtitle="Your account details and devices, kept in step with your IT provider's PSA. Open a device to see every ticket raised about it." />
 
       {!error && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
@@ -143,7 +145,11 @@ export default function AccountsPage() {
             </div>
             <div className="divide-y divide-[var(--border)]">
               {isLoading && <div className="px-5 py-8 text-center text-sm text-[var(--muted)]">Loading…</div>}
-              {devices?.length === 0 && !draft && <div className="px-5 py-8 text-center text-sm text-[var(--muted)]">No devices recorded yet.</div>}
+              {devices?.length === 0 && !draft && (
+                <div className="px-5 py-8 text-center text-sm text-[var(--muted)]">
+                  No devices yet. Devices your IT provider tracks in their PSA appear here automatically, once a day.
+                </div>
+              )}
               {devices?.map((d) => <Row key={d.id} device={d} onSave={(i) => save.mutate(i)} onDelete={() => del.mutate(d.id)} saving={save.isPending} />)}
               {draft && <Editor initial={draft} onCancel={() => setDraft(null)} onSave={(i) => save.mutate(i)} saving={save.isPending} />}
             </div>
@@ -157,15 +163,36 @@ export default function AccountsPage() {
 function Row({ device, onSave, onDelete, saving }: { device: Device; onSave: (i: DeviceInput) => void; onDelete: () => void; saving: boolean }) {
   const [editing, setEditing] = useState(false);
   if (editing) return <Editor initial={device} onCancel={() => setEditing(false)} onSave={(i) => { onSave(i); setEditing(false); }} saving={saving} />;
+  const warranty = warrantyState(device.warrantyExpiresAt);
   return (
-    <div className="flex items-center gap-3 px-5 py-3">
+    <div className={`flex items-center gap-3 px-5 py-3 ${device.isActive ? '' : 'opacity-60'}`}>
       <Server size={16} className="shrink-0 text-[var(--muted)]" />
       <div className="min-w-0 flex-1">
-        <div className="font-medium">{device.name} {device.type && <span className="ml-1 rounded bg-[var(--bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted)]">{device.type}</span>}</div>
-        <div className="truncate text-xs text-[var(--muted)]">{[device.identifier, device.notes].filter(Boolean).join(' · ') || '—'}</div>
+        <div className="flex flex-wrap items-center gap-1.5 font-medium">
+          <Link href={`/control-panel/accounts/devices/${device.id}`} className="hover:text-brand hover:underline">{device.name}</Link>
+          {device.type && <span className="rounded bg-[var(--bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted)]">{device.type}</span>}
+          {device.fromPsa && <span className="rounded bg-brand-tint px-1.5 py-0.5 text-[11px] font-medium text-brand dark:bg-brand/15">From your PSA</span>}
+          {!device.isActive && <span className="rounded bg-[var(--bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted)]">Retired</span>}
+        </div>
+        <div className="truncate text-xs text-[var(--muted)]">
+          {[device.identifier, device.notes].filter(Boolean).join(' · ') || '—'}
+          {warranty && <span className={warranty.tone === 'ok' ? '' : WARRANTY_TONE[warranty.tone]}> · {warranty.text}</span>}
+        </div>
       </div>
-      <button onClick={() => setEditing(true)} aria-label="Edit" className="rounded-md p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-brand"><Pencil size={15} /></button>
-      <button onClick={() => { if (window.confirm(`Remove ${device.name}?`)) onDelete(); }} aria-label="Delete" className="rounded-md p-1.5 text-[var(--muted)] hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/50"><Trash2 size={15} /></button>
+      <Link href={`/control-panel/accounts/devices/${device.id}`}
+        className="hidden shrink-0 text-right text-xs text-[var(--muted)] hover:text-brand sm:block">
+        {device.totalTickets === 0 ? 'No tickets' : <>
+          <span className="font-medium text-[var(--fg)]">{device.totalTickets}</span> ticket{device.totalTickets === 1 ? '' : 's'}
+          {device.openTickets > 0 && <span className="block text-amber-700 dark:text-amber-400">{device.openTickets} open</span>}
+        </>}
+      </Link>
+      <button onClick={() => setEditing(true)} aria-label={device.fromPsa ? `Edit notes for ${device.name}` : `Edit ${device.name}`}
+        className="rounded-md p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-brand"><Pencil size={15} /></button>
+      {/* A synced device would come straight back from the PSA; it is retired there, not here. */}
+      {!device.fromPsa && (
+        <button onClick={() => { if (window.confirm(`Remove ${device.name}?`)) onDelete(); }} aria-label={`Delete ${device.name}`}
+          className="rounded-md p-1.5 text-[var(--muted)] hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/50"><Trash2 size={15} /></button>
+      )}
     </div>
   );
 }
@@ -175,6 +202,22 @@ function Editor({ initial, onCancel, onSave, saving }: { initial: Device | Devic
     id: 'id' in initial ? initial.id : undefined,
     name: initial.name, type: initial.type ?? '', identifier: initial.identifier ?? '', notes: initial.notes ?? '',
   });
+  const synced = 'fromPsa' in initial && initial.fromPsa;
+  if (synced) {
+    // The PSA owns this device's details; the notes are the one thing that is the client's own.
+    return (
+      <div className="bg-[var(--bg)]/40 px-5 py-4">
+        <p className="mb-3 text-xs text-[var(--muted)]">
+          <strong className="text-[var(--fg)]">{initial.name}</strong> comes from your PSA, so its name, type and serial are changed there. Add your own notes here.
+        </p>
+        <Field label="Notes" value={f.notes ?? ''} onChange={(v) => setF({ ...f, notes: v })} placeholder="Comms room, rack 2" />
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <button onClick={onCancel} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--muted)] hover:bg-[var(--bg)]"><X size={14} /> Cancel</button>
+          <button onClick={() => onSave(f)} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-40"><Check size={14} /> Save</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="bg-[var(--bg)]/40 px-5 py-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

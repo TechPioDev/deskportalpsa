@@ -30,6 +30,7 @@ builder.Services.AddHostedService<ScheduledReportService>();
 builder.Services.AddHostedService<StaffReportBackgroundService>();
 builder.Services.AddHostedService<AttentionDigestBackgroundService>();
 builder.Services.AddHostedService<RecurringTicketBackgroundService>();
+builder.Services.AddHostedService<DeviceSyncBackgroundService>();
 builder.Services.AddHostedService<ActivityRollupBackgroundService>();
 builder.Services.AddHostedService<EnquiryRetentionBackgroundService>();
 builder.Services.AddHostedService<AuthorBackfillService>();

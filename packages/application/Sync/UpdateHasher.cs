@@ -39,8 +39,9 @@ public static class UpdateHasher
         string? status, string? priority, string? category, string? title, string? description,
         DateTimeOffset? resolvedAt, DateTimeOffset? closedAt, DateTimeOffset? slaDueAt,
         DateTimeOffset? psaCreatedAt = null, string? queueOrBoard = null,
-        string? contactName = null, string? contactEmail = null)
-        => Compute(new Dictionary<string, string?>
+        string? contactName = null, string? contactEmail = null, string? deviceExternalId = null)
+    {
+        var fields = new Dictionary<string, string?>
         {
             ["status"] = status,
             ["priority"] = priority,
@@ -65,5 +66,12 @@ public static class UpdateHasher
             // Same reason: the contact started being captured after every ticket was imported.
             ["contactName"] = contactName,
             ["contactEmail"] = contactEmail,
-        });
+        };
+
+        // The device joins the hash only when there is one. Added unconditionally, every ticket's hash
+        // would change at once and the next sync would rewrite the whole import for nothing; this way
+        // only the tickets that carry a device are re-read - which is exactly the backfill wanted.
+        if (!string.IsNullOrEmpty(deviceExternalId)) fields["deviceExternalId"] = deviceExternalId;
+        return Compute(fields);
+    }
 }

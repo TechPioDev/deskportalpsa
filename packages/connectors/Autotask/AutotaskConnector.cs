@@ -485,9 +485,32 @@ public sealed class AutotaskConnector(
         return new CreateAttachmentResult(true, result!.ItemId.ToString(), null);
     }
 
-    // Autotask installed-products sync isn't wired yet; report none rather than failing the panel.
-    public Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ExternalDevice>>([]);
+    /// <summary>
+    /// A client's configuration items - Autotask's word for the devices, licences and products it
+    /// tracks per company. The name is the item's reference title (what a technician types, usually
+    /// the machine name), falling back to the reference number and then the serial, so a row is never
+    /// just an id. The type label comes from the tenant's own metadata, like every other picklist.
+    /// </summary>
+    public async Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default)
+    {
+        var items = await QueryAsync<AtConfigurationItem>("ConfigurationItems",
+            [Filter("companyID", "eq", long.Parse(organizationId))], 500, ct);
+        if (items.Count == 0) return [];
+
+        var types = (await PicklistAsync("ConfigurationItems", "configurationItemType", ct))
+            .ToDictionary(o => o.Value, o => o.Label);
+
+        return items.Select(c => new ExternalDevice(
+            c.Id.ToString(),
+            FirstNonBlank(c.ReferenceTitle, c.ReferenceNumber, c.SerialNumber) ?? $"Configuration item {c.Id}",
+            c.ConfigurationItemType is { } t ? types.GetValueOrDefault(t.ToString()) : null,
+            string.IsNullOrWhiteSpace(c.SerialNumber) ? null : c.SerialNumber.Trim(),
+            c.IsActive,
+            c.WarrantyExpirationDate)).ToList();
+    }
+
+    private static string? FirstNonBlank(params string?[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
 
     public async Task<IReadOnlyList<UnifiedTimeEntry>> GetTimeEntriesAsync(string ticketId, CancellationToken ct = default)
     {
@@ -1063,6 +1086,9 @@ public sealed class AutotaskConnector(
         // The SLA target where one applies, else the ticket's own due date. Null when Autotask
         // supplies neither — an absent target is not a met one, so nothing is invented here.
         SlaDueAt = t.ResolvedDueDateTime ?? t.DueDateTime,
+        // Autotask carries the device on the ticket itself, so "none" here really means none.
+        DeviceExternalId = t.ConfigurationItemId is > 0 ? t.ConfigurationItemId.Value.ToString() : null,
+        DeviceKnown = true,
     };
 
     private static string Hmac(string body, string secret)

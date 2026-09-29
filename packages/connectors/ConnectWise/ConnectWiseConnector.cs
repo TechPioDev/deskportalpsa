@@ -88,7 +88,8 @@ public sealed class ConnectWiseConnector(
             c.Name ?? $"Configuration {c.Id}",
             c.Type?.Name,
             c.SerialNumber ?? c.TagNumber,
-            !string.Equals(c.Status?.Name, "Inactive", StringComparison.OrdinalIgnoreCase))).ToList();
+            !string.Equals(c.Status?.Name, "Inactive", StringComparison.OrdinalIgnoreCase),
+            c.WarrantyExpirationDate)).ToList();
     }
 
     /// <summary>

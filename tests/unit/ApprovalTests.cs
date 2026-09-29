@@ -247,6 +247,21 @@ public class ApprovalTests
     }
 
     [Fact]
+    public async Task Missing_approvers_is_reported_only_when_it_is_the_one_thing_in_the_way()
+    {
+        var k = await BuildAsync();
+        k.H.Db.Approvers.RemoveRange(k.H.Db.Approvers);
+        await k.H.Db.SaveChangesAsync();
+        var open = await TicketAsync(k, "IN_PROGRESS");
+        var finished = await TicketAsync(k, "RESOLVED");
+
+        // Open, and askable but for the empty list: say so - the client's administrator can fix it.
+        (await k.Svc.StaffViewAsync(k.Tech, open.Id)).Should().BeEquivalentTo(new { CanAsk = false, MissingApprovers = true });
+        // Finished: that is the reason, and the empty list is beside the point.
+        (await k.Svc.StaffViewAsync(k.Tech, finished.Id)).Should().BeEquivalentTo(new { CanAsk = false, MissingApprovers = false });
+    }
+
+    [Fact]
     public async Task An_approval_left_unanswered_for_two_days_needs_attention()
     {
         var k = await BuildAsync();

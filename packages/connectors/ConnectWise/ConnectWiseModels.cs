@@ -169,4 +169,5 @@ internal sealed class CwConfiguration
     [JsonPropertyName("status")] public CwRef? Status { get; set; }
     [JsonPropertyName("serialNumber")] public string? SerialNumber { get; set; }
     [JsonPropertyName("tagNumber")] public string? TagNumber { get; set; }
+    [JsonPropertyName("warrantyExpirationDate")] public DateTimeOffset? WarrantyExpirationDate { get; set; }
 }

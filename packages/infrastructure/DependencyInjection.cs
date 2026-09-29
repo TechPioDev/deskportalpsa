@@ -119,6 +119,7 @@ public static class DependencyInjection
         // Client control panel (CP-1 → CP-4 + reports)
         services.AddScoped<Desk.Application.ControlPanel.IControlPanelService, Desk.Infrastructure.ControlPanel.ControlPanelService>();
         services.AddScoped<Desk.Application.ControlPanel.IAccountSettingsService, Desk.Infrastructure.ControlPanel.AccountSettingsService>();
+        services.AddScoped<Desk.Application.ControlPanel.IDeviceSyncService, Desk.Infrastructure.ControlPanel.DeviceSyncService>();
         // Email is off until the operator sets Email__Smtp__Host and Email__Smtp__From on the server;
         // until then report runs say "not configured" instead of claiming a send.
         // An organization's own account (entered on Integration Health) wins over this server fallback.
@@ -187,6 +188,7 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Boards.ISlaPlanService, Boards.SlaPlanService>();
         services.AddScoped<Desk.Application.Boards.IRecurringTicketService, Boards.RecurringTicketService>();
         services.AddSingleton<Desk.Application.Boards.IRecurringTicketRunner, Boards.RecurringTicketRunner>();
+        services.AddSingleton<Desk.Application.ControlPanel.IDeviceSyncRunner, Desk.Infrastructure.ControlPanel.DeviceSyncRunner>();
         services.AddScoped<Desk.Application.Boards.ICannedResponseService, Boards.CannedResponseService>();
         services.AddScoped<Desk.Application.Boards.ITicketTaskService, Tickets.TicketTaskService>();
         services.AddScoped<Desk.Application.Boards.IInternalTicketService, Boards.InternalTicketService>();

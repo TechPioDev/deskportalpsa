@@ -106,7 +106,16 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     public Task<IReadOnlyList<ExternalContact>> GetContactsAsync(string organizationId, CancellationToken ct = default) => No<IReadOnlyList<ExternalContact>>();
     public Task<IReadOnlyList<ExternalTechnician>> GetTechniciansAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnician>>();
     public Task<IReadOnlyList<ExternalTechnicianAssignment>> GetTechnicianAssignmentsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnicianAssignment>>();
-    public Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default) => No<IReadOnlyList<ExternalDevice>>();
+    /// <summary>Each company's devices, keyed by its id in the PSA.</summary>
+    public Dictionary<string, List<ExternalDevice>> Devices { get; } = [];
+
+    /// <summary>Companies whose device list cannot be read.</summary>
+    public HashSet<string> DeviceReadFailsFor { get; } = [];
+
+    public Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default)
+        => DeviceReadFailsFor.Contains(organizationId)
+            ? throw new ConnectorException(ConnectorFailureKind.ProviderError, "provider unavailable")
+            : Task.FromResult<IReadOnlyList<ExternalDevice>>(Devices.GetValueOrDefault(organizationId) ?? []);
 
     /// <summary>Agreements the fake provider holds, keyed by organization id.</summary>
     public Dictionary<string, List<ExternalAgreement>> Agreements { get; } = [];

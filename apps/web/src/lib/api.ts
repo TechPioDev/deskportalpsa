@@ -846,6 +846,7 @@ export const api = {
       agreementsUnavailable: z.boolean().default(false),
     })),
   cpDevices: () => request('/api/control-panel/devices', z.array(DeviceSchema)) as Promise<Device[]>,
+  cpDevice: (id: string) => request(`/api/control-panel/devices/${id}`, DeviceDetailSchema) as Promise<DeviceDetail>,
   cpSaveDevice: (body: DeviceInput) => request('/api/control-panel/devices', DeviceSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<Device>,
   cpDeleteDevice: (id: string) => request(`/api/control-panel/devices/${id}`, z.unknown(), { method: 'DELETE' }),
   cpBusinessHours: () => request('/api/control-panel/business-hours', BusinessHoursSchema) as Promise<BusinessHours>,
@@ -930,7 +931,23 @@ const HolidaySchema = z.object({ id: z.string(), date: z.string(), name: z.strin
 export type Holiday = z.infer<typeof HolidaySchema>;
 export type HolidayInput = { id?: string; date: string; name: string };
 
-const DeviceSchema = z.object({ id: z.string(), name: z.string(), type: z.string().nullable(), identifier: z.string().nullable(), notes: z.string().nullable() });
+const DeviceSchema = z.object({
+  id: z.string(), name: z.string(), type: z.string().nullable(), identifier: z.string().nullable(), notes: z.string().nullable(),
+  /** Synced from the PSA: name, type, serial and warranty are the PSA's; only the notes are editable here. */
+  fromPsa: z.boolean(),
+  isActive: z.boolean(),
+  warrantyExpiresAt: z.string().nullable(),
+  lastSyncedAt: z.string().nullable(),
+  openTickets: z.number(),
+  totalTickets: z.number(),
+});
+const DeviceDetailSchema = z.object({
+  device: DeviceSchema,
+  tickets: z.array(z.object({
+    id: z.string(), reference: z.string(), title: z.string(), status: z.string(), isOpen: z.boolean(), raisedAt: z.string(),
+  })),
+});
+export type DeviceDetail = z.infer<typeof DeviceDetailSchema>;
 export type Device = z.infer<typeof DeviceSchema>;
 export type DeviceInput = { id?: string; name: string; type?: string | null; identifier?: string | null; notes?: string | null };
 
@@ -1299,6 +1316,7 @@ export const StaffApprovalsSchema = z.object({
     id: z.string(), name: z.string(), email: z.string().nullable(), scope: z.string().nullable(),
     canAnswerInPortal: z.boolean(),
   })),
+  missingApprovers: z.boolean().default(false),
 });
 export type StaffApprovals = z.infer<typeof StaffApprovalsSchema>;
 

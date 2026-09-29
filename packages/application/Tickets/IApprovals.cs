@@ -32,7 +32,10 @@ public sealed record StaffApprovalsDto(
     /// <summary>Why nobody can be asked on this ticket, when that is the case.</summary>
     string? Reason,
     IReadOnlyList<TicketApprovalDto> Approvals,
-    IReadOnlyList<ApproverChoiceDto> Approvers);
+    IReadOnlyList<ApproverChoiceDto> Approvers,
+    /// <summary>The only thing stopping a request is that the client has nobody on their approver
+    /// list - the one reason worth showing on a ticket where nothing has been asked.</summary>
+    bool MissingApprovers = false);
 
 /// <summary>A request waiting on the signed-in client user, for their own list.</summary>
 public sealed record MyApprovalDto(

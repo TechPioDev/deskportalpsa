@@ -46,14 +46,19 @@ public sealed class TicketSyncService(
         var portalCategory = Map(rules, ctx, "category", incoming.Category) ?? incoming.Category;
         var portalQueue = Map(rules, ctx, "queue", incoming.QueueOrBoard) ?? incoming.QueueOrBoard;
 
+        var existing = await db.Tickets.FirstOrDefaultAsync(
+            t => t.PsaConnectionId == psaConnectionId && t.ExternalTicketId == incoming.ExternalId, ct);
+
+        // A provider that does not carry the device on the ticket leaves the one the portal holds in
+        // the hash, so the portal's own hash of the row still agrees with the sync's.
+        var existingDeviceExternalId = incoming.DeviceKnown ? null : existing?.DeviceExternalId;
+
         var hash = UpdateHasher.ForTicketState(
             portalStatus, portalPriority, portalCategory, incoming.Title, incoming.Description,
             incoming.ResolvedAt, incoming.ClosedAt, incoming.SlaDueAt, incoming.CreatedAt, portalQueue,
             string.IsNullOrWhiteSpace(incoming.RequesterName) ? null : incoming.RequesterName,
-            string.IsNullOrWhiteSpace(incoming.RequesterEmail) ? null : incoming.RequesterEmail);
-
-        var existing = await db.Tickets.FirstOrDefaultAsync(
-            t => t.PsaConnectionId == psaConnectionId && t.ExternalTicketId == incoming.ExternalId, ct);
+            string.IsNullOrWhiteSpace(incoming.RequesterEmail) ? null : incoming.RequesterEmail,
+            incoming.DeviceKnown ? incoming.DeviceExternalId : existingDeviceExternalId);
 
         if (existing is not null)
         {
@@ -105,6 +110,16 @@ public sealed class TicketSyncService(
         // Only ever set from the provider — never defaulted to "now" when absent, because a
         // fabricated raise date would make an unknown-age ticket look brand new.
         ticket.PsaCreatedAt = incoming.CreatedAt;
+        // The device, where the provider says (and only then: a provider that does not carry it would
+        // otherwise clear one set in the portal). The device may not have been synced yet; the daily
+        // device sync links the id up when it arrives.
+        if (incoming.DeviceKnown)
+        {
+            ticket.DeviceExternalId = string.IsNullOrWhiteSpace(incoming.DeviceExternalId) ? null : incoming.DeviceExternalId;
+            ticket.DeviceId = ticket.DeviceExternalId is null ? null : await db.Devices.AsNoTracking()
+                .Where(d => d.PsaConnectionId == psaConnectionId && d.ExternalId == ticket.DeviceExternalId)
+                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync(ct);
+        }
         ticket.UpdateHash = hash;
         ticket.SyncStatus = TicketSyncStatus.Synced;
         ticket.LastSyncedAt = clock.GetUtcNow();

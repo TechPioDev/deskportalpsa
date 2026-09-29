@@ -273,6 +273,42 @@ public sealed class RelationalQueryTests : IDisposable
         (await _db.Tickets.SingleAsync(t => t.Id == ticket.Id)).PortalStatus.Should().Be("IN_PROGRESS");
     }
 
+    [Fact]
+    public async Task Devices_translate()
+    {
+        var connection = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "TechPio AT", Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://at.test", CredentialSecretRef = "ref",
+        };
+        var company = new Desk.Domain.Tenancy.ClientCompany { MspOrganizationId = Org, Name = "Acme", ExternalCompanyId = "176", PsaConnectionId = connection.Id };
+        var ticket = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, PsaConnectionId = connection.Id, Provider = ProviderType.AutotaskPsa,
+            ExternalTicketId = "9001", ClientCompanyId = company.Id, RequesterName = "Priya", RequesterEmail = "p@acme.test",
+            Title = "Disk failing", PortalStatus = "IN_PROGRESS", DeviceExternalId = "70", SyncStatus = TicketSyncStatus.Synced,
+        };
+        _db.AddRange(connection, company, ticket);
+        await _db.SaveChangesAsync();
+
+        var psa = new StubConnector();
+        psa.Devices["176"] = [new Desk.PsaCore.Models.ExternalDevice("70", "ACME-SRV01", "Server", "7XK29", true, DateTimeOffset.UtcNow.AddYears(1))];
+        var sync = new Desk.Infrastructure.ControlPanel.DeviceSyncService(_db, new OneConnector(psa), _clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Desk.Infrastructure.ControlPanel.DeviceSyncService>.Instance);
+        (await sync.SyncConnectionAsync(connection.Id)).TicketsLinked.Should().Be(1);
+
+        var settings = new Desk.Infrastructure.ControlPanel.AccountSettingsService(_db, new AuditWriter(_db, User, _tenant, _clock), new OneConnector(psa), sync);
+        var admin = new ClientAccess(Org, company.Id, Guid.NewGuid(), IsCompanyAdministrator: true);
+        var device = (await settings.ListDevicesAsync(admin)).Should().ContainSingle().Subject;
+        device.OpenTickets.Should().Be(1);
+        (await settings.GetDeviceAsync(admin, device.Id)).Tickets.Should().ContainSingle();
+    }
+
+    private sealed class OneConnector(Desk.PsaCore.Contracts.IServiceManagementConnector c) : Desk.Application.Connectors.IConnectorResolver
+    {
+        public Task<Desk.PsaCore.Contracts.IServiceManagementConnector> ResolveAsync(Guid connectionId, CancellationToken ct = default) => Task.FromResult(c);
+    }
+
     private sealed class NoTrail : ITicketCommandService
     {
         public Task PostTrailNoteAsync(Guid ticketId, string authorName, bool authoredByClient, string body, CancellationToken ct = default) => Task.CompletedTask;

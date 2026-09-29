@@ -17,8 +17,13 @@ namespace Desk.Infrastructure.ControlPanel;
 public sealed class AccountSettingsService(
     DeskDbContext db,
     IAuditWriter audit,
-    Desk.Application.Connectors.IConnectorResolver connectors) : IAccountSettingsService
+    Desk.Application.Connectors.IConnectorResolver connectors,
+    IDeviceSyncService? deviceSync = null) : IAccountSettingsService
 {
+    // One way devices come in from the PSA, whether the daily sync or this button asked.
+    private IDeviceSyncService DeviceSync => deviceSync ?? new DeviceSyncService(db, connectors, TimeProvider.System,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<DeviceSyncService>.Instance);
+
     public async Task<AccountPsaViewDto> PsaViewAsync(ClientAccess access, CancellationToken ct = default)
     {
         await EnsureSectionAsync(access, ControlPanelSection.Accounts, ct);
@@ -138,32 +143,13 @@ public sealed class AccountSettingsService(
             }
         }
 
-        // Devices/configurations → Devices, matched on the PSA identifier.
-        var devices = await connector.GetDevicesAsync(company.ExternalCompanyId, ct);
-        var existingDevices = await db.Devices.Where(d => d.ClientCompanyId == company.Id).ToListAsync(ct);
-        foreach (var d in devices)
-        {
-            var row = existingDevices.FirstOrDefault(x => x.Identifier == d.Identifier && !string.IsNullOrWhiteSpace(d.Identifier))
-                   ?? existingDevices.FirstOrDefault(x => x.Name == d.Name);
-            if (row is null)
-            {
-                db.Devices.Add(new Device
-                {
-                    ClientCompanyId = company.Id,
-                    Name = d.Name,
-                    Type = d.Type,
-                    Identifier = d.Identifier,
-                });
-                devicesCreated++;
-            }
-            else
-            {
-                row.Name = d.Name; row.Type = d.Type ?? row.Type; row.Identifier = d.Identifier ?? row.Identifier;
-                devicesUpdated++;
-            }
-        }
-
         await db.SaveChangesAsync(ct);
+
+        // Devices through the same sync the daily job runs, so the two can never match differently.
+        var devices = await DeviceSync.SyncCompanyAsync(company.Id, ct);
+        devicesCreated = devices.Created;
+        devicesUpdated = devices.Updated;
+
         await audit.WriteAsync("control_panel.psa.import", "ClientCompany", company.Id.ToString(),
             new { usersCreated, usersUpdated, devicesCreated, devicesUpdated }, ct);
         return new PsaImportResult(usersCreated, usersUpdated, devicesCreated, devicesUpdated);
@@ -257,8 +243,33 @@ public sealed class AccountSettingsService(
     public async Task<IReadOnlyList<DeviceDto>> ListDevicesAsync(ClientAccess access, CancellationToken ct = default)
     {
         await EnsureSectionAsync(access, ControlPanelSection.Accounts, ct);
-        return await Scoped(db.Devices, access).OrderBy(d => d.Name)
-            .Select(d => new DeviceDto(d.Id, d.Name, d.Type, d.Identifier, d.Notes)).ToListAsync(ct);
+        var devices = await Scoped(db.Devices, access).AsNoTracking()
+            .OrderByDescending(d => d.IsActive).ThenBy(d => d.Name)
+            .ToListAsync(ct);
+        var counts = await DeviceTickets(access)
+            .Where(t => t.DeviceId != null)
+            .GroupBy(t => t.DeviceId!.Value)
+            .Select(g => new { DeviceId = g.Key, Total = g.Count(), Open = g.Count(t => t.ClosedAt == null && t.ResolvedAt == null) })
+            .ToListAsync(ct);
+        var byDevice = counts.ToDictionary(c => c.DeviceId);
+        return [.. devices.Select(d => Dto(d, byDevice.GetValueOrDefault(d.Id)?.Open ?? 0, byDevice.GetValueOrDefault(d.Id)?.Total ?? 0))];
+    }
+
+    public async Task<DeviceDetailDto> GetDeviceAsync(ClientAccess access, Guid id, CancellationToken ct = default)
+    {
+        await EnsureSectionAsync(access, ControlPanelSection.Accounts, ct);
+        var device = await Scoped(db.Devices, access).AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, ct)
+            ?? throw new NotFoundException("Device");
+        var tickets = (await DeviceTickets(access)
+                .Where(t => t.DeviceId == id)
+                .OrderByDescending(t => t.CreatedAt)
+                .Take(200)
+                .Select(t => new { t.Id, t.Number, t.ExternalTicketId, t.Title, t.PortalStatus, t.ClosedAt, t.ResolvedAt, t.PsaCreatedAt, t.CreatedAt })
+                .ToListAsync(ct))
+            .Select(t => new DeviceTicketDto(t.Id, t.Number ?? t.ExternalTicketId ?? "—", t.Title, t.PortalStatus,
+                t.ClosedAt is null && t.ResolvedAt is null, t.PsaCreatedAt ?? t.CreatedAt))
+            .ToList();
+        return new DeviceDetailDto(Dto(device, tickets.Count(t => t.IsOpen), tickets.Count), tickets);
     }
 
     public async Task<DeviceDto> SaveDeviceAsync(ClientAccess access, DeviceInput input, CancellationToken ct = default)
@@ -266,14 +277,33 @@ public sealed class AccountSettingsService(
         await EnsureSectionAsync(access, ControlPanelSection.Accounts, ct);
         var name = Required(input.Name, "Name");
         var row = await FindOrNew(db.Devices, access, input.Id, () => new Device { ClientCompanyId = access.ClientCompanyId, Name = name }, ct);
-        row.Name = name; row.Type = Trim(input.Type); row.Identifier = Trim(input.Identifier); row.Notes = Trim(input.Notes);
+        // A synced device's details are the PSA's: an edit here would be overwritten tonight, which is
+        // worse than refusing it. The notes are the client's own and stay editable.
+        if (!row.FromPsa)
+        {
+            row.Name = name; row.Type = Trim(input.Type); row.Identifier = Trim(input.Identifier);
+        }
+        row.Notes = Trim(input.Notes);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("control_panel.device.save", nameof(Device), row.Id.ToString(), null, ct);
-        return new DeviceDto(row.Id, row.Name, row.Type, row.Identifier, row.Notes);
+        return Dto(row, 0, 0);
     }
 
-    public Task DeleteDeviceAsync(ClientAccess access, Guid id, CancellationToken ct = default)
-        => DeleteAsync(db.Devices, access, id, ControlPanelSection.Accounts, "control_panel.device.delete", nameof(Device), ct);
+    public async Task DeleteDeviceAsync(ClientAccess access, Guid id, CancellationToken ct = default)
+    {
+        var synced = await Scoped(db.Devices, access).AnyAsync(d => d.Id == id && d.ExternalId != null, ct);
+        if (synced)
+            throw new ValidationFailedException("This device comes from your PSA and would come straight back. Retire it there instead.");
+        await DeleteAsync(db.Devices, access, id, ControlPanelSection.Accounts, "control_panel.device.delete", nameof(Device), ct);
+    }
+
+    /// <summary>The account's tickets a device page may list: the ones the client can see at all -
+    /// provider tickets and monitoring boards shown to them, never the team's internal work.</summary>
+    private IQueryable<Desk.Domain.Tickets.Ticket> DeviceTickets(ClientAccess access)
+        => Desk.Infrastructure.Tickets.TicketReadService.ClientVisible(db, access with { IsCompanyAdministrator = true });
+
+    private static DeviceDto Dto(Device d, int open, int total) => new(
+        d.Id, d.Name, d.Type, d.Identifier, d.Notes, d.FromPsa, d.IsActive, d.WarrantyExpiresAt, d.LastSyncedAt, open, total);
 
     // ---- Business hours (single row per account) ----
 
