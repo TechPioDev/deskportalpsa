@@ -31,14 +31,14 @@ public sealed class TicketsController(
     /// <param name="boardId">One of the team's own boards, for the board view. Staff only.</param>
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] Guid? boardId, CancellationToken ct)
-        => user.HasPermission(Permissions.TicketsViewAll)
+        => user.SeesStaffTickets()
             ? Ok(await reads.ListAllAsync(ct, boardId))
             : Ok(await reads.ListAsync(await AccessAsync(ct), ct));
 
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Detail(Guid id, CancellationToken ct)
     {
-        var detail = user.HasPermission(Permissions.TicketsViewAll)
+        var detail = user.SeesStaffTickets()
             ? await reads.GetDetailForStaffAsync(id, ct)
             : await reads.GetDetailAsync(await AccessAsync(ct), id, ct);
         return detail is null ? NotFound() : Ok(detail);
@@ -66,10 +66,10 @@ public sealed class TicketsController(
         if (access is not null)
         {
             try { return Ok(await commands.AddCommentAsync(access, id, req.Body, ct)); }
-            catch (NotFoundException) when (user.HasPermission(Permissions.TicketsViewAll))
+            catch (NotFoundException) when (user.SeesStaffTickets())
             { /* not their company's ticket — fall through to the staff path */ }
         }
-        if (!user.HasPermission(Permissions.TicketsViewAll))
+        if (!user.SeesStaffTickets())
             throw new ForbiddenException("This endpoint is for client portal users.");
         if (user.UserId is not { } uid)
             throw new ForbiddenException("This endpoint is for client portal users.");
@@ -85,7 +85,7 @@ public sealed class TicketsController(
     /// contacts, and a client has no business enumerating their colleagues' addresses here.
     /// </summary>
     [HttpGet("{id:guid}/recipients")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Recipients(Guid id, CancellationToken ct)
     {
         if (user.UserId is not { } uid) throw new ForbiddenException("Staff only.");
@@ -93,7 +93,7 @@ public sealed class TicketsController(
     }
 
     [HttpPost("{id:guid}/contact/refresh")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> RefreshContact(Guid id, CancellationToken ct)
     {
         if (user.UserId is not { } uid) throw new ForbiddenException("Staff only.");

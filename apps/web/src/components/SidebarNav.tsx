@@ -8,6 +8,7 @@ import {
   SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile, BookOpen, LifeBuoy,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { isStaffPermissions } from '@/lib/staff';
 
 // `permissions` is ANY-OF: "Productivity" is rightly visible to a technician who may only see
 // their own numbers AND to a manager who holds only the team-wide permission.
@@ -72,7 +73,7 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
       { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket },
       // The team's own work, kept apart from the provider queues above so the two never blur.
       { href: '/dashboard/boards', label: 'Internal boards', icon: ClipboardList, permissions: ['tickets.create'], feature: 'internalBoards' },
-      { href: '/dashboard/knowledge', label: 'Knowledge base', icon: BookOpen, permissions: ['tickets.view.all'], audience: 'staff' },
+      { href: '/dashboard/knowledge', label: 'Knowledge base', icon: BookOpen, permissions: ['tickets.view.all', 'tickets.view.assigned'], audience: 'staff' },
       { href: '/dashboard/help', label: 'Help', icon: LifeBuoy, audience: 'client' },
       { href: '/dashboard/analytics', label: 'Productivity', icon: BarChart3, permissions: ['productivity.own.view', 'productivity.team.view'] },
       { href: '/dashboard/analytics/technicians', label: 'Technician hours', icon: Clock, permissions: ['productivity.own.view', 'productivity.team.view'] },
@@ -124,9 +125,9 @@ function useVisibleNav() {
   const held = new Set(me?.permissions ?? []);
   // A feature switched off on this installation is hidden rather than left to 404 when clicked.
   const features = me?.features;
-  // Staff hold the all-tickets view; client roles never do. Unknown until "me" loads, so an
-  // audience-bound item waits rather than flashing on the wrong side.
-  const isStaff = held.has('tickets.view.all');
+  // Staff hold a staff ticket view (all, or assigned for a technician); client roles never do.
+  // Unknown until "me" loads, so an audience-bound item waits rather than flashing on the wrong side.
+  const isStaff = isStaffPermissions(held);
   return (item: NavItem) =>
     (!item.permissions || item.permissions.some((p) => held.has(p)))
     && (!item.feature || features?.[item.feature] !== false)

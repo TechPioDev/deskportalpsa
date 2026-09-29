@@ -631,6 +631,13 @@ Each key carries a scope: All, Department, Team, Assigned, Own, Selected or None
 replaces the role-derived scope rather than merging with it, which keeps "why can this person see
 this" answerable.
 
+Staff sight is either `tickets.view.all` (administrators, managers) or `tickets.view.assigned` (the
+Technician role). Every staff screen accepts either, and the wider scope wins. An action key
+(`tickets.note.public.add`, `tickets.time.log`, `tickets.update`) is always bounded by sight as well as
+by its own scope. The Technician role grants those actions at All, so without that bound a technician
+could write on a colleague's ticket they cannot open. Both rules live in `TicketScopeQuery`, and
+`TechnicianAccessTests` holds them.
+
 ## C.2 Built-in roles
 
 | Role | In one line |
@@ -746,6 +753,9 @@ the browser test suite uses.
   updates were left as a later upgrade rather than a half-built dependency.
 - **Secrets are write-only from the interface.** Credentials can be replaced but never read back,
   including by an administrator.
+- **Nobody acts on a ticket they cannot see.** Sight bounds every ticket action, whatever scope the
+  action itself carries. Until 29 September 2026 the default Standard Technician was locked out of the
+  ticket list entirely: staff screens asked only for `tickets.view.all`, which technicians never hold.
 - **Failure is reported, not hidden.** Unmapped provider values, undelivered reports, tickets that
   never reached the PSA and stalled connections all surface in one list rather than in a log nobody
   reads.

@@ -90,13 +90,13 @@ public class AttachmentAccessTests
     private static AttachmentsController AsClient(Fixture f) => new(
         new TestCurrentUser(Org, subject: "sub-client", permissions: new HashSet<string>()),
         new StubResolver(new ClientAccess(Org, Company, ClientUserId, IsCompanyAdministrator: true)),
-        new AlwaysIssues(), f.H.Db);
+        new AlwaysIssues(), f.H.Db, new NoopTicketScopeQuery());
 
     private static AttachmentsController AsStaff(Fixture f) => new(
         new TestCurrentUser(Org, subject: "sub-staff",
             permissions: new HashSet<string> { Permissions.TicketsViewAll }, userId: Guid.NewGuid()),
         new StubResolver(null),
-        new AlwaysIssues(), f.H.Db);
+        new AlwaysIssues(), f.H.Db, new NoopTicketScopeQuery());
 
     [Fact]
     public async Task A_client_cannot_download_a_file_posted_with_an_internal_note()

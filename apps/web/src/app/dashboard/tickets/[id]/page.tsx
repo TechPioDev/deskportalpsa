@@ -19,8 +19,9 @@ import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel
 import { ApprovalPanel } from '@/components/ApprovalPanel';
 import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
 import { TicketDevicePicker } from '@/components/TicketDevicePicker';
-import { api, type AssigneeOptions } from '@/lib/api';
+import { api, ApiError, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
+import { isStaffPermissions } from '@/lib/staff';
 
 /// Whether the time-entry list is open. Shared across tickets on purpose: a technician who wants
 /// the list expanded wants it expanded on every ticket, not once per ticket id.
@@ -430,7 +431,14 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const fileRef = useRef<HTMLInputElement>(null);
   const replyBox = useRef<HTMLTextAreaElement>(null);
 
-  const { data: ticket, isLoading, isError } = useQuery({ queryKey: ['ticket', id], queryFn: () => api.getTicket(id) });
+  const { data: ticket, isLoading, isError, error } = useQuery({
+    queryKey: ['ticket', id], queryFn: () => api.getTicket(id),
+    // A 404 is an answer, not a blip: retrying only delays telling the person.
+    retry: (count, e) => !(e instanceof ApiError && e.status === 404) && count < 3,
+  });
+  // The API answers 404 both for a ticket that does not exist and for one outside this person's
+  // view - a technician following a link to a colleague's ticket - so the message covers both.
+  const notFound = error instanceof ApiError && error.status === 404;
   const { data: list } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
   // Only fetched once the picker is opened: it costs a provider round trip for coverage data that
   // most visits to a ticket never need.
@@ -473,9 +481,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const [replyTimeNotes, setReplyTimeNotes] = useState('');
   const [replySideError, setReplySideError] = useState<string | null>(null);
   // Staff-only composer powers (mirrors the old help desk: note + time + status in ONE post).
-  // Gated on view-all — the same signal the API's staff branch keys on.
+  // Gated on a staff ticket view — the same signal the API's staff branch keys on.
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
-  const isStaff = me?.permissions.includes('tickets.view.all') ?? false;
+  const isStaff = me ? isStaffPermissions(me.permissions) : false;
   // Mirror the API's own gates: a pure CLIENT login carries neither of these, and showing the
   // control anyway just manufactures a 403. Same keys the endpoints demand, not guesses.
   const canLogTime = me?.permissions.includes('tickets.time.log') ?? false;
@@ -646,7 +654,13 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       </div>
 
       {isLoading && <div className="h-48 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]" />}
-      {isError && <div className="rounded-xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted)]">Couldn&apos;t load this ticket — is the API running?</div>}
+      {isError && (
+        <div className="rounded-xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted)]">
+          {notFound
+            ? 'This ticket does not exist, or it is not one you can see. Technicians see the tickets assigned to them.'
+            : 'Couldn’t load this ticket. Check your connection and try again.'}
+        </div>
+      )}
 
       {ticket && (() => {
         const Icon = categoryIcon(ticket.portalCategory, ticket.title);

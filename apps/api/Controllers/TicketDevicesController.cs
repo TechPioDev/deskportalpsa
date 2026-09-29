@@ -18,7 +18,7 @@ public sealed class TicketDevicesController(
     ICurrentUser user, IClientAccessResolver accessResolver, ITicketDeviceService devices) : ControllerBase
 {
     [HttpGet("api/tickets/{id:guid}/device-choices")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Choices(Guid id, CancellationToken ct)
         => Ok(await devices.ChoicesAsync(StaffId(), id, ct));
 

@@ -50,7 +50,7 @@ public sealed class TicketSearchController(
 
         // Staff first, exactly as the list endpoint does: the local dev admin is both, and a staff
         // caller resolved as a client would search one company and conclude the rest had vanished.
-        var access = user.HasPermission(Permissions.TicketsViewAll)
+        var access = user.SeesStaffTickets()
             ? null
             : await accessResolver.ResolveAsync(user.Subject ?? "", ct)
               ?? throw new ForbiddenException("This endpoint is for client portal users.");
@@ -60,12 +60,12 @@ public sealed class TicketSearchController(
 
     /// <summary>The ids of the tickets the caller follows, for the view that shows exactly those.</summary>
     [HttpGet("following")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Following(CancellationToken ct)
         => Ok(await followers.FollowedTicketIdsAsync(ct));
 
     [HttpGet("{id:guid}/followers")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Followers(Guid id, CancellationToken ct)
         => Ok(await followers.ListAsync(id, ct));
 
@@ -90,17 +90,17 @@ public sealed class TicketSearchController(
     // permission to READ tickets, not the one to change them.
 
     [HttpGet("views")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Views([FromQuery] Guid? boardId, CancellationToken ct)
         => Ok(await views.ListAsync(boardId, ct));
 
     [HttpPost("views")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> SaveView([FromBody] SaveViewRequest req, CancellationToken ct)
         => Ok(await views.SaveAsync(req.Id, req.Name, req.Shared ?? false, req.BoardId, req.Filters ?? new SavedViewFilters(), ct));
 
     [HttpDelete("views/{id:guid}")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> DeleteView(Guid id, CancellationToken ct)
     {
         await views.DeleteAsync(id, ct);

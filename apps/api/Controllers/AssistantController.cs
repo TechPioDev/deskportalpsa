@@ -32,12 +32,12 @@ public sealed class AssistantController(
 {
     /// <summary>Whether the rail should offer itself, and what to say when it cannot.</summary>
     [HttpGet("availability")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Availability(CancellationToken ct)
         => Ok(await assistant.AvailabilityAsync(ct));
 
     [HttpPost("tickets/{id:guid}")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Ask(Guid id, [FromBody] AskRequest req, CancellationToken ct)
     {
         if (!Enum.TryParse<AssistantAction>(req.Action, ignoreCase: true, out var action))

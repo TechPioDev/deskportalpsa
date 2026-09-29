@@ -51,7 +51,7 @@ public sealed class TicketToolsController(ICannedResponseService canned, ITicket
     // Staff only: the list is the team's working notes, and a client never sees it.
 
     [HttpGet("api/tickets/{id:guid}/tasks")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Tasks(Guid id, CancellationToken ct)
         => Ok(await tasks.ListAsync(id, ct));
 

@@ -28,7 +28,7 @@ public sealed class PortalController(
     [HttpGet("notifications")]
     public async Task<IActionResult> Notifications(CancellationToken ct)
     {
-        if (user.HasPermission(Permissions.TicketsViewAll))
+        if (user.SeesStaffTickets())
             return Ok(await reads.RecentActivityForStaffAsync(10, ct));
 
         // A staff member without ticket visibility has no ticket activity to see. That is an empty

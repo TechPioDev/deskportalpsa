@@ -23,7 +23,8 @@ public sealed class AttachmentsController(
     ICurrentUser user,
     IClientAccessResolver accessResolver,
     IAttachmentService attachments,
-    DeskDbContext db) : ControllerBase
+    DeskDbContext db,
+    Desk.Application.Tickets.ITicketScopeQuery scopeQuery) : ControllerBase
 {
     [Authorize]
     [RequirePermission(Permissions.TicketsAddPublicNote)]
@@ -137,15 +138,17 @@ public sealed class AttachmentsController(
             // Not their company's ticket — fall through to the staff path if they can hold one.
         }
 
-        if (!user.HasPermission(Permissions.TicketsViewAll))
+        if (!user.SeesStaffTickets())
             throw access is null
                 ? new ForbiddenException("This endpoint is for client portal users.")
                 : new NotFoundException("Ticket");
 
-        // Staff path: db.Tickets is tenant-scoped, so this cannot cross into another organization.
-        var orgId = await db.Tickets.Where(t => t.Id == ticketId)
-            .Select(t => (Guid?)t.MspOrganizationId).FirstOrDefaultAsync(ct)
+        // Staff path, through the same scope as the ticket page: an admin reaches any ticket in the
+        // organization, a technician only the tickets they can open. The tenant filter alone was
+        // enough while only all-tickets staff got this far; it is not once technicians do.
+        if (user.UserId is not { } uid) throw new NotFoundException("Ticket");
+        var ticket = await scopeQuery.FindAsync(db.Tickets, ticketId, uid, Permissions.TicketsViewAll, ct)
             ?? throw new NotFoundException("Ticket");
-        return (orgId, false);
+        return (ticket.MspOrganizationId, false);
     }
 }

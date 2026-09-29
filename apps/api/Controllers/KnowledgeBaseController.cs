@@ -22,17 +22,17 @@ public sealed class KnowledgeBaseController(
     // ---- Staff ----
 
     [HttpGet("api/kb")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> List([FromQuery] string? search, CancellationToken ct)
         => Ok(await kb.ListAsync(search, ct));
 
     [HttpGet("api/kb/stats")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Stats([FromQuery] int days = 30, CancellationToken ct = default)
         => Ok(await kb.StatsAsync(days, ct));
 
     [HttpGet("api/kb/{id:guid}")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> Get(Guid id, CancellationToken ct)
         => Ok(await kb.GetAsync(id, ct));
 

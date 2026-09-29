@@ -59,6 +59,10 @@ public class TicketScopeQueryTests
     {
         var role = new Role { Name = "R-" + Guid.NewGuid(), MspOrganizationId = Org };
         role.Permissions.Add(new RolePermission { PermissionKey = key, Scope = scope });
+        // An action is also bounded by what the caller can see. These tests are about how the
+        // action's OWN scope narrows, so sight is granted wide and never the thing being tested.
+        if (!key.StartsWith("tickets.view.", StringComparison.Ordinal))
+            role.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAll, Scope = PermissionScope.All });
         db.Roles.Add(role);
         await db.SaveChangesAsync();
         db.UserRoles.Add(new UserRole { AppUserId = userId, RoleId = role.Id });
@@ -256,7 +260,7 @@ public class TicketScopeQueryTests
         db.UserBoardAccesses.Add(new UserBoardAccess { MspOrganizationId = Org, AppUserId = meId, Mode = BoardAccessMode.Selected });
         db.UserBoardGrants.Add(new UserBoardGrant
         {
-            MspOrganizationId = Org, AppUserId = meId, PsaConnectionId = connId, BoardName = "Help Desk", Actions = BoardAction.Edit,
+            MspOrganizationId = Org, AppUserId = meId, PsaConnectionId = connId, BoardName = "Help Desk", Actions = BoardAction.View | BoardAction.Edit,
         });
 
         var onGrantedBoard = NewTicket("help-desk-ticket", connectionId: connId, board: "Help Desk");

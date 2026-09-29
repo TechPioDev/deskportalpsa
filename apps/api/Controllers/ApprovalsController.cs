@@ -22,7 +22,7 @@ public sealed class ApprovalsController(
     // ---- Staff ----
 
     [HttpGet("api/tickets/{id:guid}/approvals")]
-    [RequirePermission(Permissions.TicketsViewAll)]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
     public async Task<IActionResult> StaffView(Guid id, CancellationToken ct)
         => Ok(await approvals.StaffViewAsync(StaffId(), id, ct));
 

@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BadgeCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { DecideForm } from '@/components/ApprovalPanel';
+import { isStaffPermissions } from '@/lib/staff';
 
 /**
  * Requests waiting on the signed-in client user, answerable right here. An approver is often not the
@@ -15,7 +16,7 @@ import { DecideForm } from '@/components/ApprovalPanel';
 export function MyApprovalsBanner() {
   const qc = useQueryClient();
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
-  const isStaff = me?.permissions.includes('tickets.view.all') ?? true;
+  const isStaff = me ? isStaffPermissions(me.permissions) : true;
   const { data: waiting } = useQuery({
     queryKey: ['my-approvals'], queryFn: api.myApprovals, enabled: !!me && !isStaff, retry: false,
   });

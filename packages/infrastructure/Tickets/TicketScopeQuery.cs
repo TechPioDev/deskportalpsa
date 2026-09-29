@@ -21,7 +21,21 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
     public async Task<IQueryable<Ticket>> VisibleAsync(
         IQueryable<Ticket> source, Guid appUserId, string permissionKey, CancellationToken ct = default)
     {
-        var eff = await permissions.ResolveAsync(appUserId, permissionKey, ct);
+        var byKey = await NarrowAsync(source, appUserId, permissionKey, ct);
+        if (permissionKey.StartsWith("tickets.view.", StringComparison.Ordinal)
+            || !permissionKey.StartsWith("tickets.", StringComparison.Ordinal))
+            return byKey;
+
+        // Nobody acts on a ticket they cannot see. The Standard Technician role grants note, time
+        // and update at All but sight only of their own tickets; without this, a technician could
+        // post on a colleague's ticket they would get a 404 for opening.
+        return await NarrowAsync(byKey, appUserId, Permissions.TicketsViewAll, ct);
+    }
+
+    private async Task<IQueryable<Ticket>> NarrowAsync(
+        IQueryable<Ticket> source, Guid appUserId, string permissionKey, CancellationToken ct)
+    {
+        var eff = await ResolveViewAsync(appUserId, permissionKey, ct);
         if (eff.IsDenied) return source.Where(_ => false);
 
         var scoped = eff.Scope switch
@@ -50,6 +64,31 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
 
         return byBoardAccess.Where(BoardMembership(appUserId));
     }
+
+    /// <summary>
+    /// Staff ticket visibility is asked for as <see cref="Permissions.TicketsViewAll"/>, but a
+    /// technician holds it as <see cref="Permissions.TicketsViewAssigned"/> - the legacy keys bake the
+    /// scope into the name. So a request for the one also weighs the other, and the wider wins: an
+    /// admin keeps All, a technician gets Assigned (their tickets, and the unclaimed queue of boards
+    /// they are granted), and someone holding neither still sees nothing.
+    /// </summary>
+    private async Task<EffectivePermission> ResolveViewAsync(Guid appUserId, string permissionKey, CancellationToken ct)
+    {
+        var eff = await permissions.ResolveAsync(appUserId, permissionKey, ct);
+        if (permissionKey != Permissions.TicketsViewAll || eff.Scope == PermissionScope.All) return eff;
+
+        var assigned = await permissions.ResolveAsync(appUserId, Permissions.TicketsViewAssigned, ct);
+        return Width(assigned.Scope) > Width(eff.Scope) ? assigned : eff;
+    }
+
+    private static int Width(PermissionScope scope) => scope switch
+    {
+        PermissionScope.All => 4,
+        PermissionScope.Department => 3,
+        PermissionScope.Team => 2,
+        PermissionScope.Assigned or PermissionScope.Own => 1,
+        _ => 0,
+    };
 
     /// <summary>
     /// An internal board with no members is open to the whole team, which is what a team that wants

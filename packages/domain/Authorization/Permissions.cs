@@ -31,6 +31,15 @@ public static class Permissions
     public const string TicketsViewAssigned = "tickets.view.assigned";
     public const string TicketsViewOwnCompany = "tickets.view.company";
     public const string TicketsViewOwn = "tickets.view.own";
+
+    /// <summary>
+    /// The two keys that make someone STAFF for ticket purposes: all tickets (admins, managers) or
+    /// assigned tickets (technicians). "Can this person work tickets as the MSP" is either of them -
+    /// asking for <see cref="TicketsViewAll"/> alone locked every Standard Technician out of the ticket
+    /// list and treated them as a client. Which tickets they then see is the scope's business
+    /// (see TicketScopeQuery), not this check's.
+    /// </summary>
+    public static readonly string[] StaffTicketViews = [TicketsViewAll, TicketsViewAssigned];
     public const string TicketsCreate = "tickets.create";
     public const string TicketsAddPublicNote = "tickets.note.public.add";
     public const string TicketsLogTime = "tickets.time.log";
