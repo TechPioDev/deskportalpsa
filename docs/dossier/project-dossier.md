@@ -428,7 +428,7 @@ tier is platform work that only pays off once the product is sold to more than o
 6. **A knowledge base with client-visible and staff-only articles.** *(Built 29 Sep 2026: team articles staff-only / all clients / chosen clients with drafts; client Help page with the client's own FAQ; suggestions while typing a ticket; "This solved it" counted as tickets avoided.)* The FAQ table is the seed. Tied
    to ticket deflection reporting, it is the clearest path to reducing ticket volume, which is what
    an MSP's own margin depends on. **Effort: medium. Impact: medium.**
-7. **Mobile-first technician view or progressive web app.** *(Built 29 Sep 2026: installable app (manifest, icons, service worker that caches nothing) and Web Push for staff - assigned to me, client replied, due within 2 hours - per person and per event, with RFC 8291 encryption built in-house and proven against the RFC's test vector.)* The interface is already responsive and
+7. **Mobile-first technician view or progressive web app.** *(Built 29 Sep 2026: installable app (manifest, icons, service worker that caches nothing) and Web Push for staff - assigned to me, client replied, due within 2 hours - per person and per event, with RFC 8291 encryption built in-house and proven against the RFC's test vector. iPhone not offered yet, by decision.)* The interface is already responsive and
    verified at phone width; an installable application with push for assignment and escalation would
    make the portal usable on site. **Effort: medium. Impact: medium.**
 

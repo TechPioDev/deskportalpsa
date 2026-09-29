@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, BellOff, Smartphone, Trash2 } from 'lucide-react';
 import { api, type PushStatus } from '@/lib/api';
 
-type Support = 'checking' | 'ok' | 'unsupported' | 'ios-install';
+type Support = 'checking' | 'ok' | 'unsupported' | 'iphone';
 
 function base64UrlToBytes(value: string): Uint8Array {
   const b64 = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
@@ -33,8 +33,8 @@ const EVENTS: { key: keyof PushStatus['preferences']; label: string; example: st
 
 /**
  * Push notifications on this device, for staff: turn them on or off, choose the events, send a test,
- * and see every device signed up. On an iPhone notifications only work once the portal is added to the
- * Home Screen, which the card says instead of offering a button that cannot work.
+ * and see every device signed up. iPhone is not offered yet; the card says so instead of offering a
+ * button that would not work there.
  */
 export function PushNotificationsCard() {
   const qc = useQueryClient();
@@ -46,10 +46,10 @@ export function PushNotificationsCard() {
   // What this browser can do, read after mount: the server has no navigator to ask.
   useEffect(() => {
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
-    const standalone = window.matchMedia('(display-mode: standalone)').matches
-      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
     const capable = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-    setSupport(ios && !standalone ? 'ios-install' : capable ? 'ok' : 'unsupported');
+    // iPhone is not offered yet (owner's call, 29 Sep 2026): it needs the Home Screen install and
+    // iOS 16.4+, and it has not been tried on a device. Android and computers only for now.
+    setSupport(ios ? 'iphone' : capable ? 'ok' : 'unsupported');
     if (capable) {
       navigator.serviceWorker.getRegistration('/').then(async (reg) => {
         const sub = await reg?.pushManager.getSubscription();
@@ -109,10 +109,9 @@ export function PushNotificationsCard() {
       <p className="mt-1 text-sm text-[var(--muted)]">Get a notification on your phone or computer when work comes your way - even when the portal is closed.</p>
 
       <div className="mt-4 rounded-lg bg-[var(--bg)] p-4">
-        {support === 'ios-install' && (
-          <p className="text-sm">
-            <strong>On iPhone, install the app first.</strong> In Safari tap <em>Share</em>, then <em>Add to Home Screen</em>.
-            Open piomanage from the new icon and come back to this page to turn notifications on.
+        {support === 'iphone' && (
+          <p className="text-sm text-[var(--muted)]">
+            Notifications on iPhone are not available yet. Turn them on from an Android phone or a computer.
           </p>
         )}
         {support === 'unsupported' && <p className="text-sm text-[var(--muted)]">This browser cannot receive notifications. Chrome, Edge, Firefox and Safari can.</p>}

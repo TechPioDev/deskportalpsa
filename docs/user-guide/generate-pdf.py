@@ -250,12 +250,13 @@ story += [Paragraph("<b>Knowledge base</b> holds the team's articles. Each is <b
 
 story += [Paragraph("The app and notifications", h2_s)]
 story += [Paragraph("The portal installs like an app. On Android, open it in Chrome and choose <b>Install app</b> (or "
-                    "<b>Add to Home screen</b>); on iPhone, open it in Safari, tap <b>Share</b> and <b>Add to Home Screen</b>. "
+                    "<b>Add to Home screen</b>). Notifications work on Android phones and on computers; iPhone is not "
+                    "supported yet. "
                     "Then, on your <b>Profile</b> page, press <b>Turn on for this device</b> and allow notifications. "
                     "You are told when a ticket is assigned to you (in the portal or in the PSA, once your PSA account "
                     "is linked), when a client replies on your ticket, and when your ticket is two hours from breaching "
                     "its SLA. Untick any of the three you do not want, press <b>Send a test</b> to check a device, and "
-                    "remove old devices from the list. On iPhone, notifications only work from the installed app.", body_s)]
+                    "remove old devices from the list.", body_s)]
 
 story += [Paragraph("Client approvals", h2_s)]
 story += [Paragraph("On a client's ticket, <b>Ask for approval</b> sends a request to one of the approvers the client "
