@@ -21,7 +21,9 @@ function scheduleText(p: SlaPlan) {
   if (!p.businessHoursOnly) return 'Round the clock';
   const days = DAYS.filter((d) => (p.workingDays & (1 << d.bit)) !== 0).map((d) => d.label);
   const pad = (n: number) => `${String(n).padStart(2, '0')}:00`;
-  return `${days.join(', ')} · ${pad(p.workdayStartHour)}–${pad(p.workdayEndHour)}${p.skipHolidays ? ' · not on holidays' : ''}`;
+  // A closing hour at or before the opening one is a night shift that ends the next morning.
+  const overnight = p.workdayEndHour <= p.workdayStartHour;
+  return `${days.join(', ')} · ${pad(p.workdayStartHour)}–${pad(p.workdayEndHour)}${overnight ? ' next morning' : ''}${p.skipHolidays ? ' · not on holidays' : ''}`;
 }
 
 /**
@@ -249,12 +251,12 @@ function PlanForm({ plan, onClose, onSaved }: { plan: SlaPlan | null; onClose: (
         <label className="flex items-start gap-2">
           <input type="radio" name="clock" checked={!v.businessHoursOnly} className="mt-0.5"
             onChange={() => setV({ ...v, businessHoursOnly: false })} />
-          <span><strong className="font-medium text-[var(--fg)]">Round the clock.</strong> For a desk with day and night shifts: every hour counts.</span>
+          <span><strong className="font-medium text-[var(--fg)]">Round the clock.</strong> For a desk that never closes: every hour counts.</span>
         </label>
         <label className="flex items-start gap-2">
           <input type="radio" name="clock" checked={v.businessHoursOnly} className="mt-0.5"
             onChange={() => setV({ ...v, businessHoursOnly: true })} />
-          <span><strong className="font-medium text-[var(--fg)]">Working hours only</strong>, in your organization&apos;s time zone. A ticket raised at 17:30 on Friday with four hours to go is due on Monday.</span>
+          <span><strong className="font-medium text-[var(--fg)]">Working hours only</strong>, in your organization&apos;s time zone. A ticket raised at 17:30 on Friday with four hours to go is due on Monday. A night shift works too — open at 22:00, close at 06:00.</span>
         </label>
       </fieldset>
 
@@ -289,6 +291,15 @@ function PlanForm({ plan, onClose, onSaved }: { plan: SlaPlan | null; onClose: (
               {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
             </select>
           </label>
+          {/* Said in words, because "Opens 22:00, Closes 06:00" can read as a mistake: it is a shift
+              that belongs to the day it starts and runs into the next morning. */}
+          <p className="text-[11px] font-normal text-[var(--faint)] sm:col-span-3">
+            {v.workdayEndHour % 24 === v.workdayStartHour
+              ? 'Opening and closing at the same hour is either no hours or every hour. For a desk that never closes, choose round the clock.'
+              : v.workdayEndHour < v.workdayStartHour
+                ? `A night shift: each working day's shift opens at ${String(v.workdayStartHour).padStart(2, '0')}:00 and closes at ${String(v.workdayEndHour).padStart(2, '0')}:00 the next morning. A holiday cancels the shift that would start that night.`
+                : `Open ${v.workdayEndHour - v.workdayStartHour} hours on each working day.`}
+          </p>
         </div>
       )}
 

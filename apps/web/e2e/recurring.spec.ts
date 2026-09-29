@@ -66,4 +66,18 @@ test.describe('recurring tickets and the SLA pause', () => {
     await expect(page.getByText(/^Paused since /)).toHaveCount(0);
     await expect(page.getByText(/^By /).first()).toBeVisible();
   });
+
+  test('a night shift plan can be set up and says when it closes', async ({ page }) => {
+    const run = Date.now().toString().slice(-6);
+    await page.goto('/dashboard/boards/sla');
+    await page.getByRole('button', { name: 'New plan' }).click();
+    await page.getByLabel('Plan name').fill(`Nights ${run}`);
+    await page.getByLabel('Resolved within (hours)').fill('8');
+    await page.getByRole('radio', { name: /Working hours only/ }).check();
+    await page.getByRole('combobox', { name: 'Opens', exact: true }).selectOption('22');
+    await page.getByRole('combobox', { name: 'Closes', exact: true }).selectOption('6');
+    await expect(page.getByText(/A night shift: each working day's shift opens at 22:00/)).toBeVisible();
+    await page.getByRole('button', { name: 'Add plan' }).click();
+    await expect(page.locator('tr').filter({ hasText: `Nights ${run}` })).toContainText('22:00–06:00 next morning');
+  });
 });

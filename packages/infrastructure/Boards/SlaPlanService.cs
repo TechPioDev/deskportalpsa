@@ -37,11 +37,12 @@ public sealed class SlaPlanService(DeskDbContext db, ITenantContext tenant, IAud
             throw new ValidationFailedException("A first reply is due within 1 hour and no later than the resolve time.");
         if (input.BusinessHoursOnly)
         {
-            // Overnight windows (22:00-06:00) are a night shift, and a night shift is a 24x7 desk:
-            // refused rather than silently read as a window that never opens.
-            if (input.WorkdayStartHour is < 0 or > 23 || input.WorkdayEndHour is < 1 or > 24
-                || input.WorkdayStartHour >= input.WorkdayEndHour)
-                throw new ValidationFailedException("The working day must start before it ends, within one day. For shifts through the night, use round the clock.");
+            // A closing hour at or before the opening hour is a night shift (22:00-06:00), closing the
+            // next morning. Only the same hour at both ends is refused: that is either nothing or
+            // everything, and round the clock already says "everything" plainly.
+            if (input.WorkdayStartHour is < 0 or > 23 || input.WorkdayEndHour is < 0 or > 24
+                || input.WorkdayStartHour % 24 == input.WorkdayEndHour % 24)
+                throw new ValidationFailedException("The working hours must open and close at different times. For a desk that never closes, use round the clock.");
             if ((input.WorkingDays & 0b1111111) == 0)
                 throw new ValidationFailedException("Pick at least one working day.");
         }

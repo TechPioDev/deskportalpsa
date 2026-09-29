@@ -163,7 +163,7 @@ story += [bullets([
 ])]
 story += [Paragraph("SLA plans", h2_s)]
 story += [Paragraph("Leads set up <b>SLA plans</b> under <b>Internal boards &rarr; SLA plans</b>: a first reply within so "
-                    "many hours and resolution within so many, counted round the clock or in working hours only. Give a "
+                    "many hours and resolution within so many, counted round the clock or in working hours only — including a night shift such as 22:00 to 06:00. Give a "
                     "plan to a topic, or make it a board's default, and each new ticket shows <b>First reply</b> and "
                     "<b>Resolution</b> dates, marked met, late or overdue. The board list shows <b>Reply by</b> until "
                     "somebody writes on the ticket.", body_s)]

@@ -4,7 +4,8 @@ namespace Desk.Domain.Tickets;
 /// Turns "within N hours" into a date. Round the clock that is simple addition; in business hours it
 /// walks the working days in the organization's own time zone, spending the hours only while the desk
 /// is open — a ticket raised at 17:30 on a Friday with four working hours to go is due Monday at
-/// 12:30, not Friday at 21:30. A plan that skips holidays also steps over the desk's closed days.
+/// 12:30, not Friday at 21:30. A plan that skips holidays also steps over the desk's closed days, and a
+/// night shift (22:00-06:00) is a working window that closes the next morning.
 ///
 /// Walked in local time and converted back at the end, so a daylight-saving change inside the window
 /// moves the answer by the hour it should.
@@ -26,31 +27,21 @@ public static class SlaClock
     public static DateTimeOffset AddWorking(
         DateTimeOffset start, double minutes, SlaPlan plan, TimeZoneInfo zone, IReadOnlySet<DateOnly>? holidays = null)
     {
-        if (!plan.BusinessHoursOnly) return start.AddMinutes(minutes);
+        if (!Walkable(plan)) return start.AddMinutes(minutes);
         var closed = plan.SkipHolidays ? holidays ?? NoHolidays : NoHolidays;
-        var open = plan.WorkdayStartHour;
-        var close = plan.WorkdayEndHour;
-        // A plan the service refuses to save, handled anyway rather than looping or throwing at the
-        // moment somebody raises a ticket.
-        if ((plan.WorkingDays & 0b1111111) == 0 || open >= close) return start.AddMinutes(minutes);
 
         var cursor = TimeZoneInfo.ConvertTime(start, zone).DateTime;
-        for (var i = 0; i < MaxDays; i++)
+        // From the day before: an overnight shift that began yesterday evening may still be running.
+        for (var day = cursor.Date.AddDays(-1); day <= cursor.Date.AddDays(MaxDays); day = day.AddDays(1))
         {
-            var day = cursor.Date;
-            if (IsWorking(day, plan, closed))
-            {
-                var opens = day.AddHours(open);
-                var closes = day.AddHours(close);
-                if (cursor < opens) cursor = opens;
-                if (cursor < closes)
-                {
-                    var available = (closes - cursor).TotalMinutes;
-                    if (minutes <= available) return Local(cursor.AddMinutes(minutes), zone);
-                    minutes -= available;
-                }
-            }
-            cursor = day.AddDays(1);
+            if (Window(day, plan, closed) is not { } window) continue;
+            var (opens, closes) = window;
+            if (closes <= cursor) continue;
+            if (cursor < opens) cursor = opens;
+            var available = (closes - cursor).TotalMinutes;
+            if (minutes <= available) return Local(cursor.AddMinutes(minutes), zone);
+            minutes -= available;
+            cursor = closes;
         }
         return start.AddMinutes(minutes);
     }
@@ -64,18 +55,16 @@ public static class SlaClock
         DateTimeOffset from, DateTimeOffset to, SlaPlan plan, TimeZoneInfo zone, IReadOnlySet<DateOnly>? holidays = null)
     {
         if (to < from) return -MinutesBetween(to, from, plan, zone, holidays);
-        if (!plan.BusinessHoursOnly || (plan.WorkingDays & 0b1111111) == 0 || plan.WorkdayStartHour >= plan.WorkdayEndHour)
-            return (to - from).TotalMinutes;
+        if (!Walkable(plan)) return (to - from).TotalMinutes;
 
         var closed = plan.SkipHolidays ? holidays ?? NoHolidays : NoHolidays;
         var a = TimeZoneInfo.ConvertTime(from, zone).DateTime;
         var b = TimeZoneInfo.ConvertTime(to, zone).DateTime;
         double total = 0;
-        for (var day = a.Date; day <= b.Date; day = day.AddDays(1))
+        for (var day = a.Date.AddDays(-1); day <= b.Date; day = day.AddDays(1))
         {
-            if (!IsWorking(day, plan, closed)) continue;
-            var opens = day.AddHours(plan.WorkdayStartHour);
-            var closes = day.AddHours(plan.WorkdayEndHour);
+            if (Window(day, plan, closed) is not { } window) continue;
+            var (opens, closes) = window;
             var start = a > opens ? a : opens;
             var end = b < closes ? b : closes;
             if (end > start) total += (end - start).TotalMinutes;
@@ -83,8 +72,30 @@ public static class SlaClock
         return total;
     }
 
-    private static bool IsWorking(DateTime day, SlaPlan plan, IReadOnlySet<DateOnly> closed)
-        => (plan.WorkingDays & (1 << (int)day.DayOfWeek)) != 0 && !closed.Contains(DateOnly.FromDateTime(day));
+    /// <summary>
+    /// The shift that starts on this day, or null when the desk does not work it. A shift belongs to
+    /// the day it STARTS: Monday's 22:00-06:00 runs into Tuesday morning, and a holiday on Monday
+    /// cancels the shift that would have started that night — not the one that ends that morning.
+    /// </summary>
+    private static (DateTime Opens, DateTime Closes)? Window(DateTime day, SlaPlan plan, IReadOnlySet<DateOnly> closed)
+    {
+        if ((plan.WorkingDays & (1 << (int)day.DayOfWeek)) == 0 || closed.Contains(DateOnly.FromDateTime(day))) return null;
+        var opens = day.AddHours(plan.WorkdayStartHour);
+        // Closing at or before the opening hour means closing the next morning: an overnight shift.
+        var closes = plan.WorkdayEndHour > plan.WorkdayStartHour
+            ? day.AddHours(plan.WorkdayEndHour)
+            : day.AddDays(1).AddHours(plan.WorkdayEndHour);
+        return (opens, closes);
+    }
+
+    /// <summary>
+    /// Whether the plan describes working hours that can be walked. A plan the service refuses to save
+    /// — no working days, or a shift that opens and closes at the same hour — is treated as round the
+    /// clock rather than looping or throwing at the moment somebody raises a ticket.
+    /// </summary>
+    private static bool Walkable(SlaPlan plan)
+        => plan.BusinessHoursOnly && (plan.WorkingDays & 0b1111111) != 0
+           && plan.WorkdayStartHour % 24 != plan.WorkdayEndHour % 24;
 
     private static DateTimeOffset Local(DateTime local, TimeZoneInfo zone)
     {

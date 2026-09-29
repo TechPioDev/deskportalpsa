@@ -142,13 +142,22 @@ public class DeskToolsTests
     }
 
     [Theory]
-    [InlineData(22, 6)]   // a night shift: that is a 24x7 desk, not a working day
-    [InlineData(9, 9)]
-    public async Task A_working_day_that_does_not_start_before_it_ends_is_refused(int start, int end)
+    [InlineData(9, 9)]    // opens and closes at once: nothing, or everything — round the clock says the latter plainly
+    [InlineData(0, 24)]
+    public async Task Working_hours_that_open_and_close_at_the_same_time_are_refused(int start, int end)
     {
         var k = await BuildAsync();
         await Assert.ThrowsAsync<ValidationFailedException>(() => k.Plans.SaveAsync(null,
             new SlaPlanInput("Nights", 8, BusinessHoursOnly: true, WorkdayStartHour: start, WorkdayEndHour: end)));
+    }
+
+    [Fact]
+    public async Task A_night_shift_is_a_plan_that_can_be_saved()
+    {
+        var k = await BuildAsync();
+        var plan = await k.Plans.SaveAsync(null,
+            new SlaPlanInput("Night shift", 8, BusinessHoursOnly: true, WorkdayStartHour: 22, WorkdayEndHour: 6));
+        plan.Should().BeEquivalentTo(new { WorkdayStartHour = 22, WorkdayEndHour = 6 });
     }
 
     [Fact]
