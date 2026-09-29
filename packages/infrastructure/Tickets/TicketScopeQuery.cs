@@ -38,21 +38,30 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
         var eff = await ResolveViewAsync(appUserId, permissionKey, ct);
         if (eff.IsDenied) return source.Where(_ => false);
 
-        var scoped = eff.Scope switch
+        Expression<Func<Ticket, bool>>? byScope = eff.Scope switch
         {
-            PermissionScope.All => source,
+            PermissionScope.All => null,
             // Board grants are passed in because they change what "assigned to me" should include:
             // a technician who covers a board needs to see its unclaimed queue, or there is nothing
             // for them to pick up and work never starts.
             PermissionScope.Assigned or PermissionScope.Own =>
-                await AssignedOnlyAsync(source, appUserId, eff.BoardMode == BoardAccessMode.Selected, ct),
-            PermissionScope.Department => await GroupOrUnassignedAsync(source, appUserId, byTeam: false, ct),
-            PermissionScope.Team => await GroupOrUnassignedAsync(source, appUserId, byTeam: true, ct),
+                await AssignedOnlyAsync(appUserId, eff.BoardMode == BoardAccessMode.Selected, ct),
+            PermissionScope.Department => await GroupOrUnassignedAsync(appUserId, byTeam: false, ct),
+            PermissionScope.Team => await GroupOrUnassignedAsync(appUserId, byTeam: true, ct),
             // Selected has no meaning for a ticket-visibility scope (it belongs to board access,
             // resolved separately below) and None was already handled above — anything else is a
             // permission this query was never taught, so it fails closed rather than guessing.
-            _ => source.Where(_ => false),
+            _ => _ => false,
         };
+
+        // The team's own boards are shared by membership, not by assignment: "everyone on the team
+        // can see and take these tickets" is the board's promise, and an unclaimed job nobody can see
+        // is one nobody takes. So a narrowed scope still reaches every internal and monitoring
+        // ticket, and BoardMembership below cuts that down to the boards this person belongs to.
+        var scoped = byScope is null ? source
+            : eff.Scope is PermissionScope.Assigned or PermissionScope.Own or PermissionScope.Department or PermissionScope.Team
+                ? source.Where(Or(byScope, OnATeamBoard))
+                : source.Where(byScope);
 
         var byBoardAccess = eff.BoardMode switch
         {
@@ -129,8 +138,13 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
     /// a caller with no grants it stays off, because "every unassigned ticket in the tenant" is not
     /// a queue, it is a firehose.
     /// </summary>
-    private async Task<IQueryable<Ticket>> AssignedOnlyAsync(
-        IQueryable<Ticket> source, Guid appUserId, bool includeUnclaimed, CancellationToken ct)
+    private static readonly Expression<Func<Ticket, bool>> OnATeamBoard =
+        t => t.Origin != TicketOrigin.Psa && t.BoardId != null;
+
+    private static Expression<Func<Ticket, bool>> Where(Expression<Func<Ticket, bool>> predicate) => predicate;
+
+    private async Task<Expression<Func<Ticket, bool>>> AssignedOnlyAsync(
+        Guid appUserId, bool includeUnclaimed, CancellationToken ct)
     {
         var me = await db.AppUsers.AsNoTracking()
             .Where(u => u.Id == appUserId)
@@ -144,16 +158,20 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
         // the PSA assigned to the integration's own API user carries an external id and so is not
         // unclaimed, which is right: it belongs to whoever the portal gave it to, and showing it in
         // everyone's queue would invite two technicians onto the same work.
+        // A ticket this person raised is theirs too (only internal tickets record a raiser): a
+        // technician who logs a job for the team must not watch it vanish the moment it is saved.
         return (linked, includeUnclaimed) switch
         {
-            (true, false) => source.Where(t =>
-                t.AssignedAppUserId == appUserId || t.AssignedTechnicianExternalId == me),
-            (true, true) => source.Where(t =>
+            (true, false) => Where(t =>
                 t.AssignedAppUserId == appUserId || t.AssignedTechnicianExternalId == me
+                || t.CreatedByUserId == appUserId),
+            (true, true) => Where(t =>
+                t.AssignedAppUserId == appUserId || t.AssignedTechnicianExternalId == me
+                || t.CreatedByUserId == appUserId
                 || (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)),
-            (false, false) => source.Where(t => t.AssignedAppUserId == appUserId),
-            (false, true) => source.Where(t =>
-                t.AssignedAppUserId == appUserId
+            (false, false) => Where(t => t.AssignedAppUserId == appUserId || t.CreatedByUserId == appUserId),
+            (false, true) => Where(t =>
+                t.AssignedAppUserId == appUserId || t.CreatedByUserId == appUserId
                 || (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)),
         };
     }
@@ -167,8 +185,8 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
     /// product decision it must stay visible rather than vanish from the unclaimed queue — so the
     /// membership match is OR'd with "unassigned", not AND'd.
     /// </summary>
-    private async Task<IQueryable<Ticket>> GroupOrUnassignedAsync(
-        IQueryable<Ticket> source, Guid appUserId, bool byTeam, CancellationToken ct)
+    private async Task<Expression<Func<Ticket, bool>>> GroupOrUnassignedAsync(
+        Guid appUserId, bool byTeam, CancellationToken ct)
     {
         List<Guid> groupIds = byTeam
             ? await db.UserTeams.AsNoTracking().Where(ut => ut.AppUserId == appUserId).Select(ut => ut.TeamId).ToListAsync(ct)
@@ -176,7 +194,7 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
 
         if (groupIds.Count == 0)
             // Not a member of anything: only the unclaimed queue is visible, nothing "shared".
-            return source.Where(t => t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null);
+            return Where(t => t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null);
 
         // Both identities of every member, because a department contains both kinds of technician
         // and a manager who could see only the PSA-linked half would be reading a partial team.
@@ -191,7 +209,7 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
             .Select(u => u.ExternalTechnicianId!)
             .Distinct().ToListAsync(ct);
 
-        return source.Where(t =>
+        return Where(t =>
             (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)
             || (t.AssignedAppUserId != null && memberIds.Contains(t.AssignedAppUserId.Value))
             || (t.AssignedTechnicianExternalId != null && technicianIds.Contains(t.AssignedTechnicianExternalId!)));

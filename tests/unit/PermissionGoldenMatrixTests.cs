@@ -49,7 +49,9 @@ public class PermissionGoldenMatrixTests
         ],
         [RoleType.Technician] =
         [
-            "tickets.view.assigned", "tickets.note.public.add", "tickets.time.log",
+            // tickets.create added deliberately on 29 Sep 2026 (owner's call): technicians raise
+            // tickets on the team's own boards.
+            "tickets.view.assigned", "tickets.create", "tickets.note.public.add", "tickets.time.log",
             "tickets.update", "productivity.own.view",
         ],
         [RoleType.ClientAdministrator] =

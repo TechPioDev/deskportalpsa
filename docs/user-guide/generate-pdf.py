@@ -356,7 +356,7 @@ story += [bullets([
     "Each organization's data is fully isolated — you only ever see your own.",
     "PSA credentials live only in the secret vault; they are never returned to the browser or written to logs or the audit trail.",
     "Access is governed by role-based permissions (client user, client administrator, technician, manager, administrator, auditor).",
-    "A technician sees the tickets assigned to them, plus the unclaimed queue of any board they are granted. They can reply, log time and change status only on tickets they can see. A link to anyone else's ticket shows \"not one you can see\".",
+    "A technician sees the PSA tickets assigned to them, plus the unclaimed queue of any provider board they are granted. On the team's own boards they see every ticket, the same as the rest of the team, unless the board is limited to named members. Technicians can raise tickets on those boards, and a ticket they raise stays in their list. They can reply, log time and change status only on tickets they can see.",
     "Attachments are validated and malware-scanned; downloads use short-lived, signed links.",
 ])]
 

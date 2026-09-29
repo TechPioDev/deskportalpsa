@@ -122,6 +122,9 @@ public static class Permissions
         RoleType.Technician =>
         [
             (TicketsViewAssigned, PermissionScope.Assigned),
+            // Raise tickets on the team's own boards (owner's call, 29 Sep 2026). The client-side
+            // endpoints this key also opens still demand a client account, so nothing else widens.
+            (TicketsCreate, PermissionScope.All),
             // All, not Assigned — see the summary above. This is today's behavior, preserved.
             (TicketsAddPublicNote, PermissionScope.All),
             (TicketsLogTime, PermissionScope.All),

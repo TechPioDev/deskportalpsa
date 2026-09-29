@@ -635,8 +635,11 @@ Staff sight is either `tickets.view.all` (administrators, managers) or `tickets.
 Technician role). Every staff screen accepts either, and the wider scope wins. An action key
 (`tickets.note.public.add`, `tickets.time.log`, `tickets.update`) is always bounded by sight as well as
 by its own scope. The Technician role grants those actions at All, so without that bound a technician
-could write on a colleague's ticket they cannot open. Both rules live in `TicketScopeQuery`, and
-`TechnicianAccessTests` holds them.
+could write on a colleague's ticket they cannot open. Tickets on the team's own boards (internal
+and monitoring) are shared by board membership, not by assignment. Any narrowed scope still reaches
+them, and board membership then limits them to the boards the person belongs to. A ticket someone
+raised counts as theirs. Technicians hold `tickets.create` from 29 September 2026, so they can raise
+tickets on team boards. All of this lives in `TicketScopeQuery`, and `TechnicianAccessTests` holds it.
 
 ## C.2 Built-in roles
 
@@ -645,7 +648,7 @@ could write on a colleague's ticket they cannot open. Both rules live in `Ticket
 | Platform super administrator | Every key at its declared scope |
 | MSP administrator | Everything within one MSP organization |
 | Manager | Read connections and mappings, all tickets, log time, update, reporting and team productivity, health, enquiries |
-| Technician | Assigned tickets, public notes, time logging, updates, own productivity |
+| Technician | Assigned tickets, team boards, create, public notes, time logging, updates, own productivity |
 | Client administrator | Their company's tickets, create, public notes, manage their own users, reporting |
 | Client user | Their own tickets, create, public notes |
 | Auditor | Audit log, security configuration, integration health |

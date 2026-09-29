@@ -111,6 +111,36 @@ public class TechnicianAccessTests
         (await (await k.Scope.VisibleAsync(k.H.Db.Tickets, k.Admin, Permissions.TicketsUpdate)).CountAsync()).Should().Be(3);
     }
 
+    [Fact]
+    public async Task A_team_board_is_shared_by_membership_not_by_assignment()
+    {
+        var k = await BuildAsync();
+        var open = new Board { MspOrganizationId = Org, Name = "Office IT", Key = "OIT" };
+        var closed = new Board { MspOrganizationId = Org, Name = "Leadership", Key = "LDR" };
+        k.H.Db.Boards.AddRange(open, closed);
+        k.H.Db.BoardMembers.Add(new BoardMember { MspOrganizationId = Org, BoardId = closed.Id, AppUserId = k.Admin });
+        Ticket OnBoard(Board board, string title, Guid? holder) => new()
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Internal, BoardId = board.Id, Title = title,
+            RequesterName = "Dalbir", RequesterEmail = "dalbir@techpio.test", PortalStatus = "NEW",
+            CreatedByUserId = k.Admin, AssignedAppUserId = holder,
+        };
+        var colleagues = OnBoard(open, "Patch the file server", k.Admin);
+        var unclaimed = OnBoard(open, "Printer jam, floor 2", null);
+        var leadership = OnBoard(closed, "Salary review", null);
+        k.H.Db.Tickets.AddRange(colleagues, unclaimed, leadership);
+        await k.H.Db.SaveChangesAsync();
+
+        var visible = await (await k.Scope.VisibleAsync(k.H.Db.Tickets, k.Tech, Permissions.TicketsViewAll)).Select(t => t.Id).ToListAsync();
+
+        // The open board is the whole team's: its tickets show whoever holds them, so the unclaimed
+        // one can be taken. A board with named members stays theirs. PSA tickets are still narrowed
+        // to the technician's own.
+        visible.Should().BeEquivalentTo([k.Mine, colleagues.Id, unclaimed.Id]);
+        (await k.Scope.FindAsync(k.H.Db.Tickets, unclaimed.Id, k.Tech, Permissions.TicketsUpdate)).Should().NotBeNull();
+        (await k.Scope.FindAsync(k.H.Db.Tickets, leadership.Id, k.Tech, Permissions.TicketsUpdate)).Should().BeNull();
+    }
+
     [Theory]
     [InlineData(Permissions.TicketsViewAll, true)]
     [InlineData(Permissions.TicketsViewAssigned, true)]
@@ -123,10 +153,32 @@ public class TechnicianAccessTests
     }
 
     [Fact]
-    public void The_built_in_roles_still_hold_exactly_what_they_did()
+    public void A_technician_sees_their_own_tickets_and_may_raise_team_tickets()
     {
-        // The fix widens how view.all is READ, not what any role is GRANTED.
+        // Sight stays narrow; view.all is never granted. Create was added on the owner's call so a
+        // technician can log work on the team's own boards.
         Permissions.ForRole(RoleType.Technician).Should().NotContain(p => p.Key == Permissions.TicketsViewAll);
         Permissions.ForRole(RoleType.Technician).Should().Contain(p => p.Key == Permissions.TicketsViewAssigned && p.Scope == PermissionScope.Assigned);
+        Permissions.ForRole(RoleType.Technician).Should().Contain(p => p.Key == Permissions.TicketsCreate);
+    }
+
+    [Fact]
+    public async Task A_ticket_a_technician_raised_for_nobody_stays_in_their_view()
+    {
+        var k = await BuildAsync();
+        var raised = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Internal, Title = "Office Wi-Fi drops at 3pm",
+            RequesterName = "Arjun", RequesterEmail = "arjun@techpio.test", PortalStatus = "NEW",
+            CreatedByUserId = k.Tech, AssignedAppUserId = null,
+        };
+        k.H.Db.Tickets.Add(raised);
+        await k.H.Db.SaveChangesAsync();
+
+        var visible = await (await k.Scope.VisibleAsync(k.H.Db.Tickets, k.Tech, Permissions.TicketsViewAll)).Select(t => t.Id).ToListAsync();
+
+        // Their own raised ticket joins their assigned one; the admin's and the other unclaimed one stay hidden.
+        visible.Should().BeEquivalentTo([k.Mine, raised.Id]);
+        (await k.Scope.FindAsync(k.H.Db.Tickets, raised.Id, k.Tech, Permissions.TicketsAddPublicNote)).Should().NotBeNull();
     }
 }
