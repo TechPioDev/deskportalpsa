@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Copy, KeyRound, Plus, RefreshCw, Radio, Check, AlertTriangle } from 'lucide-react';
@@ -205,7 +205,12 @@ function SourceForm({ boards, onClose, onCreated }: {
 
 /** What to paste into the tool. Written so it can be followed without reading anything else. */
 function Setup() {
-  const url = typeof window === 'undefined' ? '' : `${window.location.origin}/api/bff/api/intake/alerts`;
+  // Read after mount: the server has no address bar, so rendering it during the server pass gave
+  // the server an empty address and the browser a full one, and React threw the page away and
+  // rebuilt it (a hydration error on every visit).
+  const [origin, setOrigin] = useState('');
+  useEffect(() => setOrigin(window.location.origin), []);
+  const url = origin ? `${origin}/api/bff/api/intake/alerts` : '…';
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
       <h2 className="text-sm font-semibold">Setting a tool up</h2>
