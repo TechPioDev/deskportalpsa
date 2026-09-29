@@ -18,7 +18,10 @@ test.describe('recurring tickets and the SLA pause', () => {
     await page.getByRole('button', { name: 'Add plan' }).click();
     await expect(page.locator('tr').filter({ hasText: `Standard ${run}` })).toContainText('Pauses while waiting');
 
-    const next = new Date(Date.now() + 40 * 86_400_000).toISOString().slice(0, 10);
+    // A date of this run's own. The cross-browser job runs every browser against one database, and a
+    // desk has one entry per closed day — so a fixed date was, correctly, refused as a duplicate the
+    // second time round.
+    const next = new Date(Date.now() + (30 + (Number(run) % 900)) * 86_400_000).toISOString().slice(0, 10);
     await page.getByLabel('Holiday date').fill(next);
     await page.getByLabel('Holiday name').fill(`Closure ${run}`);
     await page.getByRole('button', { name: 'Add holiday' }).click();
