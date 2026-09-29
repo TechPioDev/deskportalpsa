@@ -8,12 +8,17 @@ public sealed record SlaPlanDto(
     bool BusinessHoursOnly, int WorkdayStartHour, int WorkdayEndHour, int WorkingDays,
     bool IsActive, int SortOrder,
     /// <summary>How many boards and topics use it, so retiring one is not a surprise.</summary>
-    int UsedBy);
+    int UsedBy,
+    bool SkipHolidays = true,
+    bool PauseWhileWaiting = true);
 
 public sealed record SlaPlanInput(
     string Name, int ResolveWithinHours, int? FirstResponseWithinHours = null,
     bool BusinessHoursOnly = false, int WorkdayStartHour = 9, int WorkdayEndHour = 18,
-    int WorkingDays = 0b0111110, int SortOrder = 0);
+    int WorkingDays = 0b0111110, int SortOrder = 0, bool SkipHolidays = true, bool PauseWhileWaiting = true);
+
+/// <summary>A day the desk is closed, which working-hours plans step over.</summary>
+public sealed record DeskHolidayDto(Guid Id, DateOnly Date, string Name);
 
 /// <summary>
 /// SLA plans. Leads and administrators manage them; a plan is applied when a board ticket is
@@ -24,6 +29,11 @@ public interface ISlaPlanService
     Task<IReadOnlyList<SlaPlanDto>> ListAsync(bool includeInactive = false, CancellationToken ct = default);
     Task<SlaPlanDto> SaveAsync(Guid? id, SlaPlanInput input, CancellationToken ct = default);
     Task SetActiveAsync(Guid id, bool active, CancellationToken ct = default);
+
+    /// <summary>The desk's closed days from <paramref name="from"/> on, in date order.</summary>
+    Task<IReadOnlyList<DeskHolidayDto>> HolidaysAsync(DateOnly? from = null, CancellationToken ct = default);
+    Task<DeskHolidayDto> AddHolidayAsync(DateOnly date, string name, CancellationToken ct = default);
+    Task RemoveHolidayAsync(Guid id, CancellationToken ct = default);
 }
 
 public sealed record CannedResponseDto(

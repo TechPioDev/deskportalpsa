@@ -22,7 +22,8 @@ public sealed class SlaPlanService(DeskDbContext db, ITenantContext tenant, IAud
             .Select(p => new SlaPlanDto(
                 p.Id, p.Name, p.ResolveWithinHours, p.FirstResponseWithinHours, p.BusinessHoursOnly,
                 p.WorkdayStartHour, p.WorkdayEndHour, p.WorkingDays, p.IsActive, p.SortOrder,
-                db.Boards.Count(b => b.DefaultSlaPlanId == p.Id) + db.BoardTopics.Count(t => t.SlaPlanId == p.Id)))
+                db.Boards.Count(b => b.DefaultSlaPlanId == p.Id) + db.BoardTopics.Count(t => t.SlaPlanId == p.Id),
+                p.SkipHolidays, p.PauseWhileWaiting))
             .ToListAsync(ct);
     }
 
@@ -59,6 +60,8 @@ public sealed class SlaPlanService(DeskDbContext db, ITenantContext tenant, IAud
         plan.WorkdayStartHour = input.WorkdayStartHour;
         plan.WorkdayEndHour = input.WorkdayEndHour;
         plan.WorkingDays = input.WorkingDays & 0b1111111;
+        plan.SkipHolidays = input.SkipHolidays;
+        plan.PauseWhileWaiting = input.PauseWhileWaiting;
         plan.SortOrder = input.SortOrder;
         if (id is null) db.SlaPlans.Add(plan);
         await db.SaveChangesAsync(ct);
@@ -73,6 +76,36 @@ public sealed class SlaPlanService(DeskDbContext db, ITenantContext tenant, IAud
         plan.IsActive = active;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(active ? "sla.plan.activated" : "sla.plan.retired", "SlaPlan", plan.Id.ToString(), new { plan.Name }, ct);
+    }
+
+    public async Task<IReadOnlyList<DeskHolidayDto>> HolidaysAsync(DateOnly? from = null, CancellationToken ct = default)
+    {
+        var q = db.DeskHolidays.AsNoTracking();
+        if (from is { } f) q = q.Where(h => h.Date >= f);
+        return await q.OrderBy(h => h.Date).Select(h => new DeskHolidayDto(h.Id, h.Date, h.Name)).ToListAsync(ct);
+    }
+
+    public async Task<DeskHolidayDto> AddHolidayAsync(DateOnly date, string name, CancellationToken ct = default)
+    {
+        var clean = (name ?? "").Trim();
+        if (clean.Length is 0 or > 80) throw new ValidationFailedException("Name the holiday, in up to 80 characters.");
+        if (await db.DeskHolidays.AnyAsync(h => h.Date == date, ct))
+            throw new ValidationFailedException($"{date:d MMM yyyy} is already a holiday.");
+        var holiday = new DeskHoliday { MspOrganizationId = Org, Date = date, Name = clean };
+        db.DeskHolidays.Add(holiday);
+        await db.SaveChangesAsync(ct);
+        // Tickets already raised keep their dates, for the same reason an edited plan does not
+        // re-date them: the promise was made on the calendar as it stood.
+        await audit.WriteAsync("desk.holiday.added", "DeskHoliday", holiday.Id.ToString(), new { date, clean }, ct);
+        return new DeskHolidayDto(holiday.Id, holiday.Date, holiday.Name);
+    }
+
+    public async Task RemoveHolidayAsync(Guid id, CancellationToken ct = default)
+    {
+        var holiday = await db.DeskHolidays.FirstOrDefaultAsync(h => h.Id == id, ct) ?? throw new NotFoundException("Holiday");
+        db.DeskHolidays.Remove(holiday);
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("desk.holiday.removed", "DeskHoliday", id.ToString(), new { holiday.Date, holiday.Name }, ct);
     }
 }
 
@@ -96,12 +129,33 @@ public static class SlaPlanner
             plan = await db.SlaPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == fallback && p.IsActive, ct);
         if (plan is null) return new Times(null, null, null);
 
-        var zone = SlaClock.Zone(await db.MspOrganizations.AsNoTracking()
-            .Where(o => o.Id == board.MspOrganizationId).Select(o => o.TimeZone).FirstOrDefaultAsync(ct));
+        var (zone, holidays) = await CalendarAsync(db, board.MspOrganizationId, ct);
 
         return new Times(
             plan.Id,
-            SlaClock.Due(raisedAt, plan.ResolveWithinHours, plan, zone),
-            plan.FirstResponseWithinHours is { } first ? SlaClock.Due(raisedAt, first, plan, zone) : null);
+            SlaClock.Due(raisedAt, plan.ResolveWithinHours, plan, zone, holidays),
+            plan.FirstResponseWithinHours is { } first ? SlaClock.Due(raisedAt, first, plan, zone, holidays) : null);
+    }
+
+    /// <summary>The organization's time zone and closed days: everything the SLA clock needs besides the plan.</summary>
+    public static async Task<(TimeZoneInfo Zone, IReadOnlySet<DateOnly> Holidays)> CalendarAsync(
+        DeskDbContext db, Guid organizationId, CancellationToken ct)
+    {
+        var zone = SlaClock.Zone(await db.MspOrganizations.AsNoTracking()
+            .Where(o => o.Id == organizationId).Select(o => o.TimeZone).FirstOrDefaultAsync(ct));
+        var holidays = (await db.DeskHolidays.AsNoTracking().Select(h => h.Date).ToListAsync(ct)).ToHashSet();
+        return (zone, holidays);
+    }
+
+    /// <summary>
+    /// Stops or restarts a board ticket's clock for a status it is about to take. Called before the
+    /// status is saved, so the pause and the status land in the same write.
+    /// </summary>
+    public static async Task ApplyStatusAsync(DeskDbContext db, Ticket ticket, string newStatus, DateTimeOffset now, CancellationToken ct)
+    {
+        if (ticket.SlaPlanId is not { } planId) return;
+        var plan = await db.SlaPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == planId, ct);
+        var (zone, holidays) = await CalendarAsync(db, ticket.MspOrganizationId, ct);
+        SlaClock.OnStatusChange(ticket, newStatus, now, plan, zone, holidays);
     }
 }

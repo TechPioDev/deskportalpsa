@@ -55,7 +55,8 @@ public sealed class RelationalQueryTests : IDisposable
         var colleague = new AppUser { MspOrganizationId = Org, DisplayName = "Anika", Email = "anika@techpio.test", IsActive = true };
         var dept = new Department { MspOrganizationId = Org, Name = "IT Support" };
         var team = new Team { MspOrganizationId = Org, DepartmentId = dept.Id, Name = "Level 2" };
-        var board = new Board { MspOrganizationId = Org, Name = "Internal", Key = "INT", Kind = BoardKind.Internal };
+        // NextNumber past the ticket seeded below as INT-000001, as a board that raised it would be.
+        var board = new Board { MspOrganizationId = Org, Name = "Internal", Key = "INT", Kind = BoardKind.Internal, NextNumber = 2 };
         var ticket = new Ticket
         {
             MspOrganizationId = Org, Origin = TicketOrigin.Internal, BoardId = board.Id, Number = "INT-000001",
@@ -152,6 +153,38 @@ public sealed class RelationalQueryTests : IDisposable
         // The list's task counts are two more subqueries in an already long projection.
         var row = (await Reads.ListAllAsync()).Single();
         row.Should().BeEquivalentTo(new { TaskCount = 2, TasksDone = 1 });
+    }
+
+    [Fact]
+    public async Task Holidays_recurring_tickets_and_the_pause_translate()
+    {
+        var audit = new AuditWriter(_db, User, _tenant, _clock);
+        var plans = new SlaPlanService(_db, _tenant, audit);
+        await plans.AddHolidayAsync(DateOnly.FromDateTime(DateTime.UtcNow.AddDays(10)), "Diwali");
+        (await plans.HolidaysAsync(DateOnly.FromDateTime(DateTime.UtcNow))).Should().ContainSingle();
+        var (_, holidays) = await SlaPlanner.CalendarAsync(_db, _db.MspOrganizations.Single().Id, default);
+        holidays.Should().ContainSingle();
+
+        var tickets = new InternalTicketService(_db, _tenant, _clock, new RecordingActivity());
+        var recurring = new RecurringTicketService(_db, _tenant, tickets, audit, _clock);
+        var saved = await recurring.SaveAsync(null, new Desk.Application.Boards.RecurringTicketInput(
+            _boardId, "Check the backups", Checklist: "Look\nRecord", Frequency: RecurrenceFrequency.Daily), _me);
+        (await recurring.ListAsync()).Single().Schedule.Should().Be("Every day at 09:00");
+
+        // The worker's question, as it asks it: due and active, across every tenant.
+        var now = DateTimeOffset.UtcNow.AddDays(2);
+        (await _db.RecurringTickets.AsNoTracking().Where(r => r.IsActive && r.NextRunAt <= now).CountAsync()).Should().Be(1);
+
+        var run = await recurring.RunNowAsync(saved.Id);
+        run.Number.Should().NotBeNull();
+        (await recurring.ListAsync()).Single().LastTicketNumber.Should().Be(run.Number);
+
+        // Pausing a ticket whose plan asks for it loads plan, zone and holidays in one go.
+        var plan = await plans.SaveAsync(null, new Desk.Application.Boards.SlaPlanInput("Standard", 8));
+        var ticket = await _db.Tickets.SingleAsync(t => t.Id == run.TicketId);
+        ticket.SlaPlanId = plan.Id;
+        await SlaPlanner.ApplyStatusAsync(_db, ticket, "WAITING_CUSTOMER", DateTimeOffset.UtcNow, default);
+        ticket.SlaPausedAt.Should().NotBeNull();
     }
 
     public void Dispose()

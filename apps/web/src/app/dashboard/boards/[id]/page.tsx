@@ -41,6 +41,8 @@ function dueLabel(iso: string | null): { text: string; tone: string } {
  * nothing to chase, so the column goes back to showing only the resolve-by date.
  */
 function replyLabel(t: TicketListItem): { text: string; tone: string } | null {
+  // Paused: the dates are what they will be once the clock restarts, so none of them is a deadline now.
+  if (t.slaPausedAt && isOpen(t.portalStatus)) return { text: 'SLA paused — waiting', tone: 'text-[var(--muted)] italic' };
   if (!t.firstResponseDueAt || t.firstRespondedAt || !isOpen(t.portalStatus)) return null;
   const hours = (new Date(t.firstResponseDueAt).getTime() - Date.now()) / 3_600_000;
   const when = new Date(t.firstResponseDueAt).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
@@ -171,7 +173,10 @@ function TicketTable({ title, rows, muted }: { title: string; rows: TicketListIt
           </thead>
           <tbody>
             {sorted.map((t) => {
-              const due = dueLabel(t.dueAt);
+              // A paused ticket is not late, whatever the date says: shown plainly, without the red.
+              const due = t.slaPausedAt && isOpen(t.portalStatus)
+                ? { ...dueLabel(t.dueAt), tone: 'text-[var(--faint)]' }
+                : dueLabel(t.dueAt);
               const reply = replyLabel(t);
               return (
                 <tr key={t.id} className="border-b border-[var(--border)] last:border-0">

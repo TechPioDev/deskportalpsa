@@ -21,6 +21,13 @@ public static class TicketStatusRules
     public static Expression<Func<Ticket, bool>> Resolved() =>
         t => t.PortalStatus.ToUpper().Contains(ResolvedMarker) || t.PortalStatus.ToUpper().Contains(ClosedMarker);
 
+    /// <summary>The same rule for a status already in hand, rather than in a query.</summary>
+    public static bool Finished(string status)
+    {
+        var s = status.ToUpperInvariant();
+        return s.Contains(ResolvedMarker) || s.Contains(ClosedMarker);
+    }
+
     /// <summary>Still work to do. Written out rather than negated at the call site, so the two can
     /// never disagree about a status neither of them anticipated.</summary>
     public static Expression<Func<Ticket, bool>> Open() =>

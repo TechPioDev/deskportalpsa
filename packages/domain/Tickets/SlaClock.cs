@@ -4,7 +4,7 @@ namespace Desk.Domain.Tickets;
 /// Turns "within N hours" into a date. Round the clock that is simple addition; in business hours it
 /// walks the working days in the organization's own time zone, spending the hours only while the desk
 /// is open — a ticket raised at 17:30 on a Friday with four working hours to go is due Monday at
-/// 12:30, not Friday at 21:30.
+/// 12:30, not Friday at 21:30. A plan that skips holidays also steps over the desk's closed days.
 ///
 /// Walked in local time and converted back at the end, so a daylight-saving change inside the window
 /// moves the answer by the hour it should.
@@ -16,23 +16,29 @@ public static class SlaClock
     /// <summary>The longest a walk may run. A plan with no working days at all would otherwise never end.</summary>
     private const int MaxDays = 3660;
 
-    public static DateTimeOffset Due(DateTimeOffset start, int hours, SlaPlan plan, TimeZoneInfo zone)
-    {
-        if (!plan.BusinessHoursOnly) return start.AddHours(hours);
-        return Walk(start, hours * 60.0, plan.WorkdayStartHour, plan.WorkdayEndHour, plan.WorkingDays, zone);
-    }
+    private static readonly IReadOnlySet<DateOnly> NoHolidays = new HashSet<DateOnly>();
 
-    private static DateTimeOffset Walk(DateTimeOffset start, double minutes, int open, int close, int days, TimeZoneInfo zone)
+    public static DateTimeOffset Due(
+        DateTimeOffset start, int hours, SlaPlan plan, TimeZoneInfo zone, IReadOnlySet<DateOnly>? holidays = null)
+        => AddWorking(start, hours * 60.0, plan, zone, holidays);
+
+    /// <summary>Moves forward by this many minutes of the plan's own time — working minutes, or plain ones.</summary>
+    public static DateTimeOffset AddWorking(
+        DateTimeOffset start, double minutes, SlaPlan plan, TimeZoneInfo zone, IReadOnlySet<DateOnly>? holidays = null)
     {
+        if (!plan.BusinessHoursOnly) return start.AddMinutes(minutes);
+        var closed = plan.SkipHolidays ? holidays ?? NoHolidays : NoHolidays;
+        var open = plan.WorkdayStartHour;
+        var close = plan.WorkdayEndHour;
         // A plan the service refuses to save, handled anyway rather than looping or throwing at the
         // moment somebody raises a ticket.
-        if (days == 0 || open >= close) return start.AddMinutes(minutes);
+        if ((plan.WorkingDays & 0b1111111) == 0 || open >= close) return start.AddMinutes(minutes);
 
         var cursor = TimeZoneInfo.ConvertTime(start, zone).DateTime;
         for (var i = 0; i < MaxDays; i++)
         {
             var day = cursor.Date;
-            if ((days & (1 << (int)day.DayOfWeek)) != 0)
+            if (IsWorking(day, plan, closed))
             {
                 var opens = day.AddHours(open);
                 var closes = day.AddHours(close);
@@ -49,6 +55,37 @@ public static class SlaClock
         return start.AddMinutes(minutes);
     }
 
+    /// <summary>
+    /// How much of the plan's own time lies between two moments: working minutes for a business-hours
+    /// plan, plain minutes otherwise. Negative when <paramref name="to"/> is before <paramref name="from"/>,
+    /// so a pause that begins after the ticket was already overdue carries its lateness forward.
+    /// </summary>
+    public static double MinutesBetween(
+        DateTimeOffset from, DateTimeOffset to, SlaPlan plan, TimeZoneInfo zone, IReadOnlySet<DateOnly>? holidays = null)
+    {
+        if (to < from) return -MinutesBetween(to, from, plan, zone, holidays);
+        if (!plan.BusinessHoursOnly || (plan.WorkingDays & 0b1111111) == 0 || plan.WorkdayStartHour >= plan.WorkdayEndHour)
+            return (to - from).TotalMinutes;
+
+        var closed = plan.SkipHolidays ? holidays ?? NoHolidays : NoHolidays;
+        var a = TimeZoneInfo.ConvertTime(from, zone).DateTime;
+        var b = TimeZoneInfo.ConvertTime(to, zone).DateTime;
+        double total = 0;
+        for (var day = a.Date; day <= b.Date; day = day.AddDays(1))
+        {
+            if (!IsWorking(day, plan, closed)) continue;
+            var opens = day.AddHours(plan.WorkdayStartHour);
+            var closes = day.AddHours(plan.WorkdayEndHour);
+            var start = a > opens ? a : opens;
+            var end = b < closes ? b : closes;
+            if (end > start) total += (end - start).TotalMinutes;
+        }
+        return total;
+    }
+
+    private static bool IsWorking(DateTime day, SlaPlan plan, IReadOnlySet<DateOnly> closed)
+        => (plan.WorkingDays & (1 << (int)day.DayOfWeek)) != 0 && !closed.Contains(DateOnly.FromDateTime(day));
+
     private static DateTimeOffset Local(DateTime local, TimeZoneInfo zone)
     {
         var unspecified = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
@@ -57,4 +94,44 @@ public static class SlaClock
 
     /// <summary>The organization's zone, resolved the same way the scheduled reports resolve it.</summary>
     public static TimeZoneInfo Zone(string? id) => Common.TimeZones.Resolve(id);
+
+    /// <summary>The statuses that mean the ball is in someone else's court, so the clock stops.</summary>
+    public static bool IsWaiting(string status)
+    {
+        var s = status.Trim().ToUpperInvariant();
+        return s is "WAITING_CUSTOMER" or "ON_HOLD";
+    }
+
+    /// <summary>
+    /// Stops or restarts the clock on a status change. Entering a waiting status records when the
+    /// pause began; leaving it moves every promise not yet kept forward by exactly the plan-time that
+    /// passed while paused — working time for a business-hours plan, so a pause over a weekend does
+    /// not hand the ticket two free days it never had.
+    ///
+    /// Leaving for a finished status just ends the pause: a resolved ticket has no due date left to move.
+    /// </summary>
+    public static void OnStatusChange(
+        Ticket ticket, string newStatus, DateTimeOffset now, SlaPlan? plan, TimeZoneInfo zone, IReadOnlySet<DateOnly>? holidays)
+    {
+        if (plan is null || !plan.PauseWhileWaiting) { ticket.SlaPausedAt = null; return; }
+
+        var waiting = IsWaiting(newStatus);
+        if (waiting)
+        {
+            ticket.SlaPausedAt ??= now;
+            return;
+        }
+        if (ticket.SlaPausedAt is not { } pausedAt) return;
+        ticket.SlaPausedAt = null;
+
+        var finished = TicketStatusRules.Finished(newStatus);
+        if (finished) return;
+
+        // The promise is shifted by the plan-time the pause took, so a ticket paused with two working
+        // hours left comes back with two working hours left.
+        if (ticket.SlaDueAt is { } due)
+            ticket.SlaDueAt = AddWorking(now, MinutesBetween(pausedAt, due, plan, zone, holidays), plan, zone, holidays);
+        if (ticket.FirstRespondedAt is null && ticket.FirstResponseDueAt is { } reply)
+            ticket.FirstResponseDueAt = AddWorking(now, MinutesBetween(pausedAt, reply, plan, zone, holidays), plan, zone, holidays);
+    }
 }

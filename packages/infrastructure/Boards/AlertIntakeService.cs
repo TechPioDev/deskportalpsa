@@ -151,6 +151,7 @@ public sealed class AlertIntakeService(
             ticket.ClosedAt = null;
             ticket.ResolvedAt = null;
             ticket.PortalStatus = "NEW";
+            ticket.SlaPausedAt = null;
             reopened = true;
         }
 
@@ -206,6 +207,8 @@ public sealed class AlertIntakeService(
         if (source.CloseOnClear && ticket.ClosedAt is null)
         {
             ticket.PortalStatus = "CLOSED";
+            // Closed by the tool: a clock paused while it waited has nothing left to count.
+            ticket.SlaPausedAt = null;
             ticket.ResolvedAt ??= now;
             ticket.ClosedAt = now;
         }

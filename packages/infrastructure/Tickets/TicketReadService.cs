@@ -46,7 +46,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 // People stays null on the client list: no technician identity reaches a client, and
                 // neither does a board or an assignee's name.
                 t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
-                null, null, null, null, 0, null, null, null, false, 0, 0, null, null))
+                null, null, null, null, 0, null, null, null, false, 0, 0, null, null, null))
             .ToListAsync(ct);
 
     /// <summary>
@@ -99,7 +99,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                     db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
                     t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
-                    null, null, null, null, 0, null, null, null, false, 0, 0, null, null))
+                    null, null, null, null, 0, null, null, null, false, 0, 0, null, null, null))
                 .ToListAsync(ct)
             : await ProjectStaffAsync(scope, take, byLastUpdate: true, ct);
 
@@ -136,7 +136,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         if (q.OverdueOnly)
         {
             var now = DateTimeOffset.UtcNow;
-            scope = scope.Where(TicketStatusRules.Open()).Where(t => t.SlaDueAt != null && t.SlaDueAt < now);
+            // ...and not paused: a ticket waiting on the customer is not late, whatever its date says.
+            scope = scope.Where(TicketStatusRules.Open()).Where(t => t.SlaDueAt != null && t.SlaDueAt < now && t.SlaPausedAt == null);
         }
 
         // The window is relative on purpose: see SavedTicketView.RaisedWithinDays. Measured on the
@@ -233,7 +234,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     me != null && db.TicketFollowers.Any(f => f.TicketId == t.Id && f.AppUserId == me),
                     db.TicketTasks.Count(k => k.TicketId == t.Id),
                     db.TicketTasks.Count(k => k.TicketId == t.Id && k.IsDone),
-                    t.FirstResponseDueAt, t.FirstRespondedAt),
+                    t.FirstResponseDueAt, t.FirstRespondedAt, t.SlaPausedAt),
                 t.AssignedAppUserId,
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,
@@ -489,7 +490,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 : null,
             SlaDueAt: includeInternal ? ticket.SlaDueAt : null,
             FirstResponseDueAt: includeInternal ? ticket.FirstResponseDueAt : null,
-            FirstRespondedAt: includeInternal ? ticket.FirstRespondedAt : null);
+            FirstRespondedAt: includeInternal ? ticket.FirstRespondedAt : null,
+            SlaPausedAt: includeInternal ? ticket.SlaPausedAt : null);
     }
 
     public Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)

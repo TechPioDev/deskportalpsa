@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClipboardList, Plus, Users, EyeOff, Eye, Archive, RotateCcw, ArrowRight, Radio, Timer, MessageSquareText } from 'lucide-react';
+import { ClipboardList, Plus, Users, EyeOff, Eye, Archive, RotateCcw, ArrowRight, Radio, Timer, MessageSquareText, Repeat } from 'lucide-react';
 import { api, type Board, type BoardInput } from '@/lib/api';
 
 const KIND = { internal: 0, rmm: 1 } as const;
@@ -50,6 +50,10 @@ export default function BoardsPage() {
           </label>
           {canManage && (
             <>
+              <Link href="/dashboard/boards/recurring"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                <Repeat size={15} /> Recurring
+              </Link>
               <Link href="/dashboard/boards/sla"
                 className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
                 <Timer size={15} /> SLA plans

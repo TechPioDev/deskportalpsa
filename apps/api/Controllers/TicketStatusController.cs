@@ -60,6 +60,8 @@ public sealed class TicketStatusController(
         // the status, so it is set here and nothing is pushed.
         if (ticket.Origin != TicketOrigin.Psa || ticket.PsaConnectionId is not { } connectionId || ticket.Provider is not { } provider)
         {
+            // Waiting on the customer or on hold stops the SLA clock; moving on gives the time back.
+            await Desk.Infrastructure.Boards.SlaPlanner.ApplyStatusAsync(db, ticket, portalStatus, DateTimeOffset.UtcNow, ct);
             ticket.PortalStatus = portalStatus;
             if (Closed(portalStatus)) ticket.ClosedAt ??= DateTimeOffset.UtcNow;
             if (Resolved(portalStatus)) ticket.ResolvedAt ??= DateTimeOffset.UtcNow;

@@ -487,6 +487,26 @@ export const api = {
   setSlaPlanActive: (id: string, active: boolean) =>
     request(`/api/boards/sla-plans/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
 
+  deskHolidays: (from?: string) =>
+    request(`/api/boards/holidays${from ? `?from=${from}` : ''}`, z.array(DeskHolidaySchema)) as Promise<DeskHoliday[]>,
+  addDeskHoliday: (date: string, name: string) =>
+    request('/api/boards/holidays', DeskHolidaySchema, { method: 'POST', body: JSON.stringify({ date, name }) }) as Promise<DeskHoliday>,
+  removeDeskHoliday: (id: string) =>
+    request(`/api/boards/holidays/${id}`, z.unknown(), { method: 'DELETE' }),
+
+  recurringTickets: (includeInactive = true) =>
+    request(`/api/boards/recurring?includeInactive=${includeInactive}`, z.array(RecurringTicketSchema)) as Promise<RecurringTicket[]>,
+  saveRecurringTicket: (id: string | null, input: RecurringTicketInput) =>
+    request(id ? `/api/boards/recurring/${id}` : '/api/boards/recurring', RecurringTicketSchema,
+      { method: id ? 'PUT' : 'POST', body: JSON.stringify(input) }) as Promise<RecurringTicket>,
+  setRecurringTicketActive: (id: string, active: boolean) =>
+    request(`/api/boards/recurring/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
+  deleteRecurringTicket: (id: string) =>
+    request(`/api/boards/recurring/${id}`, z.unknown(), { method: 'DELETE' }),
+  runRecurringTicket: (id: string) =>
+    request(`/api/boards/recurring/${id}/run`,
+      z.object({ outcome: z.string(), ticketId: z.string().nullable(), number: z.string().nullable() }), { method: 'POST' }),
+
   /** Every canned response, for the page that manages them. */
   cannedResponses: (includeInactive = false) =>
     request(`/api/canned-responses?includeInactive=${includeInactive}`, z.array(CannedResponseSchema)) as Promise<CannedResponse[]>,
@@ -1216,12 +1236,54 @@ export const SlaPlanSchema = z.object({
   isActive: z.boolean(),
   sortOrder: z.number(),
   usedBy: z.number(),
+  skipHolidays: z.boolean().default(true),
+  pauseWhileWaiting: z.boolean().default(true),
 });
 export type SlaPlan = z.infer<typeof SlaPlanSchema>;
 export type SlaPlanInput = {
   name: string; resolveWithinHours: number; firstResponseWithinHours: number | null;
   businessHoursOnly: boolean; workdayStartHour: number; workdayEndHour: number; workingDays: number;
-  sortOrder?: number;
+  sortOrder?: number; skipHolidays: boolean; pauseWhileWaiting: boolean;
+};
+
+/** A day the desk is closed. Working-hours SLA plans step over these. */
+export const DeskHolidaySchema = z.object({ id: z.string(), date: z.string(), name: z.string() });
+export type DeskHoliday = z.infer<typeof DeskHolidaySchema>;
+
+/** Frequency: 0 daily, 1 weekdays, 2 weekly, 3 monthly. dayOfMonth 0 means the last day. */
+export const RecurringTicketSchema = z.object({
+  id: z.string(),
+  boardId: z.string(),
+  boardName: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  boardTopicId: z.string().nullable(),
+  topicName: z.string().nullable(),
+  priority: z.string().nullable(),
+  departmentId: z.string().nullable(),
+  assignedAppUserId: z.string().nullable(),
+  assignedName: z.string().nullable(),
+  clientCompanyId: z.string().nullable(),
+  checklist: z.string().nullable(),
+  frequency: z.number(),
+  dayOfWeek: z.number(),
+  dayOfMonth: z.number(),
+  hour: z.number(),
+  skipIfOpen: z.boolean(),
+  isActive: z.boolean(),
+  nextRunAt: z.string(),
+  lastRunAt: z.string().nullable(),
+  lastTicketId: z.string().nullable(),
+  lastTicketNumber: z.string().nullable(),
+  lastOutcome: z.string().nullable(),
+  schedule: z.string(),
+  createdByName: z.string().nullable(),
+});
+export type RecurringTicket = z.infer<typeof RecurringTicketSchema>;
+export type RecurringTicketInput = {
+  boardId: string; title: string; description: string | null; boardTopicId: string | null;
+  priority: string | null; assignedAppUserId: string | null; checklist: string | null;
+  frequency: number; dayOfWeek: number; dayOfMonth: number; hour: number; skipIfOpen: boolean;
 };
 
 /** A reply the desk keeps. boardId null means it is offered on every ticket, PSA ones included. */

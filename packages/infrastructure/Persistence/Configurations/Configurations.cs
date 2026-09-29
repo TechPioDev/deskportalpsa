@@ -326,6 +326,34 @@ public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedRespon
     }
 }
 
+public sealed class DeskHolidayConfig : IEntityTypeConfiguration<DeskHoliday>
+{
+    public void Configure(EntityTypeBuilder<DeskHoliday> b)
+    {
+        b.ToTable("desk_holidays");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(80).IsRequired();
+        // One entry per day: two names for the same closed day is a list nobody can trust.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Date }).IsUnique();
+    }
+}
+
+public sealed class RecurringTicketConfig : IEntityTypeConfiguration<RecurringTicket>
+{
+    public void Configure(EntityTypeBuilder<RecurringTicket> b)
+    {
+        b.ToTable("recurring_tickets");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Title).HasMaxLength(500).IsRequired();
+        b.Property(x => x.Priority).HasMaxLength(20);
+        b.Property(x => x.Checklist).HasMaxLength(6000);
+        b.Property(x => x.LastOutcome).HasMaxLength(500);
+        // The worker's only question, asked every few minutes across every tenant.
+        b.HasIndex(x => new { x.IsActive, x.NextRunAt });
+        b.HasOne(x => x.Board).WithMany().HasForeignKey(x => x.BoardId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class TicketFollowerConfig : IEntityTypeConfiguration<TicketFollower>
 {
     public void Configure(EntityTypeBuilder<TicketFollower> b)

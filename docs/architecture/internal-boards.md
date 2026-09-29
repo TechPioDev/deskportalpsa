@@ -120,6 +120,17 @@ existing `PUT /api/tickets/{id}/assignment` as `teamId` / `clearTeam`. Migration
 `FirstRespondedAt`; boards: `DefaultSlaPlanId`; board_topics: `SlaPlanId`). Additive; its `Down` drops exactly those.
 Rollback tag for this step: `pre-sla-canned-tasks`.
 
+## Recurring tickets, holidays and the SLA pause
+
+| Feature | What it does |
+|---|---|
+| **Recurring tickets** | *Boards → Recurring.* A schedule — every day, every weekday, weekly on a day, monthly on a day 1-28 or the last day — raises a board ticket at a local hour in the organization's time zone. It goes through the same path as raising by hand (`IInternalTicketService`), so number, topic defaults and SLA plan apply, and its checklist becomes the ticket's tasks. Raised in the name of whoever last saved the schedule; if that person is no longer active the run says so instead of raising. *Skip if open* (on by default) skips a run while the last ticket is still open. A worker down for a while raises one late ticket, not one per missed run. **Raise now** raises immediately without moving the schedule. The worker (`RecurringTicketBackgroundService`) checks every two minutes; each schedule runs in its own tenant scope. |
+| **Holidays** | *Boards → SLA plans → Holidays.* The desk's own closed days (distinct from a client's holidays in the control panel). Working-hours plans with *Skip holidays* step over them; round-the-clock plans work through them. Adding one does not re-date tickets already raised. |
+| **SLA pause** | A plan with *Pause while waiting* (on by default) stops the clock when a board ticket goes to Waiting customer or On hold (`Ticket.SlaPausedAt`), and on the way out moves each unmet promise forward by the plan-time the pause took — working time for a business-hours plan, so a weekend pause does not hand out two free days. A paused ticket is never on the Overdue view. Resolving or closing ends the pause without moving anything. PSA tickets are unaffected. |
+
+Migration `RecurringHolidaysPause`: tables `recurring_tickets`, `desk_holidays`; columns `tickets.SlaPausedAt`,
+`sla_plans.SkipHolidays`, `sla_plans.PauseWhileWaiting`. Additive; rollback tag `pre-recurring-holidays-pause`.
+
 ## Alerts from a monitoring tool
 
 A monitoring board can be fed by the tools that watch the estate. Each tool is registered as an
@@ -176,4 +187,4 @@ and both have an OAuth2 REST API. The webhook route needs no API credentials at 
 - **Per-device client mapping.** Matching is on the client name the tool sends; an explicit map
   from a tool's site id to a customer would be more robust for estates with awkward naming.
 - **Promoting an internal ticket into a PSA** once a client grants access.
-- **Recurring internal tasks**, holidays in the SLA clock, and pausing the clock while waiting on a customer.
+- **Overnight working windows** in an SLA plan (a night shift is treated as a 24x7 desk for now).

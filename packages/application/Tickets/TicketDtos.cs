@@ -59,7 +59,9 @@ public sealed record TicketListItem(
     int TasksDone = 0,
     // The SLA's reply promise, and whether it has been kept.
     DateTimeOffset? FirstResponseDueAt = null,
-    DateTimeOffset? FirstRespondedAt = null);
+    DateTimeOffset? FirstRespondedAt = null,
+    // Set while the SLA clock is stopped — waiting on the customer, or on hold.
+    DateTimeOffset? SlaPausedAt = null);
 
 /// <summary>
 /// A named, validated filter set. Every field is optional and an absent one means "do not narrow by
@@ -205,7 +207,8 @@ public sealed record TicketDetailDto(
     string? SlaPlanName = null,
     DateTimeOffset? SlaDueAt = null,
     DateTimeOffset? FirstResponseDueAt = null,
-    DateTimeOffset? FirstRespondedAt = null);
+    DateTimeOffset? FirstRespondedAt = null,
+    DateTimeOffset? SlaPausedAt = null);
 
 public sealed record AttachmentDto(
     Guid Id,

@@ -42,6 +42,8 @@ export const TicketListItemSchema = z.object({
   tasksDone: z.number().default(0),
   firstResponseDueAt: z.string().nullable().default(null),
   firstRespondedAt: z.string().nullable().default(null),
+  // Set while the SLA clock is stopped: waiting on the customer, or on hold.
+  slaPausedAt: z.string().nullable().default(null),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 
@@ -153,6 +155,7 @@ export const TicketDetailSchema = z.object({
   slaDueAt: z.string().nullable().default(null),
   firstResponseDueAt: z.string().nullable().default(null),
   firstRespondedAt: z.string().nullable().default(null),
+  slaPausedAt: z.string().nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

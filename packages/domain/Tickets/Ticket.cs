@@ -151,6 +151,13 @@ public class Ticket : TenantEntity
     /// too, and counting that as the reply would mark every alert answered the moment it recurred.
     /// </summary>
     public DateTimeOffset? FirstRespondedAt { get; set; }
+
+    /// <summary>
+    /// When the SLA clock stopped, while the ticket waits on the customer or is on hold. Null while
+    /// the clock is running. The due dates are moved forward when it restarts, never while paused, so
+    /// a paused ticket's dates are the ones it would have had — and it is not shown as overdue.
+    /// </summary>
+    public DateTimeOffset? SlaPausedAt { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
     public DateTimeOffset? ClosedAt { get; set; }
     public decimal TimeWorkedHours { get; set; }

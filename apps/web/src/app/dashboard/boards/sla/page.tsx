@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Archive, RotateCcw, Timer } from 'lucide-react';
+import { ArrowLeft, Plus, Archive, RotateCcw, Timer, CalendarOff, X, PauseCircle } from 'lucide-react';
 import { api, type SlaPlan, type SlaPlanInput } from '@/lib/api';
 
 /** Sunday is bit 0, matching the server's bitmask. Listed Monday first, the way a week is read. */
@@ -21,7 +21,7 @@ function scheduleText(p: SlaPlan) {
   if (!p.businessHoursOnly) return 'Round the clock';
   const days = DAYS.filter((d) => (p.workingDays & (1 << d.bit)) !== 0).map((d) => d.label);
   const pad = (n: number) => `${String(n).padStart(2, '0')}:00`;
-  return `${days.join(', ')} · ${pad(p.workdayStartHour)}–${pad(p.workdayEndHour)}`;
+  return `${days.join(', ')} · ${pad(p.workdayStartHour)}–${pad(p.workdayEndHour)}${p.skipHolidays ? ' · not on holidays' : ''}`;
 }
 
 /**
@@ -110,7 +110,14 @@ export default function SlaPlansPage() {
                   </td>
                   <td className="px-2 py-3 text-xs text-[var(--muted)]">{p.firstResponseWithinHours ? hoursText(p.firstResponseWithinHours) : '—'}</td>
                   <td className="px-2 py-3 text-xs text-[var(--muted)]">{hoursText(p.resolveWithinHours)}</td>
-                  <td className="px-2 py-3 text-xs text-[var(--muted)]">{scheduleText(p)}</td>
+                  <td className="px-2 py-3 text-xs text-[var(--muted)]">
+                    {scheduleText(p)}
+                    {p.pauseWhileWaiting && (
+                      <span className="mt-0.5 flex items-center gap-1 text-[11px] text-[var(--faint)]">
+                        <PauseCircle size={11} aria-hidden="true" /> Pauses while waiting on the customer
+                      </span>
+                    )}
+                  </td>
                   <td className="px-2 py-3 text-xs tabular-nums text-[var(--muted)]">
                     {p.usedBy === 0 ? 'Nothing yet' : `${p.usedBy} board${p.usedBy === 1 ? '' : 's'} or topic${p.usedBy === 1 ? '' : 's'}`}
                   </td>
@@ -132,7 +139,71 @@ export default function SlaPlansPage() {
         Retiring a plan stops it being applied to new tickets. Boards and topics that name it simply stop
         setting due dates until they are given another.
       </p>
+
+      <Holidays />
     </div>
+  );
+}
+
+/**
+ * The desk's own closed days. Working-hours plans step over them; round-the-clock plans work through
+ * them. Adding one does not re-date tickets already raised.
+ */
+function Holidays() {
+  const qc = useQueryClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState('');
+  const [name, setName] = useState('');
+  const { data: holidays } = useQuery({ queryKey: ['desk-holidays'], queryFn: () => api.deskHolidays(today), retry: false });
+  const add = useMutation({
+    mutationFn: () => api.addDeskHoliday(date, name.trim()),
+    onSuccess: () => { setDate(''); setName(''); qc.invalidateQueries({ queryKey: ['desk-holidays'] }); },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.removeDeskHoliday(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['desk-holidays'] }),
+  });
+  const field = 'rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-1.5 text-sm outline-none focus:border-brand';
+
+  return (
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]" aria-labelledby="holidays-heading">
+      <div className="border-b border-[var(--border)] px-5 py-3">
+        <h2 id="holidays-heading" className="flex items-center gap-2 text-sm font-semibold"><CalendarOff size={14} /> Holidays</h2>
+        <p className="text-xs text-[var(--muted)]">
+          Days the desk is closed. Working-hours plans skip them, so a ticket raised the evening before
+          is not due on the holiday itself. Round-the-clock plans are not affected.
+        </p>
+      </div>
+      {(holidays ?? []).length === 0 && (
+        <p className="px-5 py-4 text-sm text-[var(--muted)]">No upcoming holidays.</p>
+      )}
+      {(holidays ?? []).length > 0 && (
+        <ul className="divide-y divide-[var(--border)]">
+          {(holidays ?? []).map((h) => (
+            <li key={h.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+              <span className="w-32 shrink-0 tabular-nums text-[var(--muted)]">
+                {new Date(`${h.date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{h.name}</span>
+              <button type="button" onClick={() => remove.mutate(h.id)} aria-label={`Remove ${h.name}`}
+                className="rounded p-1 text-[var(--faint)] hover:bg-[var(--bg)] hover:text-red-600"><X size={13} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-5 py-3"
+        onSubmit={(e) => { e.preventDefault(); if (date && name.trim()) add.mutate(); }}>
+        <input type="date" required min={today} value={date} onChange={(e) => setDate(e.target.value)}
+          aria-label="Holiday date" className={field} />
+        <input required maxLength={80} value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="Diwali" aria-label="Holiday name" className={`${field} min-w-0 flex-1`} />
+        <button type="submit" disabled={add.isPending || !date || !name.trim()}
+          className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
+          <Plus size={13} /> Add holiday
+        </button>
+        {add.isError && <span role="alert" className="text-xs text-red-600 dark:text-red-400">{(add.error as Error).message}</span>}
+      </form>
+    </section>
   );
 }
 
@@ -146,6 +217,8 @@ function PlanForm({ plan, onClose, onSaved }: { plan: SlaPlan | null; onClose: (
     workdayEndHour: plan?.workdayEndHour ?? 18,
     workingDays: plan?.workingDays ?? 0b0111110,
     sortOrder: plan?.sortOrder ?? 0,
+    skipHolidays: plan?.skipHolidays ?? true,
+    pauseWhileWaiting: plan?.pauseWhileWaiting ?? true,
   });
   const save = useMutation({ mutationFn: () => api.saveSlaPlan(plan?.id ?? null, v), onSuccess: onSaved });
   const field = 'w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand';
@@ -219,6 +292,22 @@ function PlanForm({ plan, onClose, onSaved }: { plan: SlaPlan | null; onClose: (
         </div>
       )}
 
+      {v.businessHoursOnly && (
+        <label className="flex items-start gap-2 text-xs text-[var(--muted)] sm:col-span-3">
+          <input type="checkbox" className="mt-0.5" checked={v.skipHolidays}
+            onChange={(e) => setV({ ...v, skipHolidays: e.target.checked })} />
+          <span>Skip the desk&apos;s holidays, listed below, as if they were weekends.</span>
+        </label>
+      )}
+      <label className="flex items-start gap-2 text-xs text-[var(--muted)] sm:col-span-3">
+        <input type="checkbox" className="mt-0.5" checked={v.pauseWhileWaiting}
+          onChange={(e) => setV({ ...v, pauseWhileWaiting: e.target.checked })} />
+        <span>
+          <strong className="font-medium text-[var(--fg)]">Pause while waiting.</strong> Stop the clock while a
+          ticket is Waiting customer or On hold, and give the time back when it moves on — so a ticket does
+          not go overdue while nobody on the desk can act on it.
+        </span>
+      </label>
       {save.isError && (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400 sm:col-span-3">{(save.error as Error).message}</p>
       )}

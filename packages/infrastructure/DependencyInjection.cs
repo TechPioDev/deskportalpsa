@@ -182,6 +182,8 @@ public static class DependencyInjection
         });
         services.AddScoped<Desk.Application.Boards.IBoardService, Boards.BoardService>();
         services.AddScoped<Desk.Application.Boards.ISlaPlanService, Boards.SlaPlanService>();
+        services.AddScoped<Desk.Application.Boards.IRecurringTicketService, Boards.RecurringTicketService>();
+        services.AddSingleton<Desk.Application.Boards.IRecurringTicketRunner, Boards.RecurringTicketRunner>();
         services.AddScoped<Desk.Application.Boards.ICannedResponseService, Boards.CannedResponseService>();
         services.AddScoped<Desk.Application.Boards.ITicketTaskService, Tickets.TicketTaskService>();
         services.AddScoped<Desk.Application.Boards.IInternalTicketService, Boards.InternalTicketService>();

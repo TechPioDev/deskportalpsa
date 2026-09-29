@@ -168,6 +168,17 @@ story += [Paragraph("Leads set up <b>SLA plans</b> under <b>Internal boards &rar
                     "<b>Resolution</b> dates, marked met, late or overdue. The board list shows <b>Reply by</b> until "
                     "somebody writes on the ticket.", body_s)]
 
+story += [Paragraph("Recurring tickets", h2_s)]
+story += [Paragraph("Under <b>Internal boards &rarr; Recurring</b>, leads schedule work that comes round: every day, every "
+                    "weekday, a day of the week, or a day of the month, at an hour of your choosing. The ticket is raised "
+                    "on its board with its checklist as tasks. While the last one is still open, the next is skipped "
+                    "rather than piled up. <b>Raise now</b> tries it straight away without changing the schedule.", body_s)]
+
+story += [Paragraph("Holidays and waiting", h2_s)]
+story += [Paragraph("Add the desk's closed days under <b>SLA plans &rarr; Holidays</b>; working-hours plans skip them. "
+                    "When a board ticket is set to <b>Waiting customer</b> or <b>On hold</b>, its SLA shows <b>Paused</b> and "
+                    "the time is given back when it moves on, so it does not go overdue while the customer has it.", body_s)]
+
 story += [Paragraph("Alerts from monitoring tools", h2_s)]
 story += [Paragraph("A board of the <b>monitoring</b> kind can be fed by NinjaOne, Datto RMM or anything else that can "
                     "post JSON. Under <b>Internal boards &rarr; Monitoring tools</b>, connect a tool and copy the key it "

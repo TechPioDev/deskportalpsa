@@ -37,6 +37,18 @@ public class SlaPlan : TenantEntity
     /// <summary>Which days count, as a bitmask with Sunday as bit 0. 62 is Monday to Friday.</summary>
     public int WorkingDays { get; set; } = SlaClock.MondayToFriday;
 
+    /// <summary>
+    /// Business-hours plans only: step over the desk's own holidays (<see cref="DeskHoliday"/>) as if
+    /// they were weekends. On by default — a closed day is not working time.
+    /// </summary>
+    public bool SkipHolidays { get; set; } = true;
+
+    /// <summary>
+    /// Stop the clock while the ticket is waiting on the customer or on hold, and give the time back
+    /// when it moves on. Without it, a ticket goes overdue while nobody on the desk could act on it.
+    /// </summary>
+    public bool PauseWhileWaiting { get; set; } = true;
+
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }
 }

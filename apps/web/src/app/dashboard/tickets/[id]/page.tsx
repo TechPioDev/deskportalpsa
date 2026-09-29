@@ -760,11 +760,11 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     null for a client, so nothing renders for them. */}
                 {ticket.slaPlanName && <Meta label="SLA plan" value={ticket.slaPlanName} />}
                 {ticket.firstResponseDueAt && (
-                  <SlaMeta label="First reply" due={ticket.firstResponseDueAt} met={ticket.firstRespondedAt}
+                  <SlaMeta label="First reply" due={ticket.firstResponseDueAt} met={ticket.firstRespondedAt} pausedAt={ticket.slaPausedAt}
                     open={!['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase())} />
                 )}
                 {!isFromPsa && ticket.slaDueAt && (
-                  <SlaMeta label="Resolution" due={ticket.slaDueAt} met={ticket.resolvedAt}
+                  <SlaMeta label="Resolution" due={ticket.slaDueAt} met={ticket.resolvedAt} pausedAt={ticket.slaPausedAt}
                     open={!['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase())} />
                 )}
               </dl>
@@ -1527,7 +1527,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
  * A due date from the SLA, and whether it was kept. Kept or not is the point of the row, so it says
  * so in words as well as colour: met on time, met late, overdue, or when it falls due.
  */
-function SlaMeta({ label, due, met, open }: { label: string; due: string; met: string | null; open: boolean }) {
+function SlaMeta({ label, due, met, open, pausedAt }: {
+  label: string; due: string; met: string | null; open: boolean; pausedAt?: string | null;
+}) {
   const dueAt = new Date(due).getTime();
   const when = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   let text: string;
@@ -1538,6 +1540,10 @@ function SlaMeta({ label, due, met, open }: { label: string; due: string; met: s
     tone = late ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400';
   } else if (!open) {
     text = `Was due ${when(due)}`;
+    tone = 'text-[var(--muted)]';
+  } else if (pausedAt) {
+    // The clock is stopped: the date is where it stood, and moves forward when the ticket does.
+    text = `Paused since ${when(pausedAt)}`;
     tone = 'text-[var(--muted)]';
   } else if (dueAt < Date.now()) {
     text = `Overdue — ${when(due)}`;
