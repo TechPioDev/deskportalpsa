@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Ticket, Plug, Bell, User, BarChart3, Activity, ListChecks, ShieldCheck,
-  SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList,
+  SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 
@@ -71,6 +71,7 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
       { href: '/dashboard/analytics/technicians', label: 'Technician hours', icon: Clock, permissions: ['productivity.own.view', 'productivity.team.view'] },
       { href: '/dashboard/analytics/clients', label: 'Client workload', icon: Building2, permissions: ['productivity.team.view'] },
       { href: '/dashboard/analytics/coverage', label: 'Portal coverage', icon: Activity, permissions: ['productivity.team.view'] },
+      { href: '/dashboard/analytics/satisfaction', label: 'Satisfaction', icon: Smile, permissions: ['productivity.team.view'] },
       { href: '/dashboard/reports', label: 'Scheduled reports', icon: FileBarChart, permissions: ['productivity.team.view'] },
     ],
   },

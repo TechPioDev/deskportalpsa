@@ -32,6 +32,8 @@ public static class ClientQbrRenderer
         Line("SLA sample (resolved with a target)", q.Current.SlaEligible, q.Previous.SlaEligible);
         Line("Average resolution hours", q.Current.AvgResolutionHours, q.Previous.AvgResolutionHours);
         Line("Median resolution hours", q.Current.MedianResolutionHours, q.Previous.MedianResolutionHours);
+        Line("Satisfaction % (rated 4 or 5)", q.Current.CsatPct, q.Previous.CsatPct);
+        Line("Ratings received", q.Current.Ratings, q.Previous.Ratings);
 
         if (q.Months.Count > 0)
         {
@@ -131,6 +133,7 @@ public static class ClientQbrRenderer
         G("Resolved within SLA", Pct(q.Current), Pct(q.Previous));
         G("Average time to resolve", Dur(q.Current.AvgResolutionHours), Dur(q.Previous.AvgResolutionHours));
         G("Median time to resolve", Dur(q.Current.MedianResolutionHours), Dur(q.Previous.MedianResolutionHours));
+        G("Satisfaction (rated 4 or 5 of 5)", Csat(q.Current), Csat(q.Previous));
 
         if (q.Months.Count > 0)
         {
@@ -208,6 +211,9 @@ public static class ClientQbrRenderer
         var pct = (now - before) / before * 100;
         return pct == 0 ? "no change" : $"{(pct > 0 ? "+" : "−")}{Math.Abs(pct):0}% on the period before";
     }
+
+    // "—" when nobody rated anything: an empty period is not a satisfied one, nor an unhappy one.
+    private static string Csat(QbrFigures f) => f.CsatPct is { } p ? $"{p.ToString("0.#", Inv)}% ({f.Satisfied}/{f.Ratings})" : "—";
 
     private static string Pct(QbrFigures f) => f.SlaPct is { } p ? $"{p.ToString("0.#", Inv)}% ({f.WithinSla}/{f.SlaEligible})" : "—";
 

@@ -204,4 +204,25 @@ public class AttentionTests
         message.HtmlBody.Should().NotContain("<script>").And.Contain("&lt;script&gt;");
         message.HtmlBody.Should().Contain("https://piomanage.com/dashboard/connections");
     }
+
+    [Fact]
+    public async Task A_poor_rating_this_week_is_something_to_follow_up()
+    {
+        var (svc, h, _) = await BuildAsync();
+        var ticket = new Desk.Domain.Tickets.Ticket
+        {
+            MspOrganizationId = Org, Origin = Desk.Domain.Enums.TicketOrigin.Psa, ExternalTicketId = "4410",
+            RequesterName = "p", RequesterEmail = "p@t", Title = "VPN", PortalStatus = "RESOLVED",
+            SyncStatus = Desk.Domain.Enums.TicketSyncStatus.Synced,
+        };
+        h.Db.Tickets.Add(ticket);
+        h.Db.TicketSatisfactions.AddRange(
+            new Desk.Domain.Tickets.TicketSatisfaction { MspOrganizationId = Org, TicketId = ticket.Id, ClientUserId = Guid.NewGuid(),
+                Rating = 1, Comment = "Nobody called back", RatedAt = h.Clock.GetUtcNow().AddDays(-1) });
+        await h.Db.SaveChangesAsync();
+
+        var item = (await svc.ListAsync()).Items.Single(i => i.Kind == "satisfaction-poor");
+        item.Title.Should().Be("1 poor rating from clients this week");
+        item.Detail.Should().Contain("1/5 on 4410").And.Contain("Nobody called back");
+    }
 }

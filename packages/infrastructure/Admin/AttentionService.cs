@@ -75,6 +75,31 @@ public sealed class AttentionService(
             }
         }
 
+        // ── Unhappy clients ───────────────────────────────────────────────────
+        // A rating of 1 or 2 in the last week is a conversation somebody should have while the
+        // client still remembers the ticket, not a number to find in next quarter's review.
+        var weekAgo = now.AddDays(-7);
+        var poor = await db.TicketSatisfactions.AsNoTracking()
+            .Where(s => s.RatedAt >= weekAgo && s.Rating <= 2)
+            .OrderByDescending(s => s.RatedAt)
+            .Select(s => new
+            {
+                s.Rating, s.Comment,
+                Client = db.ClientCompanies.Where(c => c.Id == s.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
+                Reference = db.Tickets.Where(t => t.Id == s.TicketId).Select(t => t.Number ?? t.ExternalTicketId).FirstOrDefault(),
+            })
+            .ToListAsync(ct);
+        if (poor.Count > 0)
+        {
+            var latest = poor[0];
+            items.Add(new AttentionItem(
+                "satisfaction-poor", "warning",
+                $"{Plural(poor.Count, "poor rating")} from clients this week",
+                $"Latest: {latest.Rating}/5 on {latest.Reference ?? "a ticket"}{(latest.Client is null ? "" : $" from {latest.Client}")}" +
+                (latest.Comment is null ? "." : $" — \u201c{(latest.Comment.Length > 140 ? latest.Comment[..140] + "…" : latest.Comment)}\u201d"),
+                poor.Count, "/dashboard/analytics/satisfaction"));
+        }
+
         // ── Background jobs (inbound events, pushes retried by the worker) ────
         var deadLettered = await db.BackgroundJobs.AsNoTracking()
             .Where(j => j.Status == BackgroundJobStatus.DeadLettered)

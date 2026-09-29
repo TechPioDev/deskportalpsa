@@ -487,6 +487,15 @@ export const api = {
   setSlaPlanActive: (id: string, active: boolean) =>
     request(`/api/boards/sla-plans/${id}/active`, z.unknown(), { method: 'PUT', body: JSON.stringify({ active }) }),
 
+  satisfactionState: (ticketId: string) =>
+    request(`/api/tickets/${ticketId}/satisfaction`, SatisfactionStateSchema) as Promise<SatisfactionState>,
+  rateTicket: (ticketId: string, rating: number, comment: string | null) =>
+    request(`/api/tickets/${ticketId}/satisfaction`, SatisfactionStateSchema,
+      { method: 'POST', body: JSON.stringify({ rating, comment }) }) as Promise<SatisfactionState>,
+  satisfactionSummary: (from: Date, to: Date) =>
+    request(`/api/dashboard/satisfaction?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
+      SatisfactionSummarySchema) as Promise<SatisfactionSummary>,
+
   deskHolidays: (from?: string) =>
     request(`/api/boards/holidays${from ? `?from=${from}` : ''}`, z.array(DeskHolidaySchema)) as Promise<DeskHoliday[]>,
   addDeskHoliday: (date: string, name: string) =>
@@ -1245,6 +1254,38 @@ export type SlaPlanInput = {
   businessHoursOnly: boolean; workdayStartHour: number; workdayEndHour: number; workingDays: number;
   sortOrder?: number; skipHolidays: boolean; pauseWhileWaiting: boolean;
 };
+
+/** What a client sees under a finished ticket: whether they can rate it, and their answer. */
+export const SatisfactionStateSchema = z.object({
+  canRate: z.boolean(),
+  reason: z.string().nullable(),
+  rating: z.number().nullable(),
+  comment: z.string().nullable(),
+  ratedAt: z.string().nullable(),
+  openUntil: z.string().nullable(),
+});
+export type SatisfactionState = z.infer<typeof SatisfactionStateSchema>;
+
+const SatisfactionGroupSchema = z.object({
+  key: z.string(), name: z.string(), ratings: z.number(), satisfied: z.number(),
+  csatPct: z.number().nullable(), average: z.number(),
+});
+/** CSAT is the share of ratings that are 4 or 5; null when nobody rated anything. */
+export const SatisfactionSummarySchema = z.object({
+  ratings: z.number(),
+  satisfied: z.number(),
+  csatPct: z.number().nullable(),
+  average: z.number().nullable(),
+  distribution: z.array(z.number()),
+  byTechnician: z.array(SatisfactionGroupSchema),
+  byClient: z.array(SatisfactionGroupSchema),
+  recent: z.array(z.object({
+    ticketId: z.string(), reference: z.string(), title: z.string(), rating: z.number(),
+    comment: z.string().nullable(), clientName: z.string().nullable(), technicianName: z.string().nullable(),
+    ratedAt: z.string(),
+  })),
+});
+export type SatisfactionSummary = z.infer<typeof SatisfactionSummarySchema>;
 
 /** A day the desk is closed. Working-hours SLA plans step over these. */
 export const DeskHolidaySchema = z.object({ id: z.string(), date: z.string(), name: z.string() });

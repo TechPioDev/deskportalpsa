@@ -326,6 +326,23 @@ public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedRespon
     }
 }
 
+public sealed class TicketSatisfactionConfig : IEntityTypeConfiguration<TicketSatisfaction>
+{
+    public void Configure(EntityTypeBuilder<TicketSatisfaction> b)
+    {
+        b.ToTable("ticket_satisfaction");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Comment).HasMaxLength(1000);
+        b.Property(x => x.TechnicianExternalId).HasMaxLength(100);
+        b.Property(x => x.TechnicianName).HasMaxLength(200);
+        // One answer per ticket: a changed mind replaces the rating, it does not add a second vote.
+        b.HasIndex(x => x.TicketId).IsUnique();
+        // Every report asks "rated between these dates".
+        b.HasIndex(x => new { x.MspOrganizationId, x.RatedAt });
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class DeskHolidayConfig : IEntityTypeConfiguration<DeskHoliday>
 {
     public void Configure(EntityTypeBuilder<DeskHoliday> b)

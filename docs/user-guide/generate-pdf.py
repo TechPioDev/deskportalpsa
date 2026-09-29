@@ -91,6 +91,11 @@ story += [Paragraph("Internal notes your support team writes are never shown in 
                     "replies.", note_s)]
 
 # ---- 3. Working a ticket (staff) ----
+story += [Paragraph("Rate a resolved ticket", h2_s)]
+story += [Paragraph("When one of your tickets is resolved, the ticket page asks <b>How did we do?</b> Choose from "
+                    "1 (very poor) to 5 (excellent) and, if you like, add a comment. You can change your rating for "
+                    "30 days after the ticket was resolved. Your answer goes to the team that worked the ticket.", body_s)]
+
 story += [Paragraph("3. Working a ticket (staff)", h1_s), hr()]
 story += [Paragraph("Open a ticket and use the box at the top of the conversation. One action covers the three things "
                     "you usually do at once: say what happened, move the ticket on, and record your time.", body_s)]
@@ -201,6 +206,13 @@ story += [Paragraph("The <b>Productivity</b> page shows technician and team metr
                     "overdue tickets, SLA compliance, average resolution time, and time worked. A configurable "
                     "<b>productivity score</b> combines several signals into a single number, with a breakdown per "
                     "component. Use <b>Export CSV</b> to download the team view.", body_s)]
+story += [Paragraph("Customer satisfaction", h2_s)]
+story += [Paragraph("<b>Satisfaction</b> shows how clients rated resolved tickets over any period: CSAT (the share "
+                    "rated 4 or 5 out of 5), the spread of scores, figures per technician and per client, and every "
+                    "comment and poor rating. A rating counts for whoever held the ticket when it was rated. Ratings "
+                    "of 1 or 2 in the last week also appear on the needs-attention list, and each client's business "
+                    "review shows their satisfaction for the quarter.", body_s)]
+
 story += [Paragraph("Technician hours", h2_s)]
 story += [Paragraph("<b>Technician hours</b> shows each person's hours and output over any period — today, yesterday, "
                     "this or last month, this or last quarter. Client work and internal work are shown side by side "

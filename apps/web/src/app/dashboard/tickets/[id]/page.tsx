@@ -15,6 +15,7 @@ import { AssistantRail } from '@/components/AssistantRail';
 import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
 import { TasksPanel } from '@/components/TasksPanel';
 import { ComposerTools } from '@/components/ComposerTools';
+import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
 import { api, type AssigneeOptions } from '@/lib/api';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 
@@ -792,6 +793,25 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               </div>
               )}
 
+              {ticket.rating && (
+                <div className="mt-4 border-t border-[var(--border)] pt-4">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Client rating</h3>
+                  <p className="mt-1 flex items-center gap-2 text-sm">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ticket.rating.rating >= 4
+                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                      : ticket.rating.rating <= 2 ? 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'
+                        : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'}`}>
+                      {ticket.rating.rating}/5 · {RATING_LABELS[ticket.rating.rating - 1]}
+                    </span>
+                    <span className="text-xs text-[var(--muted)]">{ticket.rating.ratedBy ?? 'Client'}</span>
+                  </p>
+                  {ticket.rating.comment && <p className="mt-1 text-sm text-[var(--muted)]">&ldquo;{ticket.rating.comment}&rdquo;</p>}
+                  {ticket.rating.technicianName && (
+                    <p className="mt-1 text-[11px] text-[var(--faint)]">Counted for {ticket.rating.technicianName}, who held it when it was rated.</p>
+                  )}
+                </div>
+              )}
+
               {/* Staff only: these are colleagues' names, and the client detail carries none of
                   them. Following yourself needs nobody's name; adding a colleague needs the staff
                   list, which is fetched the moment somebody asks for it. */}
@@ -820,6 +840,10 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             </aside>
 
             <div className="space-y-4">
+            {/* The client's one question, once the ticket is done. Clients only: staff cannot rate
+                on a client's behalf, and see the answer in the rail instead. */}
+            {!isStaff && <SatisfactionPanel ticketId={id} />}
+
             {/* Reply launcher — closed by default, above Time entries. A composer pinned to the
                 bottom of a long thread is half off-screen exactly when it is needed.
                 Styled as the primary action it is: a dashed grey outline with muted text is the

@@ -25,7 +25,13 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     /// triaged yet — is the team's own record. Only a PSA ticket, or a board explicitly published to
     /// the client, is ever returned, and the company scope still applies on top of that.
     /// </summary>
-    private IQueryable<Ticket> Visible(ClientAccess access) =>
+    private IQueryable<Ticket> Visible(ClientAccess access) => ClientVisible(db, access);
+
+    /// <summary>
+    /// The one rule for what a client may see, public so that everything answering a client — the
+    /// list, the detail, a satisfaction rating — applies the same rule rather than a copy of it.
+    /// </summary>
+    public static IQueryable<Ticket> ClientVisible(DeskDbContext db, ClientAccess access) =>
         db.Tickets.Where(t =>
             t.ClientCompanyId == access.ClientCompanyId
             && (t.Origin == TicketOrigin.Psa
@@ -491,7 +497,14 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             SlaDueAt: includeInternal ? ticket.SlaDueAt : null,
             FirstResponseDueAt: includeInternal ? ticket.FirstResponseDueAt : null,
             FirstRespondedAt: includeInternal ? ticket.FirstRespondedAt : null,
-            SlaPausedAt: includeInternal ? ticket.SlaPausedAt : null);
+            SlaPausedAt: includeInternal ? ticket.SlaPausedAt : null,
+            Rating: includeInternal
+                ? await db.TicketSatisfactions.AsNoTracking().Where(s => s.TicketId == ticketId)
+                    .Select(s => new TicketRatingDto(s.Rating, s.Comment, s.RatedAt,
+                        db.ClientUsers.Where(u => u.Id == s.ClientUserId).Select(u => u.DisplayName).FirstOrDefault(),
+                        s.TechnicianName))
+                    .FirstOrDefaultAsync(ct)
+                : null);
     }
 
     public Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default)

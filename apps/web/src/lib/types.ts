@@ -156,6 +156,11 @@ export const TicketDetailSchema = z.object({
   firstResponseDueAt: z.string().nullable().default(null),
   firstRespondedAt: z.string().nullable().default(null),
   slaPausedAt: z.string().nullable().default(null),
+  // The client's rating, on the staff detail only.
+  rating: z.object({
+    rating: z.number(), comment: z.string().nullable(), ratedAt: z.string(),
+    ratedBy: z.string().nullable(), technicianName: z.string().nullable(),
+  }).nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

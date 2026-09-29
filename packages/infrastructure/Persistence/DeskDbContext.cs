@@ -49,6 +49,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<TicketTask> TicketTasks => Set<TicketTask>();
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
     public DbSet<DeskHoliday> DeskHolidays => Set<DeskHoliday>();
+    public DbSet<TicketSatisfaction> TicketSatisfactions => Set<TicketSatisfaction>();
     public DbSet<RecurringTicket> RecurringTickets => Set<RecurringTicket>();
     public DbSet<AlertSource> AlertSources => Set<AlertSource>();
     public DbSet<TicketNote> TicketNotes => Set<TicketNote>();

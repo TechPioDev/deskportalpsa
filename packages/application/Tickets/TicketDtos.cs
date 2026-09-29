@@ -208,7 +208,9 @@ public sealed record TicketDetailDto(
     DateTimeOffset? SlaDueAt = null,
     DateTimeOffset? FirstResponseDueAt = null,
     DateTimeOffset? FirstRespondedAt = null,
-    DateTimeOffset? SlaPausedAt = null);
+    DateTimeOffset? SlaPausedAt = null,
+    /// <summary>The client's rating, for staff. The client reads their own through its own endpoint.</summary>
+    TicketRatingDto? Rating = null);
 
 public sealed record AttachmentDto(
     Guid Id,

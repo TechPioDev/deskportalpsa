@@ -412,7 +412,7 @@ tier is platform work that only pays off once the product is sold to more than o
    events. Finishing both replaces five-minute polling with event-driven updates and removes the most
    noticeable difference between the portal and the PSA's own interface. **Effort: medium. Impact:
    high.**
-2. **Customer satisfaction (CSAT) capture.** One question when a ticket closes, stored against the
+2. **Customer satisfaction (CSAT) capture.** *(Built 29 Sep 2026: rating on resolved tickets, Satisfaction page, needs-attention, QBR.)* One question when a ticket closes, stored against the
    ticket and the technician, reported per client and per period. It is a small feature that gives
    the MSP something to sell with, and the reporting pipeline to carry it already exists.
    **Effort: small. Impact: high.**

@@ -319,7 +319,12 @@ public class StaffReportTests
             Time(org.Id, q3a.Id, org.Person, "2026-07-02", 2m),
             Time(org.Id, q3b.Id, org.Person, "2026-08-11", 3m),
             Time(org.Id, q2.Id, org.Person, "2026-05-05", 1m),
-            Time(org.Id, notMine.Id, org.Person, "2026-07-10", 50m));
+            Time(org.Id, notMine.Id, org.Person, "2026-07-10", 50m),
+            // Ratings: one happy and one unhappy in Q3, one happy in Q2, and another client's that must not count.
+            Rated(org.Id, q3a.Id, c, 5, "2026-07-04"),
+            Rated(org.Id, q3b.Id, c, 2, "2026-08-21"),
+            Rated(org.Id, q2.Id, c, 4, "2026-05-08"),
+            Rated(org.Id, notMine.Id, other.Id, 5, "2026-07-12"));
         await platform.SaveChangesAsync();
 
         using var scope = sp.CreateScope();
@@ -344,7 +349,16 @@ public class StaffReportTests
         var pdf = ClientQbrRenderer.ToPdf(qbr);
         pdf.Take(4).Should().Equal("%PDF"u8.ToArray());
         ClientQbrRenderer.ToCsv(qbr).Should().Contain("Resolved within SLA %,50,100");
+        qbr.Current.Should().BeEquivalentTo(new { Ratings = 2, Satisfied = 1, CsatPct = 50.0 });
+        qbr.Previous.CsatPct.Should().Be(100);
+        ClientQbrRenderer.ToCsv(qbr).Should().Contain("Satisfaction % (rated 4 or 5),50,100");
     }
+
+    private static TicketSatisfaction Rated(Guid org, Guid ticket, Guid client, int rating, string day) => new()
+    {
+        MspOrganizationId = org, TicketId = ticket, ClientCompanyId = client, ClientUserId = Guid.NewGuid(),
+        Rating = rating, RatedAt = DateTimeOffset.Parse(day + "T10:00Z"),
+    };
 
     [Fact]
     public async Task A_scheduled_business_review_is_emailed_as_a_quarter_for_its_client()

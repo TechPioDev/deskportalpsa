@@ -51,6 +51,12 @@ public sealed class ClientQbrBuilder(DeskDbContext db, TechnicianReportBuilder t
             .Select(e => new { e.EntryDate, e.Hours, e.Billable })
             .ToListAsync(ct);
 
+        // This client's ratings, of its own tickets, given in either period.
+        var ratings = await db.TicketSatisfactions.AsNoTracking()
+            .Where(s => s.ClientCompanyId == clientCompanyId && s.RatedAt >= prevFrom && s.RatedAt <= to)
+            .Select(s => new { s.RatedAt, s.Rating })
+            .ToListAsync(ct);
+
         QbrFigures Figures(DateTimeOffset f, DateTimeOffset t)
         {
             var raised = tickets.Count(x => x.Raised >= f && x.Raised <= t);
@@ -65,7 +71,9 @@ public sealed class ClientQbrBuilder(DeskDbContext db, TechnicianReportBuilder t
                 raised, done.Count, open, hours.Sum(e => e.Hours), hours.Where(e => e.Billable).Sum(e => e.Hours),
                 sla.Count, sla.Count(x => x.Done <= x.SlaDue),
                 durations.Count > 0 ? Math.Round(durations.Average(), 1) : null,
-                durations.Count > 0 ? Math.Round(durations[durations.Count / 2], 1) : null);
+                durations.Count > 0 ? Math.Round(durations[durations.Count / 2], 1) : null,
+                ratings.Count(r => r.RatedAt >= f && r.RatedAt <= t),
+                ratings.Count(r => r.RatedAt >= f && r.RatedAt <= t && r.Rating >= Desk.Domain.Tickets.TicketSatisfaction.Satisfied));
         }
 
         var current = Figures(from, to);

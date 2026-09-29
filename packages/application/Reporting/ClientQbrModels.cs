@@ -2,10 +2,14 @@ namespace Desk.Application.Reporting;
 
 public sealed record QbrFigures(
     int Raised, int Resolved, int OpenAtEnd, decimal Hours, decimal BillableHours,
-    int SlaEligible, int WithinSla, double? AvgResolutionHours, double? MedianResolutionHours)
+    int SlaEligible, int WithinSla, double? AvgResolutionHours, double? MedianResolutionHours,
+    int Ratings = 0, int Satisfied = 0)
 {
     /// <summary>Null when no resolved ticket carried an SLA target — "no data", never 0% or 100%.</summary>
     public double? SlaPct => SlaEligible > 0 ? Math.Round(100.0 * WithinSla / SlaEligible, 1) : null;
+
+    /// <summary>Share of the client's ratings that were 4 or 5; null when they rated nothing.</summary>
+    public double? CsatPct => Ratings > 0 ? Math.Round(100.0 * Satisfied / Ratings, 1) : null;
 }
 
 public sealed record QbrCount(string Label, int Count);

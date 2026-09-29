@@ -187,6 +187,26 @@ public sealed class RelationalQueryTests : IDisposable
         ticket.SlaPausedAt.Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task Satisfaction_translates()
+    {
+        var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);
+        _db.TicketSatisfactions.Add(new TicketSatisfaction
+        {
+            MspOrganizationId = ticket.MspOrganizationId, TicketId = _ticketId, ClientUserId = Guid.NewGuid(),
+            Rating = 2, Comment = "Slow", RatedAt = DateTimeOffset.UtcNow, TechnicianAppUserId = _me, TechnicianName = "Dalbir",
+        });
+        await _db.SaveChangesAsync();
+
+        var summary = await new SatisfactionService(_db, _clock).SummaryAsync(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        summary.Recent.Should().ContainSingle().Which.Reference.Should().Be("INT-000001");
+        (await Reads.GetDetailForStaffAsync(_ticketId))!.Rating!.Rating.Should().Be(2);
+        // The needs-attention query, as it is written there: the cut-off captured first.
+        var weekAgo = DateTimeOffset.UtcNow.AddDays(-7);
+        (await _db.TicketSatisfactions.AsNoTracking().Where(s => s.RatedAt >= weekAgo && s.Rating <= 2).CountAsync())
+            .Should().Be(1);
+    }
+
     public void Dispose()
     {
         _db.Dispose();
