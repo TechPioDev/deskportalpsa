@@ -14,6 +14,14 @@ public class MspOrganization : BaseEntity
     public string? BrandingLogoUrl { get; set; }
     public string TimeZone { get; set; } = "UTC";
 
+    /// <summary>The organization's Web Push signing key, public half (base64url, uncompressed P-256).
+    /// Browsers bind each subscription to it, so it is made once and kept: a new one would silently
+    /// orphan every device already signed up.</summary>
+    public string? PushPublicKey { get; set; }
+
+    /// <summary>Where the private half lives in the secret store. Never on this row.</summary>
+    public string? PushPrivateKeyRef { get; set; }
+
     /// <summary>
     /// Who is emailed the "needs attention" digest (failed pushes, stalled sync, closed tickets
     /// without a closed date, reports that were not sent). Null: nobody; the list still shows in

@@ -336,6 +336,32 @@ public sealed class RelationalQueryTests : IDisposable
         await kb.DeleteAsync(article.Id);
     }
 
+    [Fact]
+    public async Task Push_scan_and_delivery_translate()
+    {
+        _db.PushSubscriptions.Add(new Desk.Domain.Notifications.PushSubscription
+        {
+            MspOrganizationId = Org, AppUserId = _me, Endpoint = "https://fcm.googleapis.com/fcm/send/x",
+            P256dh = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4", Auth = "BTBZMqHH6r4Tts7J_aSIgg",
+        });
+        await _db.SaveChangesAsync();
+        var scanner = new Desk.Infrastructure.Notifications.PushScanner(_db, _clock);
+        await scanner.ScanAsync();
+
+        // The seeded ticket gets a client reply and a new holder.
+        var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);
+        ticket.AssignedAppUserId = _me;
+        _db.TicketNotes.Add(new TicketNote { MspOrganizationId = Org, TicketId = _ticketId, AuthorName = "Priya", AuthoredByClient = true,
+            IsPublic = true, Body = "Still broken", NoteCreatedAt = DateTimeOffset.UtcNow });
+        await _db.SaveChangesAsync();
+        (await scanner.ScanAsync()).Should().Be(2);
+
+        // Delivery reads what is unsent, by age; with nothing reachable it records why rather than throwing.
+        var cutoff = DateTimeOffset.UtcNow.AddHours(-2); // captured first, as PushDelivery does
+        (await _db.PushNotifications.Where(n => n.SentAt == null && n.CreatedAt >= cutoff)
+            .OrderBy(n => n.CreatedAt).CountAsync()).Should().Be(2);
+    }
+
     private sealed class OneConnector(Desk.PsaCore.Contracts.IServiceManagementConnector c) : Desk.Application.Connectors.IConnectorResolver
     {
         public Task<Desk.PsaCore.Contracts.IServiceManagementConnector> ResolveAsync(Guid connectionId, CancellationToken ct = default) => Task.FromResult(c);

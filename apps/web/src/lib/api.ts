@@ -846,6 +846,15 @@ export const api = {
       agreementsUnavailable: z.boolean().default(false),
     })),
   cpDevices: () => request('/api/control-panel/devices', z.array(DeviceSchema)) as Promise<Device[]>,
+  // ── Push notifications ── a staff member's own devices and choices.
+  pushStatus: () => request('/api/me/push', PushStatusSchema) as Promise<PushStatus>,
+  pushSubscribe: (body: { endpoint: string; p256dh: string; auth: string; deviceLabel: string }) =>
+    request('/api/me/push/devices', z.unknown(), { method: 'POST', body: JSON.stringify(body) }),
+  pushRemoveDevice: (id: string) => request(`/api/me/push/devices/${id}`, z.unknown(), { method: 'DELETE' }),
+  pushSavePreferences: (body: PushStatus['preferences']) =>
+    request('/api/me/push/preferences', z.unknown(), { method: 'PUT', body: JSON.stringify(body) }),
+  pushTest: () => request('/api/me/push/test', z.object({ delivered: z.number() }), { method: 'POST' }),
+
   // ── Knowledge base ── the team writes and reads every article; a client reads theirs on the Help page.
   kbList: (search?: string) =>
     request(`/api/kb${search ? `?search=${encodeURIComponent(search)}` : ''}`, z.array(KbArticleSummarySchema)) as Promise<KbArticleSummary[]>,
@@ -966,6 +975,13 @@ const DeviceSchema = z.object({
   openTickets: z.number(),
   totalTickets: z.number(),
 });
+export const PushStatusSchema = z.object({
+  publicKey: z.string(),
+  devices: z.array(z.object({ id: z.string(), label: z.string().nullable(), addedAt: z.string(), lastDeliveredAt: z.string().nullable(), endpointHash: z.string() })),
+  preferences: z.object({ assigned: z.boolean(), clientReplied: z.boolean(), slaAtRisk: z.boolean() }),
+});
+export type PushStatus = z.infer<typeof PushStatusSchema>;
+
 export const KbArticleSummarySchema = z.object({
   id: z.string(), title: z.string(), category: z.string().nullable(),
   audience: z.enum(['Staff', 'AllClients', 'SelectedClients']), clientNames: z.array(z.string()),

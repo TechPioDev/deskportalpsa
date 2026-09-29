@@ -54,6 +54,10 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<Desk.Domain.Knowledge.KbArticle> KbArticles => Set<Desk.Domain.Knowledge.KbArticle>();
     public DbSet<Desk.Domain.Knowledge.KbArticleClient> KbArticleClients => Set<Desk.Domain.Knowledge.KbArticleClient>();
     public DbSet<Desk.Domain.Knowledge.KbDeflection> KbDeflections => Set<Desk.Domain.Knowledge.KbDeflection>();
+    public DbSet<Desk.Domain.Notifications.PushSubscription> PushSubscriptions => Set<Desk.Domain.Notifications.PushSubscription>();
+    public DbSet<Desk.Domain.Notifications.PushPreference> PushPreferences => Set<Desk.Domain.Notifications.PushPreference>();
+    public DbSet<Desk.Domain.Notifications.PushTicketState> PushTicketStates => Set<Desk.Domain.Notifications.PushTicketState>();
+    public DbSet<Desk.Domain.Notifications.PushNotification> PushNotifications => Set<Desk.Domain.Notifications.PushNotification>();
     public DbSet<RecurringTicket> RecurringTickets => Set<RecurringTicket>();
     public DbSet<AlertSource> AlertSources => Set<AlertSource>();
     public DbSet<TicketNote> TicketNotes => Set<TicketNote>();

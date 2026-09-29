@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 
@@ -9,6 +9,13 @@ const sans = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-sans
 export const metadata: Metadata = {
   title: 'Desk Portal',
   description: 'Multi-tenant PSA ticket portal',
+  // Installable on a phone: the manifest is app/manifest.ts; iPhone reads its own icon and title.
+  icons: { apple: '/icons/apple-touch-icon.png' },
+  appleWebApp: { capable: true, title: 'Desk', statusBarStyle: 'default' },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#14532D',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

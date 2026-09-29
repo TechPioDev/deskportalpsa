@@ -113,6 +113,13 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Tickets.IApprovalService, Tickets.ApprovalService>();
         services.AddScoped<Desk.Application.Tickets.ITicketDeviceService, Tickets.TicketDeviceService>();
         services.AddScoped<Desk.Application.Knowledge.IKnowledgeBaseService, Knowledge.KnowledgeBaseService>();
+        services.AddScoped<Desk.Application.Notifications.IPushService, Notifications.PushService>();
+        services.AddScoped<Desk.Application.Notifications.IPushScanner, Notifications.PushScanner>();
+        services.AddScoped<Desk.Application.Notifications.IPushDelivery, Notifications.PushDelivery>();
+        // Push always goes through the egress guard, whatever the connector setting: the address is one
+        // a browser supplied, and the allowlist in PushEndpoints is the first check, not the only one.
+        services.AddHttpClient(Notifications.PushDelivery.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(15))
+            .AddHttpMessageHandler(() => new Security.EgressGuard(new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
         services.AddScoped<Desk.Application.Tickets.ITicketViewService, Tickets.TicketViewService>();
         services.AddScoped<ITicketCommandService, TicketCommandService>();
         services.AddScoped<IEffectivePermissionService, EffectivePermissionService>();
@@ -191,6 +198,7 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Boards.IRecurringTicketService, Boards.RecurringTicketService>();
         services.AddSingleton<Desk.Application.Boards.IRecurringTicketRunner, Boards.RecurringTicketRunner>();
         services.AddSingleton<Desk.Application.ControlPanel.IDeviceSyncRunner, Desk.Infrastructure.ControlPanel.DeviceSyncRunner>();
+        services.AddSingleton<Desk.Application.Notifications.IPushRunner, Desk.Infrastructure.Notifications.PushRunner>();
         services.AddScoped<Desk.Application.Boards.ICannedResponseService, Boards.CannedResponseService>();
         services.AddScoped<Desk.Application.Boards.ITicketTaskService, Tickets.TicketTaskService>();
         services.AddScoped<Desk.Application.Boards.IInternalTicketService, Boards.InternalTicketService>();

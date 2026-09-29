@@ -15,6 +15,8 @@ public sealed class MspOrganizationConfig : IEntityTypeConfiguration<MspOrganiza
 {
     public void Configure(EntityTypeBuilder<MspOrganization> b)
     {
+        b.Property(x => x.PushPublicKey).HasMaxLength(100);
+        b.Property(x => x.PushPrivateKeyRef).HasMaxLength(200);
         b.ToTable("msp_organizations");
         b.HasKey(x => x.Id);
         b.Property(x => x.Name).HasMaxLength(200).IsRequired();
@@ -401,6 +403,58 @@ public sealed class KbDeflectionConfig : IEntityTypeConfiguration<Desk.Domain.Kn
         // The stats read "since a date"; the article list reads counts per article.
         b.HasIndex(x => new { x.MspOrganizationId, x.OccurredAt });
         b.HasIndex(x => new { x.Source, x.ArticleId });
+    }
+}
+
+public sealed class PushSubscriptionConfig : IEntityTypeConfiguration<Desk.Domain.Notifications.PushSubscription>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Notifications.PushSubscription> b)
+    {
+        b.ToTable("push_subscriptions");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Endpoint).HasMaxLength(1000).IsRequired();
+        b.Property(x => x.P256dh).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Auth).HasMaxLength(100).IsRequired();
+        b.Property(x => x.DeviceLabel).HasMaxLength(80);
+        // One browser, one row, whoever signed it up last.
+        b.HasIndex(x => x.Endpoint).IsUnique();
+        b.HasIndex(x => x.AppUserId);
+    }
+}
+
+public sealed class PushPreferenceConfig : IEntityTypeConfiguration<Desk.Domain.Notifications.PushPreference>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Notifications.PushPreference> b)
+    {
+        b.ToTable("push_preferences");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => x.AppUserId).IsUnique();
+    }
+}
+
+public sealed class PushTicketStateConfig : IEntityTypeConfiguration<Desk.Domain.Notifications.PushTicketState>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Notifications.PushTicketState> b)
+    {
+        b.ToTable("push_ticket_states");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => x.TicketId).IsUnique();
+    }
+}
+
+public sealed class PushNotificationConfig : IEntityTypeConfiguration<Desk.Domain.Notifications.PushNotification>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Notifications.PushNotification> b)
+    {
+        b.ToTable("push_notifications");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Title).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Body).HasMaxLength(500).IsRequired();
+        b.Property(x => x.Url).HasMaxLength(300).IsRequired();
+        b.Property(x => x.LastError).HasMaxLength(300);
+        // The sender reads what is unsent, oldest first; the prune reads by age.
+        b.HasIndex(x => new { x.SentAt, x.CreatedAt });
+        b.HasIndex(x => new { x.AppUserId, x.CreatedAt });
     }
 }
 

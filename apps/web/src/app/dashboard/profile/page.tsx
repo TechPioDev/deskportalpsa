@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { PushNotificationsCard } from '@/components/PushNotificationsCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BadgeCheck, Building2, CalendarDays, KeyRound, Pencil, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -188,6 +189,9 @@ export default function ProfilePage() {
         <h1 className="text-xl font-semibold">Profile</h1>
         <p className="text-sm text-[var(--muted)]">Manage your account details and preferences.</p>
       </div>
+
+      {/* Staff only: push notifications are for the people who work tickets. */}
+      {data.kind === 'staff' && <PushNotificationsCard />}
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
         <div className="flex flex-col gap-6 sm:flex-row">
