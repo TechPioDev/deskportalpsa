@@ -74,7 +74,18 @@ public sealed record MetricsFilter
 
     public Guid? PsaConnectionId { get; init; }
     public string? Priority { get; init; }
+
+    /// <summary>
+    /// With both <see cref="AppUserId"/> and <see cref="TechnicianExternalId"/> set: work held under
+    /// EITHER identity, as one person. For a technician's own view - someone linked to a PSA account
+    /// who also works the team's boards is one person with two identities, and pinning them to the
+    /// PSA id alone left their board work out of their own figures.
+    /// </summary>
+    public bool EitherIdentity { get; init; }
 }
+
+/// <summary>One source's share of a person's work: a PSA connection, the team's boards, or monitoring.</summary>
+public sealed record SourceWork(string Label, int Assigned, int Resolved, decimal Hours);
 
 public sealed record TechnicianMetrics
 {
@@ -103,6 +114,35 @@ public sealed record TechnicianMetrics
     public int ResolvedInternal { get; init; }
     public decimal ClientHours { get; init; }
     public decimal InternalHours { get; init; }
+
+    /// <summary>
+    /// Work opened by a monitoring alert, kept apart from the team's own boards: nobody raised it by
+    /// hand, and a desk flooded with alerts is a different story from a desk doing its own projects.
+    /// </summary>
+    public int AssignedMonitoring { get; init; }
+    public int ResolvedMonitoring { get; init; }
+    public decimal MonitoringHours { get; init; }
+
+    /// <summary>The same work by where it came from: each PSA connection, team boards, monitoring.</summary>
+    public IReadOnlyList<SourceWork> BySource { get; init; } = [];
+
+    /// <summary>
+    /// First-response promises: tickets that carried one (an SLA plan with a reply time), and how many
+    /// were answered in time. Only a reply made through the portal is seen.
+    /// </summary>
+    public int FirstResponseEligible { get; init; }
+    public int FirstResponseMet { get; init; }
+    /// <summary>Average hours to the first portal reply, and how many tickets that average is from.</summary>
+    public double? AvgFirstResponseHours { get; init; }
+    public int FirstResponseSample { get; init; }
+
+    /// <summary>Resolved tickets that were brought back to work at least once, through the portal.</summary>
+    public int Reopened { get; init; }
+    public double? ReopenRatePct { get; init; }
+
+    /// <summary>Client ratings on this work, and how many were 4 or 5 out of 5.</summary>
+    public int Rated { get; init; }
+    public int Satisfied { get; init; }
 
     public ProductivityComponents Components { get; init; } = new();
     public ProductivityScore? Score { get; init; }
@@ -138,7 +178,9 @@ public sealed record TrendPoint(DateOnly Date, int Created, int Resolved);
 public sealed record TechnicianDay(
     DateOnly Date, Guid? AppUserId, string? TechnicianExternalId, string Name,
     decimal Hours, decimal BillableHours, int Resolved, int TicketsTouched,
-    decimal InternalHours = 0m, int ResolvedInternal = 0);
+    decimal InternalHours = 0m, int ResolvedInternal = 0,
+    // Of Hours and Resolved, the part opened by monitoring alerts - apart from the team's own boards.
+    decimal MonitoringHours = 0m, int ResolvedMonitoring = 0);
 
 /// <summary>
 /// One client's consumption of the desk, for the question management actually asks: where is our

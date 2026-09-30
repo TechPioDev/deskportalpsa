@@ -14,7 +14,8 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
     private sealed record Row(
         Guid Id, string? Tech, Guid? AppUserId, string? TechName, DateTimeOffset CreatedAt,
         DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
-        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid? Conn, TicketOrigin Origin);
+        decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid? Conn, TicketOrigin Origin,
+        DateTimeOffset? FirstResponseDueAt, DateTimeOffset? FirstRespondedAt, int ReopenCount, int? Rating);
 
     /// <param name="byResolution">
     /// Window on WHEN THE TICKET WAS RESOLVED instead of when it was raised, for "resolved in this
@@ -39,8 +40,13 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             if (f.From is { } from) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) >= from);
             if (f.To is { } to) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) <= to);
         }
-        if (f.TechnicianExternalId is { } tech) q = q.Where(t => t.AssignedTechnicianExternalId == tech);
-        if (f.AppUserId is { } assignee) q = q.Where(t => t.AssignedAppUserId == assignee);
+        if (f.EitherIdentity && f.AppUserId is { } me && f.TechnicianExternalId is { } myTech)
+            q = q.Where(t => t.AssignedAppUserId == me || t.AssignedTechnicianExternalId == myTech);
+        else
+        {
+            if (f.TechnicianExternalId is { } tech) q = q.Where(t => t.AssignedTechnicianExternalId == tech);
+            if (f.AppUserId is { } assignee) q = q.Where(t => t.AssignedAppUserId == assignee);
+        }
         if (f.ClientCompanyId is { } company) q = q.Where(t => t.ClientCompanyId == company);
         if (f.PsaOnly) q = q.Where(t => t.Origin == TicketOrigin.Psa);
         if (f.PsaConnectionId is { } conn) q = q.Where(t => t.PsaConnectionId == conn);
@@ -54,11 +60,17 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             t.AssignedTechnicianName,
             t.PsaCreatedAt ?? t.CreatedAt, t.ResolvedAt, t.ClosedAt, t.SlaDueAt,
             t.TimeWorkedHours, t.BillableHours, t.NonBillableHours,
-            t.Notes.Any(n => n.IsPublic), t.PsaConnectionId, t.Origin)).ToListAsync(ct);
+            t.Notes.Any(n => n.IsPublic), t.PsaConnectionId, t.Origin,
+            t.FirstResponseDueAt, t.FirstRespondedAt, t.ReopenCount,
+            db.TicketSatisfactions.Where(x => x.TicketId == t.Id).Select(x => (int?)x.Rating).FirstOrDefault())).ToListAsync(ct);
     }
 
+    private Task<Dictionary<Guid, string>> ConnectionNamesAsync(CancellationToken ct)
+        => db.PsaConnections.AsNoTracking().ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+
     public async Task<TechnicianMetrics> ForTechnicianAsync(MetricsFilter filter, ProductivityWeights weights, CancellationToken ct = default)
-        => Compute(filter.TechnicianExternalId ?? "(all)", await LoadAsync(filter, ct), weights);
+        => Compute(filter.TechnicianExternalId ?? filter.AppUserId?.ToString() ?? "(all)", await LoadAsync(filter, ct), weights,
+            await ConnectionNamesAsync(ct));
 
     public async Task<IReadOnlyList<TeamComparisonRow>> TeamAsync(MetricsFilter filter, ProductivityWeights weights, CancellationToken ct = default)
     {
@@ -70,6 +82,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // team's work, and dropped every portal-assigned ticket entirely because its Tech was null.
         var names = await NamesByAppUserAsync(rows, ct);
         var account = await IntegrationIdentity.LoadAsync(db, ct);
+        var connections = await ConnectionNamesAsync(ct);
 
         return rows
             // A ticket the PSA shows held by the account the portal writes as is held by nobody, and
@@ -80,7 +93,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             {
                 var first = g.First();
                 var key = first.AppUserId?.ToString() ?? first.Tech!;
-                var m = Compute(key, g.ToList(), weights);
+                var m = Compute(key, g.ToList(), weights, connections);
                 var name = first.AppUserId is { } uid
                     ? names.GetValueOrDefault(uid)
                     // A PSA-side technician: the sync cached the provider's display name on the
@@ -106,8 +119,17 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         var entries = db.TicketTimeEntries.AsNoTracking().AsQueryable();
         if (from is { } f) entries = entries.Where(e => e.EntryDate >= f);
         if (to is { } t) entries = entries.Where(e => e.EntryDate <= t);
-        if (filter.AppUserId is { } who) entries = entries.Where(e => e.AppUserId == who);
-        if (filter.TechnicianExternalId is { } tech) entries = entries.Where(e => e.TechnicianExternalId == tech);
+        // Only time that was actually recorded: a push the PSA rejected, or one still waiting, is shown
+        // on the ticket for a retry but is not an hour the provider holds, and counting it here made the
+        // day's figures disagree with the PSA's. Board time is recorded the moment it is logged.
+        entries = entries.Where(e => e.SyncStatus == TimeEntrySyncStatus.Synced);
+        if (filter.EitherIdentity && filter.AppUserId is { } me && filter.TechnicianExternalId is { } myTech)
+            entries = entries.Where(e => e.AppUserId == me || e.TechnicianExternalId == myTech);
+        else
+        {
+            if (filter.AppUserId is { } who) entries = entries.Where(e => e.AppUserId == who);
+            if (filter.TechnicianExternalId is { } tech) entries = entries.Where(e => e.TechnicianExternalId == tech);
+        }
         // A time entry has no client of its own — it belongs to a ticket, and the ticket has one.
         // Without this the ticket half of the answer narrowed to one client while the HOURS half
         // stayed organization-wide, so a client's row would have shown the whole desk's time.
@@ -121,7 +143,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             {
                 e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId,
                 Conn = e.Ticket!.PsaConnectionId,
-                Internal = e.Ticket!.Origin != TicketOrigin.Psa,
+                Origin = e.Ticket!.Origin,
             })
             .ToListAsync(ct);
 
@@ -151,9 +173,14 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // resolved a ticket on Monday produces ONE row for Monday rather than two half-rows.
         var buckets = new Dictionary<(DateOnly Day, string Key), TechnicianDay>();
 
+        // A person's own view is one person, whichever identity each hour was logged under.
+        var self = filter.EitherIdentity && filter.AppUserId is not null;
+        string KeyOf(Guid? appUserId, string? ext) => self ? "self" : appUserId is { } u ? "u:" + u : "x:" + ext;
+
         TechnicianDay Seed(DateOnly day, Guid? appUserId, string? ext)
         {
-            var key = appUserId is { } u ? "u:" + u : "x:" + ext;
+            if (self) { appUserId = filter.AppUserId; ext = null; }
+            var key = KeyOf(appUserId, ext);
             if (buckets.TryGetValue((day, key), out var found)) return found;
             var name = appUserId is { } uid
                 ? names.GetValueOrDefault(uid, "Unknown user")
@@ -171,11 +198,12 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
                          Ext: e.AppUserId is null ? Person(e.Conn, e.TechnicianExternalId) : null)))
         {
             var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
-            buckets[(g.Key.Day, g.Key.AppUserId is { } u ? "u:" + u : "x:" + g.Key.Ext)] = current with
+            buckets[(g.Key.Day, KeyOf(g.Key.AppUserId, g.Key.Ext))] = current with
             {
                 Hours = current.Hours + g.Sum(e => e.Hours),
                 BillableHours = current.BillableHours + g.Where(e => e.Billable).Sum(e => e.Hours),
-                InternalHours = current.InternalHours + g.Where(e => e.Internal).Sum(e => e.Hours),
+                InternalHours = current.InternalHours + g.Where(e => e.Origin == TicketOrigin.Internal).Sum(e => e.Hours),
+                MonitoringHours = current.MonitoringHours + g.Where(e => e.Origin == TicketOrigin.Rmm).Sum(e => e.Hours),
                 TicketsTouched = current.TicketsTouched + g.Select(e => e.TicketId).Distinct().Count(),
             };
         }
@@ -186,11 +214,12 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
                      Ext: r.AppUserId is null ? Person(r.Conn, r.Tech) : null)))
         {
             var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
-            buckets[(g.Key.Day, g.Key.AppUserId is { } u ? "u:" + u : "x:" + g.Key.Ext)] =
+            buckets[(g.Key.Day, KeyOf(g.Key.AppUserId, g.Key.Ext))] =
                 current with
                 {
                     Resolved = current.Resolved + g.Count(),
-                    ResolvedInternal = current.ResolvedInternal + g.Count(r => r.Origin != TicketOrigin.Psa),
+                    ResolvedInternal = current.ResolvedInternal + g.Count(r => r.Origin == TicketOrigin.Internal),
+                    ResolvedMonitoring = current.ResolvedMonitoring + g.Count(r => r.Origin == TicketOrigin.Rmm),
                 };
         }
 
@@ -227,7 +256,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             .ToList();
     }
 
-    private TechnicianMetrics Compute(string tech, List<Row> rows, ProductivityWeights weights)
+    private TechnicianMetrics Compute(string tech, List<Row> rows, ProductivityWeights weights, IReadOnlyDictionary<Guid, string> connections)
     {
         var now = clock.GetUtcNow();
         var assigned = rows.Count;
@@ -244,18 +273,45 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             ? Math.Round(resolvedRows.Average(r => (r.ResolvedAt!.Value - r.CreatedAt).TotalHours), 1)
             : 0;
 
-        // Proxy component scores from measurable ticket data. CSAT / first-response / reopen are not
-        // tracked yet and remain unmeasured (excluded from the weighted score via renormalization).
+        // First response: the promise an SLA plan made, kept or not. Measured only where a promise
+        // existed; the average reply time is shown with the number of tickets it comes from, because
+        // a reply made straight in the PSA is never seen here.
+        var promised = rows.Where(r => r.FirstResponseDueAt is not null).ToList();
+        var promiseMet = promised.Count(r => r.FirstRespondedAt is { } a && a <= r.FirstResponseDueAt);
+        var replied = rows.Where(r => r.FirstRespondedAt is { } a && a >= r.CreatedAt).ToList();
+        // Reopens: resolved work that came back. A ticket that keeps returning was not fixed,
+        // whatever its resolution time says.
+        var reopened = resolvedRows.Count(r => r.ReopenCount > 0);
+        double? reopenRate = resolved > 0 ? Math.Round(100.0 * reopened / resolved, 1) : null;
+        // Satisfaction: the client's own rating of the work, 4 or 5 out of 5 counting as satisfied.
+        var rated = rows.Where(r => r.Rating is not null).ToList();
+        var satisfied = rated.Count(r => r.Rating >= TicketSatisfaction.Satisfied);
+
+        // Each component is measured only where there is something to measure; an unmeasured one is
+        // left out of the score (weights renormalise) rather than counted as zero.
         var components = new ProductivityComponents
         {
             SlaCompliance = slaEligible > 0 ? slaPct : null,
             ResolutionRate = assigned > 0 ? Math.Round(100.0 * resolved / assigned, 1) : null,
+            CustomerSatisfaction = rated.Count > 0 ? Math.Round(100.0 * satisfied / rated.Count, 1) : null,
+            FirstResponse = promised.Count > 0 ? Math.Round(100.0 * promiseMet / promised.Count, 1) : null,
+            ReopenScore = reopenRate is { } rr ? Math.Round(100.0 - rr, 1) : null,
             WorklogQuality = resolved > 0 ? Math.Round(100.0 * resolvedRows.Count(r => r.Worked > 0) / resolved, 1) : null,
             DocumentationQuality = resolved > 0 ? Math.Round(100.0 * resolvedRows.Count(r => r.HasNote) / resolved, 1) : null,
         };
 
         var clientRows = rows.Where(r => r.Origin == TicketOrigin.Psa).ToList();
-        var internalRows = rows.Where(r => r.Origin != TicketOrigin.Psa).ToList();
+        var internalRows = rows.Where(r => r.Origin == TicketOrigin.Internal).ToList();
+        var monitoringRows = rows.Where(r => r.Origin == TicketOrigin.Rmm).ToList();
+        var bySource = rows
+            .GroupBy(r => r.Origin switch
+            {
+                TicketOrigin.Internal => "Team boards",
+                TicketOrigin.Rmm => "Monitoring",
+                _ => r.Conn is { } c && connections.TryGetValue(c, out var name) ? name : "PSA",
+            })
+            .Select(g => new SourceWork(g.Key, g.Count(), g.Count(r => r.ResolvedAt is not null), g.Sum(r => r.Worked)))
+            .OrderByDescending(x => x.Assigned).ToList();
 
         return new TechnicianMetrics
         {
@@ -268,6 +324,18 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             ResolvedInternal = internalRows.Count(r => r.ResolvedAt is not null),
             ClientHours = clientRows.Sum(r => r.Worked),
             InternalHours = internalRows.Sum(r => r.Worked),
+            AssignedMonitoring = monitoringRows.Count,
+            ResolvedMonitoring = monitoringRows.Count(r => r.ResolvedAt is not null),
+            MonitoringHours = monitoringRows.Sum(r => r.Worked),
+            BySource = bySource,
+            FirstResponseEligible = promised.Count,
+            FirstResponseMet = promiseMet,
+            AvgFirstResponseHours = replied.Count > 0 ? Math.Round(replied.Average(r => (r.FirstRespondedAt!.Value - r.CreatedAt).TotalHours), 1) : null,
+            FirstResponseSample = replied.Count,
+            Reopened = reopened,
+            ReopenRatePct = reopenRate,
+            Rated = rated.Count,
+            Satisfied = satisfied,
             Open = open,
             Overdue = overdue,
             WithinSla = withinSla,

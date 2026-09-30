@@ -25,8 +25,10 @@ public sealed class DashboardController(
     ITechnicianMetricsService metrics, IClientWorkloadService clients,
     IPortalCoverageService coverage, ICurrentUser user) : ControllerBase
 {
+    // Either key: a lead holds the team key (and reads the desk, or a named person); anyone else holds
+    // the own key and is pinned to themselves below. Own-only kept administrators out of the page.
     [HttpGet("technician")]
-    [RequirePermission(Permissions.ProductivityViewOwn)]
+    [RequirePermission(Permissions.ProductivityViewOwn, Permissions.ProductivityViewTeam)]
     public async Task<IActionResult> Technician([FromQuery] DashboardQuery q, CancellationToken ct)
     {
         var filter = q.ToFilter();
@@ -42,8 +44,12 @@ public sealed class DashboardController(
             // in the portal has no PSA id, and refusing them their own figures - which is what
             // happened here - told the larger half of a desk that their work does not count.
             var self = user.TechnicianExternalId;
+            // Linked to a PSA account AND a portal user: both, as one person. Pinned to the PSA id
+            // alone, their work on the team's boards - which carries no PSA id - was left out.
             filter = !string.IsNullOrEmpty(self)
-                ? filter with { TechnicianExternalId = self, AppUserId = null }
+                ? user.UserId is { } me
+                    ? filter with { TechnicianExternalId = self, AppUserId = me, EitherIdentity = true }
+                    : filter with { TechnicianExternalId = self, AppUserId = null }
                 : user.UserId is { } uid
                     ? filter with { AppUserId = uid, TechnicianExternalId = null }
                     : throw new ForbiddenException(
@@ -75,8 +81,12 @@ public sealed class DashboardController(
         if (!user.HasPermission(Permissions.ProductivityViewTeam))
         {
             var self = user.TechnicianExternalId;
+            // Linked to a PSA account AND a portal user: both, as one person. Pinned to the PSA id
+            // alone, their work on the team's boards - which carries no PSA id - was left out.
             filter = !string.IsNullOrEmpty(self)
-                ? filter with { TechnicianExternalId = self, AppUserId = null }
+                ? user.UserId is { } me
+                    ? filter with { TechnicianExternalId = self, AppUserId = me, EitherIdentity = true }
+                    : filter with { TechnicianExternalId = self, AppUserId = null }
                 : user.UserId is { } uid
                     ? filter with { AppUserId = uid, TechnicianExternalId = null }
                     : throw new ForbiddenException(

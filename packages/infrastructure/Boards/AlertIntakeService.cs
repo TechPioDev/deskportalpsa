@@ -125,7 +125,7 @@ public sealed class AlertIntakeService(
         db.Tickets.Add(ticket);
         await db.SaveChangesAsync(ct);
 
-        await activity.RecordAsync(new ActivityRecord(ActivityKind.TicketCreated, ActivitySource.Psa)
+        await activity.RecordAsync(new ActivityRecord(ActivityKind.TicketCreated, ActivitySource.Monitoring)
         {
             MspOrganizationId = source.MspOrganizationId,
             OccurredAt = ticket.PsaCreatedAt ?? now,

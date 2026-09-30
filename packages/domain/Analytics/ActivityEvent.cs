@@ -9,6 +9,8 @@ public enum ActivitySource
     Portal = 0,
     /// <summary>The PSA reported it during a sync. We infer it happened; we did not see it.</summary>
     Psa = 1,
+    /// <summary>A monitoring tool reported it. Neither a PSA nor a person: an alert opened the work.</summary>
+    Monitoring = 2,
 }
 
 /// <summary>
