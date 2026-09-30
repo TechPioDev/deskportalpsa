@@ -64,6 +64,8 @@ test.describe('internal ticket lifecycle', () => {
     await page.getByRole('form', { name: 'Resolution' }).getByLabel(/What fixed it/).fill('Replaced the panel\'s HDMI port; cable was fine.');
     await page.getByRole('form', { name: 'Resolution' }).getByRole('button', { name: 'Mark resolved' }).click();
     await expect(page.getByText('Replaced the panel\'s HDMI port; cable was fine.')).toBeVisible();
+    await expect(page.getByRole('form', { name: 'Resolution' })).toHaveCount(0);
+    await expect(status).toHaveValue('RESOLVED');
 
     // Resolved to closed does not ask again.
     await status.selectOption('CLOSED');

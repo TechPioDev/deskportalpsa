@@ -585,7 +585,10 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
   const statusMut = useMutation({
     mutationFn: (v: { status: string; resolution?: string | null }) => api.updateTicketStatus(id, v.status, v.resolution),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      // The new status now, not when the refetch lands: in that gap the page still believed the old
+      // one, so choosing Closed straight after Resolved asked for the resolution a second time.
+      qc.setQueryData<TicketDetail>(['ticket', id], (old) => (old ? { ...old, portalStatus: res.portalStatus } : old));
       setPendingStatus(null);
       [['ticket', id], ['tickets'], ['team'], ['trend'], ['ticket-history', id]].forEach((k) => qc.invalidateQueries({ queryKey: k }));
     },
