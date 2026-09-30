@@ -175,6 +175,12 @@ export const TicketDetailSchema = z.object({
     boardId: z.string(), boardTopicId: z.string().nullable(), departmentId: z.string().nullable(),
     clientCompanyId: z.string().nullable(), resolution: z.string().nullable(), reopenCount: z.number(),
     lastReopenedAt: z.string().nullable(), requireResolution: z.boolean(),
+    requireReview: z.boolean().default(false),
+    // 0 = no review, 1 = waiting for a lead, 2 = approved.
+    reviewState: z.number().default(0),
+    reviewedBy: z.string().nullable().default(null),
+    reviewedAt: z.string().nullable().default(null),
+    reviewSendBacks: z.number().default(0),
   }).nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
@@ -222,6 +228,8 @@ export const TechnicianMetricsSchema = z.object({
   reopenRatePct: z.number().nullable().default(null),
   rated: z.number().default(0),
   satisfied: z.number().default(0),
+  reviewed: z.number().default(0),
+  passedReviewFirstTime: z.number().default(0),
   // Where the work came from: each PSA connection, team boards, monitoring.
   bySource: z.array(z.object({ label: z.string(), assigned: z.number(), resolved: z.number(), hours: z.number() })).default([]),
 });

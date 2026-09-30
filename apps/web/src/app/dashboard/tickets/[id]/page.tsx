@@ -15,6 +15,7 @@ import { AssistantRail } from '@/components/AssistantRail';
 import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
 import { TasksPanel } from '@/components/TasksPanel';
 import { EditBoardTicketForm, EditDetailsButton, ResolutionPrompt, TicketHistoryPanel, finishes } from '@/components/BoardTicketTools';
+import { RelatedTicketsPanel, ReviewBanner } from '@/components/TicketReviewAndLinks';
 import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
 import { ApprovalPanel } from '@/components/ApprovalPanel';
@@ -771,6 +772,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               {editingDetails && ticket.boardDetails && (
                 <EditBoardTicketForm ticket={ticket} onClose={() => setEditingDetails(false)} />
               )}
+              {/* A board lead reviews resolved work where the board asks for it; never their own ticket. */}
+              <ReviewBanner ticket={ticket}
+                canReview={!!me?.permissions.includes('boards.manage') && !!me.userId && ticket.assignedAppUserId !== me.userId} />
               {ticket.boardDetails?.resolution && (
                 <div className="mt-3 rounded-lg bg-[var(--bg)] p-3 text-sm">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Resolution</p>
@@ -939,6 +943,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             )}
 
             {/* Who did what, for staff: the team's own record of the ticket, not the client's. */}
+            {isStaff && <RelatedTicketsPanel ticketId={id} canUpdate={canUpdate} />}
             {isStaff && <TicketHistoryPanel ticketId={id} />}
 
             </aside>
