@@ -111,7 +111,7 @@ public class StaffReportTests
 
     private static TicketTimeEntry Time(Guid org, Guid ticket, Guid user, string day, decimal hours) => new()
     {
-        MspOrganizationId = org, TicketId = ticket, AppUserId = user, Hours = hours, Billable = true, EntryDate = D(day),
+        MspOrganizationId = org, TicketId = ticket, AppUserId = user, Hours = hours, Billable = true, EntryDate = D(day), SyncStatus = TimeEntrySyncStatus.Synced,
     };
 
     /// <summary>The same scoped graph the worker builds, over one shared in-memory database.</summary>

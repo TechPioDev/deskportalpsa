@@ -364,7 +364,9 @@ export const api = {
   updateProfile: (body: { displayName: string; email: string }) =>
     request('/api/profile', ProfileSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<Profile>,
 
-  technicianMetrics: () => request('/api/dashboard/technician', TechnicianResponseSchema) as Promise<TechnicianResponse>,
+  /** A lead gets the desk's figures; anyone else is pinned to their own on the server. */
+  technicianMetrics: (from?: string) =>
+    request(`/api/dashboard/technician${from ? `?from=${encodeURIComponent(from)}` : ''}`, TechnicianResponseSchema) as Promise<TechnicianResponse>,
   teamMetrics: (fromIso?: string) =>
     request(`/api/dashboard/team${fromIso ? `?from=${encodeURIComponent(fromIso)}` : ''}`, TeamResponseSchema) as Promise<TeamResponse>,
   trend: (fromIso?: string) =>

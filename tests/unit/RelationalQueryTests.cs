@@ -123,6 +123,16 @@ public sealed class RelationalQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task Technician_metrics_translate_with_either_identity_and_ratings()
+    {
+        var metrics = new Desk.Infrastructure.Analytics.TechnicianMetricsService(_db, new Desk.Application.Analytics.ProductivityScorer(), _clock);
+        var self = new Desk.Application.Analytics.MetricsFilter { AppUserId = _me, TechnicianExternalId = "123", EitherIdentity = true };
+        (await metrics.ForTechnicianAsync(self, Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
+        (await metrics.DailyAsync(self)).Should().NotBeNull();
+        (await metrics.TeamAsync(new Desk.Application.Analytics.MetricsFilter(), Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task Ticket_history_translates()
     {
         var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);

@@ -83,7 +83,7 @@ public class PortalTechnicianMetricsTests
     private static TicketTimeEntry Time(Guid ticketId, Guid? appUser, string? psaTech, int day, decimal hours, bool billable) => new()
     {
         MspOrganizationId = Org, TicketId = ticketId, AppUserId = appUser, TechnicianExternalId = psaTech,
-        Hours = hours, Billable = billable, EntryDate = D(day),
+        Hours = hours, Billable = billable, EntryDate = D(day), SyncStatus = TimeEntrySyncStatus.Synced,
     };
 
     [Fact]
