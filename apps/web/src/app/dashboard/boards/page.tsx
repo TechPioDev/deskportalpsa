@@ -180,6 +180,7 @@ function BoardForm({ board, onClose, onSaved }: { board: Board | null; onClose: 
     clientVisible: board?.clientVisible ?? false,
     sortOrder: board?.sortOrder ?? 0,
     defaultSlaPlanId: board?.defaultSlaPlanId ?? null,
+    requireResolution: board?.requireResolution ?? false,
   });
   const { data: plans } = useQuery({ queryKey: ['sla-plans', false], queryFn: () => api.slaPlans(false), retry: false });
   const save = useMutation({
@@ -247,6 +248,14 @@ function BoardForm({ board, onClose, onSaved }: { board: Board | null; onClose: 
             ? 'Every alert that opens a ticket here gets this plan, timed from when the alert arrives.'
             : 'Tickets get this plan unless their topic names another. '}
           {(plans ?? []).length === 0 && <Link href="/dashboard/boards/sla" className="text-brand hover:underline">Set up SLA plans</Link>}
+        </span>
+      </label>
+      <label className="flex items-start gap-2 text-xs text-[var(--muted)] sm:col-span-2">
+        <input type="checkbox" checked={!!v.requireResolution} className="mt-0.5" aria-label="Ask for a resolution"
+          onChange={(e) => setV({ ...v, requireResolution: e.target.checked })} />
+        <span>
+          Ask for a resolution when a ticket here is resolved: a line or two on what fixed it, for
+          whoever picks up the same problem next.
         </span>
       </label>
       {isRmm && (

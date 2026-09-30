@@ -32,7 +32,8 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
                 db.BoardMembers.Count(m => m.BoardId == b.Id),
                 db.Tickets.Count(t => t.BoardId == b.Id && t.ClosedAt == null),
                 b.DefaultSlaPlanId,
-                db.SlaPlans.Where(p => p.Id == b.DefaultSlaPlanId).Select(p => p.Name).FirstOrDefault()))
+                db.SlaPlans.Where(p => p.Id == b.DefaultSlaPlanId).Select(p => p.Name).FirstOrDefault(),
+                b.RequireResolution))
             .ToListAsync(ct);
     }
 
@@ -54,6 +55,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
             ClientVisible = input.Kind == BoardKind.Rmm && input.ClientVisible,
             SortOrder = input.SortOrder,
             DefaultSlaPlanId = await PlanAsync(input.DefaultSlaPlanId, ct),
+            RequireResolution = input.RequireResolution,
         };
         db.Boards.Add(board);
         await db.SaveChangesAsync(ct);
@@ -83,9 +85,10 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         board.SortOrder = input.SortOrder;
         board.ClientVisible = board.Kind == BoardKind.Rmm && input.ClientVisible;
         board.DefaultSlaPlanId = await PlanAsync(input.DefaultSlaPlanId, ct);
+        board.RequireResolution = input.RequireResolution;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("board.updated", "Board", board.Id.ToString(),
-            new { board.Name, board.Key, board.ClientVisible, clientVisibilityChanged = wasClientVisible != board.ClientVisible }, ct);
+            new { board.Name, board.Key, board.ClientVisible, clientVisibilityChanged = wasClientVisible != board.ClientVisible, board.RequireResolution }, ct);
         return await OneAsync(board.Id, ct);
     }
 

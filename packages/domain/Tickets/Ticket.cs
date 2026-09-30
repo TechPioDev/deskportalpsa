@@ -168,6 +168,20 @@ public class Ticket : TenantEntity
     public DateTimeOffset? SlaPausedAt { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
     public DateTimeOffset? ClosedAt { get; set; }
+
+    /// <summary>
+    /// What fixed it, in the resolver's words. Portal-side only: for a PSA ticket the provider keeps
+    /// its own. Kept when a ticket is reopened, so the next person sees what was tried last time.
+    /// </summary>
+    public string? Resolution { get; set; }
+
+    /// <summary>
+    /// How many times a finished ticket was brought back to work through the portal. A ticket that
+    /// keeps coming back was not fixed, whatever its resolution time says.
+    /// </summary>
+    public int ReopenCount { get; set; }
+    public DateTimeOffset? LastReopenedAt { get; set; }
+
     public decimal TimeWorkedHours { get; set; }
     public decimal BillableHours { get; set; }
     public decimal NonBillableHours { get; set; }

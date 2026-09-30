@@ -38,8 +38,10 @@ public sealed class TicketStatusController(
         var ticket = await scopeQuery.FindAsync(db.Tickets, id, uid, Permissions.TicketsUpdate, ct)
             ?? throw new NotFoundException("Ticket");
 
-        return Ok(new { portalStatus = await writer.SetAsync(ticket, req.Status, ct) });
+        return Ok(new { portalStatus = await writer.SetAsync(ticket, req.Status, req.Resolution, ct) });
     }
 
-    public sealed record SetStatusRequest(string Status);
+    // The resolution's length is checked by TicketStatusWriter, not by an attribute here: a validation
+    // attribute on a record property makes MVC fail every request to this endpoint.
+    public sealed record SetStatusRequest(string Status, string? Resolution = null);
 }

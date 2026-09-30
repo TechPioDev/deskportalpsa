@@ -214,7 +214,16 @@ public sealed record TicketDetailDto(
     /// <summary>The client's rating, for staff. The client reads their own through its own endpoint.</summary>
     TicketRatingDto? Rating = null,
     /// <summary>The device the ticket is about, when one is known.</summary>
-    TicketDeviceDto? Device = null);
+    TicketDeviceDto? Device = null,
+    /// <summary>
+    /// The team's own record of a board ticket: its details as the edit form shows them, what fixed
+    /// it, how often it came back, and whether its board asks for a resolution. Staff only.
+    /// </summary>
+    TicketBoardDetailsDto? BoardDetails = null);
+
+public sealed record TicketBoardDetailsDto(
+    Guid BoardId, Guid? BoardTopicId, Guid? DepartmentId, Guid? ClientCompanyId,
+    string? Resolution, int ReopenCount, DateTimeOffset? LastReopenedAt, bool RequireResolution);
 
 /// <summary>A ticket's device. The serial and warranty reach staff only: the client's own device list
 /// is for their administrators, and a ticket page is read by whoever raised it.</summary>

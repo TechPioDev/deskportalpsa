@@ -2,6 +2,7 @@ using Desk.Api.Auth;
 using Desk.Application.Abstractions;
 using Desk.Application.Boards;
 using Desk.Application.Common;
+using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Desk.Infrastructure.Persistence;
@@ -86,6 +87,25 @@ public sealed class BoardsController(
         if (user.UserId is not { } uid)
             throw new ForbiddenException("This endpoint is for members of staff.");
         return Ok(await tickets.CreateAsync(uid, input, ct));
+    }
+
+    /// <summary>
+    /// Changes a board ticket's details: title, description, priority, due date, topic, category,
+    /// department, client. Found through the person's own scope, so a ticket they cannot see is not
+    /// found, and one they can see but not change is refused.
+    /// </summary>
+    [HttpPut("tickets/{id:guid}")]
+    [RequirePermission(Permissions.TicketsUpdate)]
+    public async Task<IActionResult> EditTicket(
+        Guid id, [FromBody] InternalTicketEdit input,
+        [FromServices] DeskDbContext db, [FromServices] ITicketScopeQuery scopeQuery,
+        CancellationToken ct)
+    {
+        if (user.UserId is not { } uid) throw new NotFoundException("Ticket");
+        var ticket = await scopeQuery.FindAsync(db.Tickets, id, uid, Permissions.TicketsUpdate, ct)
+            ?? throw new NotFoundException("Ticket");
+        await tickets.EditAsync(ticket, input, ct);
+        return NoContent();
     }
 
     /// <summary>What tickets on this board can be about. Anyone who raises tickets needs to read these.</summary>

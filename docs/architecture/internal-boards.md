@@ -200,6 +200,17 @@ refused if it was — which is what makes a misconfigured webhook diagnosable wi
 **Tested (NinjaOne, Datto RMM):** both publish outbound webhooks with a payload you write yourself,
 and both have an OAuth2 REST API. The webhook route needs no API credentials at all.
 
+## Changing, finishing and reopening a ticket
+
+| What | How it works |
+|---|---|
+| **Edit details** | Title, description, priority, due date, topic, category, department and client, from the ticket page (`PUT /api/boards/tickets/{id}`). Found through the person's own scope and needs `tickets.update`. A PSA ticket is refused: its details belong to the provider. Only the fields that changed are audited, before and after; a description is recorded as "changed", not copied. |
+| **Resolution** | Choosing Resolved or Closed on a board ticket first asks what fixed it. A board can require it (*Ask for a resolution*); otherwise it is optional. Kept when the ticket is reopened and offered again next time. |
+| **Reopen** | Moving a finished ticket back to work counts a reopen (`ReopenCount`, `LastReopenedAt`) and clears its resolved and closed dates, so it is measured as open again. A PSA ticket's reopen is counted; its dates stay the provider's. |
+| **History** | `GET /api/tickets/{id}/history`, staff only and scoped: raised, handovers (with the handover note), team changes, status, reopens, edits and time, with who and when. Reads the handover rows and the audit trail; writes nothing. |
+| **Time** | Only the person who logged it, or a board lead (`boards.manage`), may edit or delete an entry; others are refused and do not see the buttons. A board ticket's time can be dated up to 30 days back, never forward; a PSA ticket's time is dated by the PSA. Every log, edit and delete is audited. Editing PSA time now updates the portal's own copy too. |
+| **Numbers** | `Board.NextNumber` is a concurrency token: two people raising a ticket at once no longer read the same number. |
+
 ## What is not built yet
 
 - **Reading back from the RMM.** Nothing polls the tool; alerts arrive only when it sends them.

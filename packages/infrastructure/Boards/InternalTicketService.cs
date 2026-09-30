@@ -19,7 +19,8 @@ public sealed class InternalTicketService(
     DeskDbContext db,
     ITenantContext tenant,
     TimeProvider clock,
-    IActivityRecorder activity) : IInternalTicketService
+    IActivityRecorder activity,
+    Desk.Application.Admin.IAuditWriter? audit = null) : IInternalTicketService
 {
     private Guid Org => tenant.OrganizationId ?? throw new TenantScopeMissingException();
 
@@ -131,9 +132,70 @@ public sealed class InternalTicketService(
             ClientCompanyId = ticket.ClientCompanyId,
             Detail = board.Name,
         }, ct);
+        if (audit is not null)
+            await audit.WriteAsync("ticket.created", "Ticket", ticket.Id.ToString(),
+                new { number, board = board.Name, assignedTo = assignee, ticket.ClientCompanyId }, ct);
 
         return new InternalTicketCreatedDto(ticket.Id, number, ticket.Title, board.Id);
     }
+
+    public async Task EditAsync(Ticket ticket, InternalTicketEdit input, CancellationToken ct = default)
+    {
+        if (ticket.Origin == TicketOrigin.Psa || ticket.BoardId is not { } boardId)
+            throw new ValidationFailedException("This ticket belongs to a PSA. Change its details there; they arrive here on the next sync.");
+
+        var title = (input.Title ?? "").Trim();
+        if (title.Length is 0 or > 500) throw new ValidationFailedException("Give the ticket a title of up to 500 characters.");
+        var priority = Priority(input.Priority) ?? throw new ValidationFailedException("Choose a priority.");
+
+        if (input.BoardTopicId is { } topicId && topicId != ticket.BoardTopicId)
+        {
+            // A retired topic the ticket already carries may stay; a new choice must be live and on this board.
+            var ok = await db.BoardTopics.AnyAsync(t => t.Id == topicId && t.BoardId == boardId && t.IsActive, ct);
+            if (!ok) throw new ValidationFailedException("That topic is not on this board, or has been retired.");
+        }
+        if (input.DepartmentId is { } dept && dept != ticket.DepartmentId
+            && !await db.Departments.AnyAsync(d => d.Id == dept && d.IsActive, ct))
+            throw new ValidationFailedException("That department does not exist, or is closed.");
+        if (input.ClientCompanyId is { } company && company != ticket.ClientCompanyId
+            && !await db.ClientCompanies.AnyAsync(c => c.Id == company, ct))
+            throw new ValidationFailedException("That client does not exist.");
+
+        var before = Snapshot(ticket);
+        ticket.Title = title;
+        ticket.Description = string.IsNullOrWhiteSpace(input.Description) ? null : input.Description.Trim();
+        ticket.PortalPriority = priority;
+        ticket.SlaDueAt = input.DueAt;
+        ticket.BoardTopicId = input.BoardTopicId;
+        ticket.PortalCategory = string.IsNullOrWhiteSpace(input.Category) ? null : input.Category.Trim();
+        ticket.DepartmentId = input.DepartmentId;
+        ticket.ClientCompanyId = input.ClientCompanyId;
+        var after = Snapshot(ticket);
+
+        // Only what changed goes on the record, as before -> after. Saving an untouched form is not an edit.
+        // The description's text stays on the ticket, not in the audit: the record says it changed.
+        var changed = before.Where(kv => !Equals(kv.Value, after[kv.Key]))
+            .ToDictionary(kv => kv.Key, kv => (object)(kv.Key == "description"
+                ? new { changed = true }
+                : new { from = kv.Value, to = after[kv.Key] }));
+        if (changed.Count == 0) return;
+        await db.SaveChangesAsync(ct);
+        if (audit is not null)
+            await audit.WriteAsync("ticket.edited", "Ticket", ticket.Id.ToString(), changed, ct);
+    }
+
+    /// <summary>The editable fields, for the before/after of an edit.</summary>
+    private static Dictionary<string, object?> Snapshot(Ticket t) => new()
+    {
+        ["title"] = t.Title,
+        ["description"] = t.Description,
+        ["priority"] = t.PortalPriority,
+        ["dueAt"] = t.SlaDueAt,
+        ["topicId"] = t.BoardTopicId,
+        ["category"] = t.PortalCategory,
+        ["departmentId"] = t.DepartmentId,
+        ["clientCompanyId"] = t.ClientCompanyId,
+    };
 
     private static string? Priority(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();

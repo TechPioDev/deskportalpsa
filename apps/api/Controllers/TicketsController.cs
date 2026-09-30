@@ -35,6 +35,22 @@ public sealed class TicketsController(
             ? Ok(await reads.ListAllAsync(ct, boardId))
             : Ok(await reads.ListAsync(await AccessAsync(ct), ct));
 
+    /// <summary>
+    /// What happened to the ticket and who did it: raised, handed over, status, edits, time. Staff
+    /// only - it names people and internal steps - and found through the person's own scope.
+    /// </summary>
+    [HttpGet("{id:guid}/history")]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
+    public async Task<IActionResult> History(
+        Guid id, [FromServices] Desk.Infrastructure.Persistence.DeskDbContext db,
+        [FromServices] ITicketScopeQuery scopeQuery, [FromServices] ITicketHistoryService history, CancellationToken ct)
+    {
+        if (user.UserId is not { } uid) throw new NotFoundException("Ticket");
+        var ticket = await scopeQuery.FindAsync(db.Tickets, id, uid, Permissions.TicketsViewAll, ct)
+            ?? throw new NotFoundException("Ticket");
+        return Ok(await history.ForAsync(ticket, ct));
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Detail(Guid id, CancellationToken ct)
     {

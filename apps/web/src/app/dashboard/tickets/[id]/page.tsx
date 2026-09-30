@@ -14,6 +14,7 @@ import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
 import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
 import { TasksPanel } from '@/components/TasksPanel';
+import { EditBoardTicketForm, EditDetailsButton, ResolutionPrompt, TicketHistoryPanel, finishes } from '@/components/BoardTicketTools';
 import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
 import { ApprovalPanel } from '@/components/ApprovalPanel';
@@ -404,6 +405,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const [workType, setWorkType] = useState('');
   const [workRole, setWorkRole] = useState('');
   const [editEntry, setEditEntry] = useState<{ id: string; hours: string; notes: string } | null>(null);
+  // A board ticket being resolved waits here for its resolution before the status is sent.
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+  const [editingDetails, setEditingDetails] = useState(false);
   // Which entries' notes are expanded — a long CW note clipped to one line was unreadable with no way to open it.
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   // Time entries start collapsed: the header already carries the count and both totals, so the
@@ -479,6 +483,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const [replyBillable, setReplyBillable] = useState('Billable');
   // Separate from the reply body: the timesheet and the client are different audiences.
   const [replyTimeNotes, setReplyTimeNotes] = useState('');
+  // The day the work was done, for a board ticket only (a PSA dates its own). Blank is today.
+  const [replyWorkedOn, setReplyWorkedOn] = useState('');
   const [replySideError, setReplySideError] = useState<string | null>(null);
   // Staff-only composer powers (mirrors the old help desk: note + time + status in ONE post).
   // Gated on a staff ticket view — the same signal the API's staff branch keys on.
@@ -548,7 +554,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       const hrs = parseFloat(replyHours);
       if (hrs > 0) {
         // noteId links the entry to this reply, so the thread shows the hours on the reply itself.
-        try { await api.logTime(id, { hours: hrs, billable: replyBillable, notes: replyTimeNotes.trim() || body, workType: workType || undefined, workRole: workRole || undefined, noteId: note.id }); }
+        try { await api.logTime(id, { hours: hrs, billable: replyBillable, notes: replyTimeNotes.trim() || body, workType: workType || undefined, workRole: workRole || undefined, noteId: note.id, workedAt: replyWorkedOn ? new Date(`${replyWorkedOn}T12:00`).toISOString() : undefined }); }
         catch (e) { sideErrors.push(`the time entry failed${e instanceof Error && e.message ? ` — ${e.message}` : ''} (use the Log time panel to retry)`); }
       }
       if (replyStatus) {
@@ -558,7 +564,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       return { note, sideErrors };
     },
     onSuccess: ({ sideErrors }) => {
-      setComment(''); setPendingFiles([]); setReplyHours(''); setReplyStatus(''); setReplyTimeNotes(''); setWorkType(''); setWorkRole('');
+      setComment(''); setPendingFiles([]); setReplyHours(''); setReplyStatus(''); setReplyTimeNotes(''); setReplyWorkedOn(''); setWorkType(''); setWorkRole('');
       // Cc is per-reply: carrying a copy list into the NEXT reply is how someone gets mailed
       // something they were never meant to see. Emailing the contact stays on, as the default.
       setCcEmails([]); setEmailContact(true);
@@ -578,9 +584,20 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
     [['time-entries', id], ['ticket', id], ['team'], ['trend']].forEach((k) => qc.invalidateQueries({ queryKey: k }));
 
   const statusMut = useMutation({
-    mutationFn: (status: string) => api.updateTicketStatus(id, status),
-    onSuccess: () => { [['ticket', id], ['tickets'], ['team'], ['trend']].forEach((k) => qc.invalidateQueries({ queryKey: k })); },
+    mutationFn: (v: { status: string; resolution?: string | null }) => api.updateTicketStatus(id, v.status, v.resolution),
+    onSuccess: (res) => {
+      // The new status now, not when the refetch lands: in that gap the page still believed the old
+      // one, so choosing Closed straight after Resolved asked for the resolution a second time.
+      qc.setQueryData<TicketDetail>(['ticket', id], (old) => (old ? { ...old, portalStatus: res.portalStatus } : old));
+      setPendingStatus(null);
+      [['ticket', id], ['tickets'], ['team'], ['trend'], ['ticket-history', id]].forEach((k) => qc.invalidateQueries({ queryKey: k }));
+    },
   });
+  // Finishing a ticket on the team's own board asks what fixed it first; anything else is sent as is.
+  const changeStatus = (status: string) => {
+    if (ticket?.boardDetails && finishes(status) && !finishes(ticket.portalStatus)) { statusMut.reset(); setPendingStatus(status); }
+    else statusMut.mutate({ status });
+  };
   const retryEntry = useMutation({
     mutationFn: (entryId: string) => api.retryTimeEntry(id, entryId),
     onSuccess: refreshTime,
@@ -722,8 +739,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <div className="flex items-center gap-2">
                   {canUpdate ? (
                   <span className="relative">
-                    <select value={ticket.portalStatus} disabled={statusMut.isPending}
-                      onChange={(e) => statusMut.mutate(e.target.value)} aria-label="Ticket status"
+                    <select value={pendingStatus ?? ticket.portalStatus} disabled={statusMut.isPending}
+                      onChange={(e) => changeStatus(e.target.value)} aria-label="Ticket status"
                       className={`cursor-pointer appearance-none rounded-md border-0 py-1 pl-2.5 pr-7 text-xs font-semibold outline-none focus:ring-2 focus:ring-brand disabled:opacity-60 ${STATUS_TONE[ticket.portalStatus] ?? STATUS_TONE.NEW}`}>
                       {!STATUSES.includes(ticket.portalStatus) && <option value={ticket.portalStatus}>{ticket.portalStatus.replace(/_/g, ' ')}</option>}
                       {STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
@@ -738,7 +755,33 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold ${PRIORITY_TONE[ticket.portalPriority.toUpperCase()] ?? PRIORITY_TONE.NORMAL}`}>{ticket.portalPriority.toUpperCase()}</span>
                 </div>
               </div>
-              {statusMut.isError && (
+              {pendingStatus && ticket.boardDetails && (
+                <ResolutionPrompt status={pendingStatus} current={ticket.boardDetails.resolution}
+                  required={ticket.boardDetails.requireResolution && !ticket.boardDetails.resolution}
+                  pending={statusMut.isPending}
+                  error={statusMut.isError ? (statusMut.error instanceof Error ? statusMut.error.message : 'The status could not be changed.') : null}
+                  onSave={(resolution) => statusMut.mutate({ status: pendingStatus, resolution })}
+                  onCancel={() => { setPendingStatus(null); statusMut.reset(); }} />
+              )}
+              {ticket.boardDetails && canUpdate && !editingDetails && (
+                <div className="mt-2 flex justify-end"><EditDetailsButton onClick={() => setEditingDetails(true)} /></div>
+              )}
+              {editingDetails && ticket.boardDetails && (
+                <EditBoardTicketForm ticket={ticket} onClose={() => setEditingDetails(false)} />
+              )}
+              {ticket.boardDetails?.resolution && (
+                <div className="mt-3 rounded-lg bg-[var(--bg)] p-3 text-sm">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Resolution</p>
+                  <p className="mt-1 whitespace-pre-line">{ticket.boardDetails.resolution}</p>
+                </div>
+              )}
+              {!!ticket.boardDetails?.reopenCount && (
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                  Reopened {ticket.boardDetails.reopenCount === 1 ? 'once' : `${ticket.boardDetails.reopenCount} times`}
+                  {ticket.boardDetails.lastReopenedAt ? `, last on ${new Date(ticket.boardDetails.lastReopenedAt).toLocaleDateString()}` : ''}
+                </p>
+              )}
+              {statusMut.isError && !pendingStatus && (
                 <p className="mt-2 text-right text-xs text-red-600 dark:text-red-400">
                   Couldn&apos;t change status: {statusMut.error instanceof Error ? statusMut.error.message : 'the connection is unreachable.'}
                 </p>
@@ -892,6 +935,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <p className="mt-2 text-xs text-amber-700/70 dark:text-amber-300/60">Set by the customer in their Control Panel — follow these when working this ticket.</p>
               </div>
             )}
+
+            {/* Who did what, for staff: the team's own record of the ticket, not the client's. */}
+            {isStaff && <TicketHistoryPanel ticketId={id} />}
 
             </aside>
 
@@ -1059,7 +1105,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                               {/* A rejected entry has no provider counterpart to edit. It can be sent
                                   again once the cause is fixed, or discarded — leaving it with no
                                   actions at all stranded the work on screen permanently. */}
-                              {e.syncStatus === 'Synced' ? (
+                              {/* Someone else's time is theirs to change, or a board lead's: no buttons
+                                  that would only be refused. */}
+                              {!e.mayChange ? null : e.syncStatus === 'Synced' ? (
                                 <>
                                   <button onClick={() => setEditEntry({ id: e.externalId, hours: e.hours.toString(), notes: e.notes ?? '' })}
                                     aria-label="Edit" title="Edit" className="rounded-md p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-brand"><Pencil size={14} /></button>
@@ -1495,6 +1543,14 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                       <option value="NoCharge">No charge</option>
                     </select>
                   )}
+                  {parseFloat(replyHours) > 0 && ticket?.boardDetails && (() => {
+                    const day = (offset: number) => new Date(Date.now() - offset * 86_400_000).toLocaleDateString('en-CA');
+                    return (
+                      <input type="date" value={replyWorkedOn} min={day(30)} max={day(0)} onChange={(e) => setReplyWorkedOn(e.target.value)}
+                        aria-label="Day the work was done" title="Day the work was done (up to 30 days back)"
+                        className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs outline-none focus:border-brand" />
+                    );
+                  })()}
                   {/* Both halves of the timer live here now: starting one was only possible from the
                       Log time panel, so removing that panel would have taken the timer with it. */}
                   {timer.seconds > 0 && timer.target?.ticketId === id ? (

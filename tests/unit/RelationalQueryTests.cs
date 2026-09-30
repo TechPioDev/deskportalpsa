@@ -85,6 +85,30 @@ public sealed class RelationalQueryTests : IDisposable
     private TicketReadService Reads => new(_db, new NoopTicketScopeQuery(), User);
 
     [Fact]
+    public async Task Two_people_cannot_take_the_same_board_number()
+    {
+        // Both read the same next number. Without the concurrency token the second save simply won,
+        // and the collision surfaced later as a unique-index failure on the ticket itself.
+        await using var other = new DeskDbContext(
+            new DbContextOptionsBuilder<DeskDbContext>().UseSqlite(_connection).Options, _tenant, _clock);
+        var mine = await _db.Boards.SingleAsync(b => b.Id == _boardId);
+        var theirs = await other.Boards.SingleAsync(b => b.Id == _boardId);
+
+        mine.NextNumber++;
+        await _db.SaveChangesAsync();
+        theirs.NextNumber++;
+
+        await other.Invoking(o => o.SaveChangesAsync()).Should().ThrowAsync<DbUpdateConcurrencyException>();
+    }
+
+    [Fact]
+    public async Task Ticket_history_translates()
+    {
+        var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);
+        (await new TicketHistoryService(_db).ForAsync(ticket)).Should().NotBeEmpty();
+    }
+
+    [Fact]
     public async Task Every_search_filter_translates()
     {
         var all = await Reads.SearchAsync(new TicketQuery(

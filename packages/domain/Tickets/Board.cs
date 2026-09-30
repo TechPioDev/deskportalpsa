@@ -43,6 +43,12 @@ public class Board : TenantEntity
     /// <summary>The SLA plan a ticket on this board gets when its topic names none.</summary>
     public Guid? DefaultSlaPlanId { get; set; }
 
+    /// <summary>
+    /// Resolving a ticket here needs a written resolution. Off by default: required everywhere, it
+    /// gets filled with "done"; required where it matters, it becomes the record the next shift reads.
+    /// </summary>
+    public bool RequireResolution { get; set; }
+
     public Guid? CreatedByUserId { get; set; }
 
     public ICollection<BoardMember> Members { get; set; } = new List<BoardMember>();
