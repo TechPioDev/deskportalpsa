@@ -33,7 +33,14 @@ public sealed class AttachmentsController(
     public async Task<IActionResult> Upload(Guid ticketId, IFormFile file, [FromQuery] Guid? noteId, CancellationToken ct)
     {
         if (file is null || file.Length == 0) return BadRequest("No file provided.");
-        var (orgId, _) = await AuthorizeTicketAsync(ticketId, ct);
+        var (orgId, asClient) = await AuthorizeTicketAsync(ticketId, ct);
+
+        // The note travels with the file to the provider, so it must be a note on THIS ticket. Any
+        // note id at all would let a file be pushed onto another ticket's conversation. A client may
+        // only attach to what a client can read.
+        if (noteId is { } nid && !await db.TicketNotes.AsNoTracking()
+                .AnyAsync(n => n.Id == nid && n.TicketId == ticketId && (!asClient || n.IsPublic), ct))
+            throw new NotFoundException("Note");
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms, ct);
@@ -130,10 +137,10 @@ public sealed class AttachmentsController(
         var access = await accessResolver.ResolveAsync(user.Subject ?? "", ct);
         if (access is not null)
         {
-            var ok = await db.Tickets.AnyAsync(t =>
-                t.Id == ticketId
-                && t.ClientCompanyId == access.ClientCompanyId
-                && (access.IsCompanyAdministrator || t.RequesterUserId == access.ClientUserId), ct);
+            // The one client rule, not a copy of it: company and requester alone would let a client
+            // administrator reach the files of internal work the team filed under their company.
+            var ok = await Desk.Infrastructure.Tickets.TicketReadService.ClientVisible(db, access)
+                .AnyAsync(t => t.Id == ticketId, ct);
             if (ok) return (access.MspOrganizationId, true);
             // Not their company's ticket — fall through to the staff path if they can hold one.
         }

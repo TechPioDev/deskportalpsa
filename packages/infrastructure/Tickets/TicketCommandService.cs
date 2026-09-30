@@ -227,10 +227,9 @@ public sealed class TicketCommandService(
 
     public async Task<TicketNoteDto> AddCommentAsync(ClientAccess access, Guid ticketId, string body, CancellationToken ct = default)
     {
-        var ticket = await db.Tickets.FirstOrDefaultAsync(t =>
-            t.Id == ticketId
-            && t.ClientCompanyId == access.ClientCompanyId
-            && (access.IsCompanyAdministrator || t.RequesterUserId == access.ClientUserId), ct)
+        // The one client rule. Company and requester alone let an internal ticket filed under the
+        // company get this far and fail as "not a PSA ticket" - which told the client it exists.
+        var ticket = await TicketReadService.ClientVisible(db, access).FirstOrDefaultAsync(t => t.Id == ticketId, ct)
             ?? throw new NotFoundException("Ticket");
         var requester = await db.ClientUsers.FirstOrDefaultAsync(u => u.Id == access.ClientUserId, ct)
             ?? throw new NotFoundException("Client user");

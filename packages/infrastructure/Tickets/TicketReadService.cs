@@ -190,6 +190,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             // nobody can develop against.
             var needle = q.Q.Trim().ToLowerInvariant();
             var notes = q.IncludeNotes;
+            // A client searches only what a client can read. Matching internal notes too would let a
+            // client learn, one phrase at a time, what the team wrote about them behind the ticket.
+            var internalNotes = staff;
             scope = scope.Where(t =>
                 (t.Number != null && t.Number.ToLower().Contains(needle))
                 || (t.ExternalTicketId != null && t.ExternalTicketId.ToLower().Contains(needle))
@@ -199,7 +202,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 // The conversation, when asked for. Off by default because it is the expensive half
                 // and most searches are for a number or a subject; on, it is the half that makes the
                 // search worth having.
-                || (notes && t.Notes.Any(n => n.Body.ToLower().Contains(needle))));
+                || (notes && t.Notes.Any(n => (internalNotes || n.IsPublic) && n.Body.ToLower().Contains(needle))));
         }
 
         return scope;
