@@ -144,6 +144,10 @@ public sealed record TechnicianMetrics
     public int Rated { get; init; }
     public int Satisfied { get; init; }
 
+    /// <summary>Work approved in review, and how much of it passed without being sent back first.</summary>
+    public int Reviewed { get; init; }
+    public int PassedReviewFirstTime { get; init; }
+
     public ProductivityComponents Components { get; init; } = new();
     public ProductivityScore? Score { get; init; }
 }

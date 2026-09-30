@@ -125,6 +125,8 @@ public static class DependencyInjection
         services.AddScoped<IEffectivePermissionService, EffectivePermissionService>();
         services.AddScoped<ITicketScopeQuery, TicketScopeQuery>();
         services.AddScoped<ITicketHistoryService, TicketHistoryService>();
+        services.AddScoped<ITicketReviewService, TicketReviewService>();
+        services.AddScoped<ITicketLinkService, TicketLinkService>();
 
         // Client control panel (CP-1 → CP-4 + reports)
         services.AddScoped<Desk.Application.ControlPanel.IControlPanelService, Desk.Infrastructure.ControlPanel.ControlPanelService>();

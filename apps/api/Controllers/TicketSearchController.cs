@@ -71,7 +71,8 @@ public sealed class TicketSearchController(
             MineOnly: req.Mine ?? false, FollowingOnly: req.Following ?? false, UnassignedOnly: req.Unassigned ?? false,
             OverdueOnly: req.Overdue ?? false, DueSoonOnly: req.DueSoon ?? false,
             CompanyName: req.Company, QueueName: req.Queue, ConnectionName: req.Source, PersonKey: req.Person,
-            RaisedSince: req.From, Kind: req.Kind, Skip: req.Skip ?? 0, Take: req.Take ?? 50);
+            RaisedSince: req.From, Kind: req.Kind, Skip: req.Skip ?? 0, Take: req.Take ?? 50,
+            ReviewPending: string.Equals(req.Review, "pending", StringComparison.OrdinalIgnoreCase));
         return Ok(await reads.PageAsync(query, await CallerAsync(ct), ct));
     }
 
@@ -193,7 +194,8 @@ public sealed class TicketSearchController(
         DateTimeOffset? From = null,
         [StringLength(20)] string? Kind = null,
         [Range(0, 1_000_000)] int? Skip = null,
-        [Range(1, 200)] int? Take = null);
+        [Range(1, 200)] int? Take = null,
+        [StringLength(20)] string? Review = null);
 
     public sealed record FollowerRequest(Guid? AppUserId = null);
 

@@ -269,7 +269,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             })
             .OrderByDescending(p => p.Open).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
         var nobody = held.Where(h => h.Key is null).Select(h => h.Row).ToList();
-        return new TeamWorkload(people, nobody.Count, nobody.Count(r => r.Overdue), rows.Count(r => r.Moved < staleBefore), StaleDays);
+        // Resolved work waiting for a lead is not open work, so it is counted from the tickets directly.
+        var awaitingReview = await (await StaffVisibleAsync(ct)).CountAsync(t => t.ReviewState == TicketReviewState.Pending, ct);
+        return new TeamWorkload(people, nobody.Count, nobody.Count(r => r.Overdue), rows.Count(r => r.Moved < staleBefore), StaleDays, awaitingReview);
     }
 
     /// <summary>
@@ -324,6 +326,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             scope = scope.Where(TicketStatusRules.Resolved());
 
         if (q.UnassignedOnly) scope = await UnassignedAsync(scope, ct);
+        if (q.ReviewPending) scope = scope.Where(t => t.ReviewState == TicketReviewState.Pending);
 
         if (!string.IsNullOrWhiteSpace(q.CompanyName))
         {
@@ -755,7 +758,14 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             BoardDetails: includeInternal && ticket.BoardId is { } boardId
                 ? new TicketBoardDetailsDto(boardId, ticket.BoardTopicId, ticket.DepartmentId, ticket.ClientCompanyId,
                     ticket.Resolution, ticket.ReopenCount, ticket.LastReopenedAt,
-                    await db.Boards.AsNoTracking().Where(b => b.Id == boardId).Select(b => b.RequireResolution).FirstOrDefaultAsync(ct))
+                    await db.Boards.AsNoTracking().Where(b => b.Id == boardId).Select(b => b.RequireResolution).FirstOrDefaultAsync(ct),
+                    await db.Boards.AsNoTracking().AnyAsync(b => b.Id == boardId && b.RequireReview, ct)
+                        || (ticket.BoardTopicId is { } topicId && await db.BoardTopics.AsNoTracking().AnyAsync(t => t.Id == topicId && t.RequireReview, ct)),
+                    ticket.ReviewState,
+                    ticket.ReviewedByUserId is { } reviewer
+                        ? await db.AppUsers.AsNoTracking().Where(u => u.Id == reviewer).Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
+                        : null,
+                    ticket.ReviewedAt, ticket.ReviewSendBacks)
                 : null);
     }
 
