@@ -145,6 +145,8 @@ export const TicketDetailSchema = z.object({
   // The portal's own assignee, distinct from the provider's above. Defaulted so an older API
   // response (or a cached one mid-deploy) parses rather than throwing the whole detail away.
   assignedAppUserId: z.string().nullable().default(null),
+  // Who resolved it in the portal: the person productivity credits it to. Staff only.
+  resolvedByName: z.string().nullable().default(null),
   assignedAppUserName: z.string().nullable().default(null),
   externalTicketUrl: z.string().nullable().default(null),
   contactName: z.string().nullable().default(null),
