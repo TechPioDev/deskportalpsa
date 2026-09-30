@@ -16,6 +16,10 @@ namespace Desk.Api.Controllers;
 [ApiController]
 [Route("api/boards")]
 [Authorize]
+// Staff only, on top of each action's own key. Clients hold tickets.create (to raise their own
+// tickets), which alone opened these routes to them: every internal board's name, its open count
+// and its default assignees. The team's boards are the team's business.
+[RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
 public sealed class RecurringTicketsController(
     IRecurringTicketService recurring, ISlaPlanService plans, ICurrentUser user, BoardFeatureOptions features)
     : ControllerBase, IActionFilter

@@ -32,6 +32,12 @@ public sealed class InternalTicketService(
             ?? throw new NotFoundException("Board");
         if (!board.IsActive) throw new ValidationFailedException("That board is closed, so nothing new can be raised on it.");
 
+        // A board with named members is theirs - the same rule that decides who can see its tickets.
+        // Without it, anyone who may raise tickets could post onto a restricted board they cannot read.
+        if (await db.BoardMembers.AnyAsync(m => m.BoardId == board.Id, ct)
+            && !await db.BoardMembers.AnyAsync(m => m.BoardId == board.Id && m.AppUserId == appUserId, ct))
+            throw new ForbiddenException("This board is limited to its members. Ask whoever manages it to add you.");
+
         var author = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(u => u.Id == appUserId, ct)
             ?? throw new NotFoundException("User");
 

@@ -1,4 +1,6 @@
+using Desk.Application.Abstractions;
 using Desk.Application.Admin;
+using Desk.Application.Common;
 using Desk.Application.Sync;
 using Desk.Domain.Authorization;
 using Desk.Domain.Enums;
@@ -235,8 +237,25 @@ public sealed class AdminReadController(
     /// <summary>Tickets the portal holds that never reached the PSA — the count and which they are.</summary>
     [HttpGet("tickets/unsynced")]
     [RequirePermission(Permissions.IntegrationHealthView)]
-    public async Task<IActionResult> Unsynced([FromQuery] Guid? connectionId, CancellationToken ct)
-        => Ok(await resync.ListAsync(connectionId, ct));
+    public async Task<IActionResult> Unsynced(
+        [FromQuery] Guid? connectionId, [FromServices] ICurrentUser user,
+        [FromServices] Desk.Application.Authorization.IEffectivePermissionService permissions, CancellationToken ct)
+    {
+        await RequireEveryTicketAsync(user, permissions, ct);
+        return Ok(await resync.ListAsync(connectionId, ct));
+    }
+
+    /// <summary>
+    /// These lists name tickets from across the organization. Integration-health access alone is not
+    /// enough: the Auditor role holds it with no ticket access at all, and was reading ticket titles,
+    /// client comments and references through here.
+    /// </summary>
+    private static async Task RequireEveryTicketAsync(
+        ICurrentUser user, Desk.Application.Authorization.IEffectivePermissionService permissions, CancellationToken ct)
+    {
+        if (!await user.SeesEveryTicketAsync(permissions, ct))
+            throw new ForbiddenException("This list covers every ticket in the organization, so it needs access to all tickets.");
+    }
 
     /// <summary>
     /// Pushes one outstanding ticket again. Deliberately one at a time: each retry hits the provider
@@ -254,8 +273,13 @@ public sealed class AdminReadController(
     /// <summary>Everything an administrator should look at, most urgent first, plus the daily digest settings.</summary>
     [HttpGet("attention")]
     [RequirePermission(Permissions.IntegrationHealthView)]
-    public async Task<IActionResult> Attention([FromServices] IAttentionService attention, CancellationToken ct)
-        => Ok(await attention.ListAsync(ct));
+    public async Task<IActionResult> Attention(
+        [FromServices] IAttentionService attention, [FromServices] ICurrentUser user,
+        [FromServices] Desk.Application.Authorization.IEffectivePermissionService permissions, CancellationToken ct)
+    {
+        await RequireEveryTicketAsync(user, permissions, ct);
+        return Ok(await attention.ListAsync(ct));
+    }
 
     public sealed record DigestRecipientsInput(string? Recipients);
 

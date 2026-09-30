@@ -21,7 +21,9 @@ public sealed class AssistantService(
     DeskDbContext db,
     ISecretStore secrets,
     IAssistantModel model,
-    ITenantContext tenant) : IAssistantService
+    ITenantContext tenant,
+    ICurrentUser user,
+    Desk.Application.Tickets.ITicketScopeQuery scopeQuery) : IAssistantService
 {
     private const string KeyName = "ApiKey";
 
@@ -109,10 +111,16 @@ public sealed class AssistantService(
         return sb.ToString();
     }
 
-    /// <summary>Titles only, from this tenant's own resolved tickets — enough to spot a pattern.</summary>
+    /// <summary>
+    /// Titles only, from resolved tickets the ASKING person could open themselves - enough to spot a
+    /// pattern. Reading the whole tenant here handed a technician (and the model) the titles of
+    /// restricted boards and of colleagues' tickets their own list never shows them.
+    /// </summary>
     private async Task<string> SimilarTicketsAsync(Desk.Domain.Tickets.Ticket t, CancellationToken ct)
     {
-        var past = await db.Tickets.AsNoTracking()
+        if (user.UserId is not { } uid) return "\nNo resolved tickets are available to compare against.\n";
+        var visible = await scopeQuery.VisibleAsync(db.Tickets, uid, Desk.Domain.Authorization.Permissions.TicketsViewAll, ct);
+        var past = await visible.AsNoTracking()
             .Where(x => x.Id != t.Id && x.ResolvedAt != null)
             .OrderByDescending(x => x.ResolvedAt)
             .Take(40)
