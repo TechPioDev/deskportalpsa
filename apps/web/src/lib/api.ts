@@ -258,13 +258,18 @@ export const api = {
         queueOrBoard: z.string().nullable(),
       }).passthrough(),
       { method: 'PUT', body: JSON.stringify(body) }),
-  updateTicketStatus: (id: string, status: string) =>
-    request(`/api/tickets/${id}/status`, z.object({ portalStatus: z.string() }), { method: 'POST', body: JSON.stringify({ status }) }),
+  updateTicketStatus: (id: string, status: string, resolution?: string | null) =>
+    request(`/api/tickets/${id}/status`, z.object({ portalStatus: z.string() }), { method: 'POST', body: JSON.stringify({ status, resolution: resolution || null }) }),
+  /** A board ticket's details, sent whole. */
+  editBoardTicket: (id: string, body: BoardTicketEdit) =>
+    request(`/api/boards/tickets/${id}`, z.unknown(), { method: 'PUT', body: JSON.stringify(body) }),
+  ticketHistory: (id: string) =>
+    request(`/api/tickets/${id}/history`, z.array(TicketHistoryEntrySchema)) as Promise<TicketHistoryEntry[]>,
   // Same aggregate response as update/retry/delete — the endpoint recomputes the ticket's totals
   // from the PSA and returns those, not the created entry. The old schema here demanded an
   // externalId the response never carried, so every SUCCESSFUL log threw at the parse and showed
   // as a failure while the entry quietly landed in the PSA.
-  logTime: (id: string, body: { hours: number; billable: string; notes?: string; workType?: string; workRole?: string; noteId?: string }) =>
+  logTime: (id: string, body: { hours: number; billable: string; notes?: string; workType?: string; workRole?: string; noteId?: string; workedAt?: string }) =>
     request(`/api/tickets/${id}/time`, TimeAggregateSchema, { method: 'POST', body: JSON.stringify(body) }),
   ticketTimeOptions: (id: string) =>
     request(`/api/tickets/${id}/time-options`,
@@ -1258,8 +1263,19 @@ const TimeEntrySchema = z.object({
   source: z.string().default('Provider'),
   syncStatus: z.string().default('Synced'),
   syncError: z.string().nullable().default(null),
+  // Whether this person may edit or delete it: their own time, or they lead the boards.
+  mayChange: z.boolean().default(false),
 });
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
+
+export const TicketHistoryEntrySchema = z.object({
+  at: z.string(), who: z.string().nullable(), kind: z.string(), summary: z.string(), note: z.string().nullable().default(null),
+});
+export type TicketHistoryEntry = z.infer<typeof TicketHistoryEntrySchema>;
+export type BoardTicketEdit = {
+  title: string; description: string | null; priority: string; dueAt: string | null;
+  boardTopicId: string | null; category: string | null; departmentId: string | null; clientCompanyId: string | null;
+};
 
 const TimeAggregateSchema = z.object({
   count: z.number(),
@@ -1303,6 +1319,7 @@ export const BoardSchema = z.object({
   openTickets: z.number(),
   defaultSlaPlanId: z.string().nullable().default(null),
   defaultSlaPlanName: z.string().nullable().default(null),
+  requireResolution: z.boolean().default(false),
 });
 export type Board = z.infer<typeof BoardSchema>;
 export const BoardMemberSchema = z.object({
@@ -1314,6 +1331,8 @@ export type BoardInput = {
   kind?: number; clientVisible?: boolean; sortOrder?: number;
   /** The SLA plan a ticket gets when its topic names none. Sent on every save: omitting it clears it. */
   defaultSlaPlanId?: string | null;
+  /** Resolving a ticket here needs a written resolution. Sent on every save: omitting it switches it off. */
+  requireResolution?: boolean;
 };
 export type InternalTicketInput = {
   boardId: string; title: string; description: string | null;

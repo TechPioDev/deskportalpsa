@@ -167,6 +167,13 @@ export const TicketDetailSchema = z.object({
     id: z.string(), name: z.string(), type: z.string().nullable(), identifier: z.string().nullable(),
     isActive: z.boolean(), warrantyExpiresAt: z.string().nullable(),
   }).nullable().default(null),
+  // A board ticket's own record, staff only: what the edit form shows, what fixed it, how often it
+  // came back, and whether the board asks for a resolution.
+  boardDetails: z.object({
+    boardId: z.string(), boardTopicId: z.string().nullable(), departmentId: z.string().nullable(),
+    clientCompanyId: z.string().nullable(), resolution: z.string().nullable(), reopenCount: z.number(),
+    lastReopenedAt: z.string().nullable(), requireResolution: z.boolean(),
+  }).nullable().default(null),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

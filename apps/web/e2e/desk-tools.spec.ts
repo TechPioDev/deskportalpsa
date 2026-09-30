@@ -57,8 +57,12 @@ test.describe('desk tools', () => {
     await page.getByRole('button', { name: 'Add', exact: true }).click();
     await expect(page.getByText('2 of 2 left')).toBeVisible();
 
+    // Closing a board ticket asks what fixed it first (optional on this board); the open tasks
+    // still stop it.
     await page.getByLabel('Ticket status').selectOption('CLOSED');
+    await page.getByRole('form', { name: 'Resolution' }).getByRole('button', { name: 'Mark closed' }).click();
     await expect(page.getByText(/tasks on this ticket are still open/)).toBeVisible();
+    await page.getByRole('form', { name: 'Resolution' }).getByRole('button', { name: 'Cancel' }).click();
 
     await page.getByRole('checkbox', { name: 'Order the battery' }).click();
     await expect(page.getByRole('checkbox', { name: 'Order the battery' })).toBeChecked();
@@ -84,6 +88,9 @@ test.describe('desk tools', () => {
 
     // Everything ticked, so now it closes.
     await page.getByLabel('Ticket status').selectOption('CLOSED');
+    await page.getByRole('form', { name: 'Resolution' }).getByLabel(/What fixed it/).fill('New battery fitted and tested on mains.');
+    await page.getByRole('form', { name: 'Resolution' }).getByRole('button', { name: 'Mark closed' }).click();
     await expect(page.getByText(/still open/)).toHaveCount(0);
+    await expect(page.getByLabel('Ticket status')).toHaveValue('CLOSED');
   });
 });
