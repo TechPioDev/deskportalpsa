@@ -291,6 +291,8 @@ public sealed class AlertSourceConfig : IEntityTypeConfiguration<AlertSource>
         // Every delivery arrives with a key and nothing else to go on, so this is the lookup.
         b.HasIndex(x => x.KeyHash).IsUnique();
         b.HasOne(x => x.Board).WithMany().HasForeignKey(x => x.BoardId).OnDelete(DeleteBehavior.Cascade);
+        // The pinned client. Losing the company un-pins the source rather than deleting it.
+        b.HasOne<Desk.Domain.Tenancy.ClientCompany>().WithMany().HasForeignKey(x => x.ClientCompanyId).OnDelete(DeleteBehavior.SetNull);
     }
 }
 

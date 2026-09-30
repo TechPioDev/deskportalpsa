@@ -35,6 +35,14 @@ public class AlertSource : TenantEntity
     /// </summary>
     public bool CloseOnClear { get; set; } = true;
 
+    /// <summary>
+    /// The one client this tool reports on, when it reports on one. Pinned, the client comes from here
+    /// and never from the alert text. Unpinned, the client is matched by the name the alert gives -
+    /// except on a board published to clients, where a name match must never decide which company's
+    /// administrators see the alert, so an unpinned source's alerts there stay with the team.
+    /// </summary>
+    public Guid? ClientCompanyId { get; set; }
+
     public DateTimeOffset? LastReceivedAt { get; set; }
     public int ReceivedCount { get; set; }
 

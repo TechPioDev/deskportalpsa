@@ -44,7 +44,7 @@ public class AssistantTests
     }
 
     private static async Task<(AssistantService svc, RecordingModel model, AdminHarness h, Guid ticketId)>
-        BuildAsync(bool enabled = true, bool withKey = true, bool includeInternal = false)
+        BuildAsync(bool enabled = true, bool withKey = true, bool includeInternal = false, Desk.Application.Tickets.ITicketScopeQuery? scope = null)
     {
         var h = AdminHarness.Create(Org);
         var secrets = new FakeSecrets();
@@ -81,7 +81,37 @@ public class AssistantTests
         await h.Db.SaveChangesAsync();
 
         var model = new RecordingModel();
-        return (new AssistantService(h.Db, secrets, model, h.Tenant), model, h, ticket.Id);
+        return (new AssistantService(h.Db, secrets, model, h.Tenant, new TestCurrentUser(Org, userId: Guid.NewGuid()), scope ?? new NoopTicketScopeQuery()), model, h, ticket.Id);
+    }
+
+    /// <summary>Stands in for a technician's scope: every ticket except the ones titled as someone else's.</summary>
+    private sealed class NotColleagues : Desk.Application.Tickets.ITicketScopeQuery
+    {
+        public Task<IQueryable<Ticket>> VisibleAsync(IQueryable<Ticket> source, Guid appUserId, string permissionKey, CancellationToken ct = default)
+            => Task.FromResult(source.Where(t => !t.Title.StartsWith("COLLEAGUE")));
+
+        public async Task<Ticket?> FindAsync(IQueryable<Ticket> source, Guid ticketId, Guid appUserId, string permissionKey, CancellationToken ct = default)
+            => (await VisibleAsync(source, appUserId, permissionKey, ct)).FirstOrDefault(t => t.Id == ticketId);
+    }
+
+    [Fact]
+    public async Task Similar_tickets_come_only_from_what_the_asker_could_open()
+    {
+        // The list used to be the tenant's 40 latest resolved tickets, whoever asked: a technician
+        // learned (and the model was sent) the titles of colleagues' and restricted-board work.
+        var (svc, model, h, id) = await BuildAsync(scope: new NotColleagues());
+        Ticket Resolved(string title) => new()
+        {
+            MspOrganizationId = Org, Title = title, RequesterName = "r", RequesterEmail = "r@a.test",
+            PortalStatus = "RESOLVED", PortalPriority = "MEDIUM", ResolvedAt = h.Clock.GetUtcNow(),
+        };
+        h.Db.Tickets.AddRange(Resolved("Mailbox full for reception"), Resolved("COLLEAGUE salary sheet locked"));
+        await h.Db.SaveChangesAsync();
+
+        await svc.AskAsync(id, AssistantAction.SimilarTickets, null);
+
+        model.Prompt.Should().Contain("Mailbox full for reception");
+        model.Prompt.Should().NotContain("salary sheet");
     }
 
     [Fact]

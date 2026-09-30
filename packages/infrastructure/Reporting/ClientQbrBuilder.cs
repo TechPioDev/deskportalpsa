@@ -47,7 +47,9 @@ public sealed class ClientQbrBuilder(DeskDbContext db, TechnicianReportBuilder t
 
         var entries = await db.TicketTimeEntries.AsNoTracking()
             .Where(e => e.EntryDate >= prevFrom && e.EntryDate <= to)
-            .Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.ClientCompanyId == clientCompanyId))
+            // The same rule as the tickets above: internal and monitoring work logged against this
+            // client is the team's own record, not hours to put in front of the client.
+            .Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.ClientCompanyId == clientCompanyId && t.Origin == TicketOrigin.Psa))
             .Select(e => new { e.EntryDate, e.Hours, e.Billable })
             .ToListAsync(ct);
 
@@ -106,7 +108,8 @@ public sealed class ClientQbrBuilder(DeskDbContext db, TechnicianReportBuilder t
             .Select(x => new QbrOpenTicket(x.Ref ?? "—", x.Title, Pretty(x.Priority), Pretty(x.Status), (int)Math.Floor((asOf - x.Raised).TotalDays)))
             .ToList();
 
-        var people = await technicians.BuildAsync(organizationId, from, to, start, end, "", clientCompanyId, ct);
+        // Who worked for the client, counted on the client's own tickets only (see PsaOnly).
+        var people = await technicians.BuildAsync(organizationId, from, to, start, end, "", clientCompanyId, ct, psaOnly: true);
 
         return new ClientQbr(
             org.Name, client, StaffReportPeriods.Describe(frequency, start, end) + (to > now ? " (so far)" : ""), start, end,

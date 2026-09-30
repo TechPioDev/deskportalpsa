@@ -16,6 +16,13 @@
 - Authorization is **permission-claim based** (`Desk.Domain.Authorization.Permissions`), never a
   role-name check. The DB is the source of truth; claims are enriched per-request from roles.
 - Seven built-in roles seeded with least-privilege claim sets.
+- **Internal work stays internal.** One client rule (`TicketReadService.ClientVisible`) serves every
+  client-facing path: list, detail, search (public notes only), comments and attachments. Internal
+  tickets answer a client with "not found". Staff reach tickets through `TicketScopeQuery`, where an
+  action is always bounded by sight. Board routes need a staff ticket view; organization-wide ticket
+  lists need all-tickets sight. Monitoring alerts reach a client only from a source pinned to that
+  client. The tests for each are in `InternalWorkIsolationTests` (Phase 0 of the Internal Service
+  Desk, 30 Sep 2026).
 
 ## Secret handling
 - PSA credentials are encrypted at rest with **AES-256-GCM** (`EncryptedDbSecretStore`), keyed by a

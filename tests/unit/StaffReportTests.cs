@@ -354,6 +354,35 @@ public class StaffReportTests
         ClientQbrRenderer.ToCsv(qbr).Should().Contain("Satisfaction % (rated 4 or 5),50,100");
     }
 
+    [Fact]
+    public async Task A_business_review_leaves_out_internal_work_filed_under_the_client()
+    {
+        // The review goes TO the client. Hours the team logged on its own board against this client -
+        // a migration rehearsal, an alert investigated - are the team's record, and the tickets were
+        // already left out; their hours and the people who logged them were not.
+        var (sp, _, clock, dbName) = Services();
+        clock.Advance(DateTimeOffset.Parse("2026-10-01T02:00Z") - clock.GetUtcNow());
+        var platform = TestDbContextFactory.ForPlatform(dbName);
+        var org = await SeedOrgAsync(platform, "Techpio", "Basit Lone", 0m);
+        var inside = QbrTicket(org, org.Client, "2026-07-02", "2026-07-03", null, reference: "INT-1", status: "RESOLVED");
+        inside.Origin = TicketOrigin.Internal;
+        inside.PsaConnectionId = null;
+        inside.Provider = null;
+        inside.AssignedAppUserId = org.Person; // so its resolution would be credited to someone
+        platform.AddRange(inside, Time(org.Id, inside.Id, org.Person, "2026-07-02", 40m));
+        await platform.SaveChangesAsync();
+
+        using var scope = sp.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ISettableTenantContext>().SetTenant(org.Id);
+        var qbr = await scope.ServiceProvider.GetRequiredService<ClientQbrBuilder>()
+            .BuildAsync(org.Id, org.Client, StaffReportFrequency.Quarterly, new DateOnly(2026, 7, 1), new DateOnly(2026, 9, 30), default);
+
+        // SeedOrgAsync's own PSA ticket carries 18h in Q3; the 40 internal hours must not join them.
+        qbr.Current.Hours.Should().Be(18m);
+        qbr.Technicians.Sum(t => t.Hours).Should().Be(18m);
+        qbr.Technicians.Sum(t => t.Resolved).Should().Be(1, "the internal ticket resolved in Q3 is not the client's");
+    }
+
     private static TicketSatisfaction Rated(Guid org, Guid ticket, Guid client, int rating, string day) => new()
     {
         MspOrganizationId = org, TicketId = ticket, ClientCompanyId = client, ClientUserId = Guid.NewGuid(),

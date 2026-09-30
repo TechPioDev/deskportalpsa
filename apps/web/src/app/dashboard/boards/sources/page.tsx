@@ -23,6 +23,12 @@ export default function AlertSourcesPage() {
   const [issued, setIssued] = useState<{ name: string; key: string } | null>(null);
   const { data, isLoading, isError, error } = useQuery({ queryKey: ['alert-sources'], queryFn: api.alertSources, retry: false });
   const { data: boards } = useQuery({ queryKey: ['boards', true], queryFn: () => api.boards(true) });
+  const { data: clients } = useQuery({ queryKey: ['report-clients'], queryFn: api.reportClients, staleTime: 5 * 60_000, retry: false });
+  const pin = useMutation({
+    mutationFn: ({ s, clientCompanyId }: { s: AlertSource; clientCompanyId: string | null }) =>
+      api.updateAlertSource(s.id, { name: s.name, boardId: s.boardId, vendor: s.vendor, closeOnClear: s.closeOnClear, clientCompanyId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-sources'] }),
+  });
 
   const monitoringBoards = (boards ?? []).filter((b) => b.kind === 1 && b.isActive);
   const setActive = useMutation({
@@ -77,6 +83,7 @@ export default function AlertSourcesPage() {
 
       {adding && (
         <SourceForm boards={monitoringBoards.map((b) => ({ id: b.id, name: b.name }))}
+          clients={(clients ?? []).map((c) => ({ id: c.id, name: c.name }))}
           onClose={() => setAdding(false)}
           onCreated={(r) => { setAdding(false); setIssued({ name: r.name, key: r.key }); qc.invalidateQueries({ queryKey: ['alert-sources'] }); }} />
       )}
@@ -101,9 +108,21 @@ export default function AlertSourcesPage() {
                     {s.lastReceivedAt ? ` · last ${new Date(s.lastReceivedAt).toLocaleString()}` : ' · nothing yet'}
                     {s.closeOnClear ? ' · closes on clear' : ' · stays open on clear'}
                   </div>
+                  <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+                    Reports on
+                    <select aria-label={`Client ${s.name} reports on`} value={s.clientCompanyId ?? ''} disabled={pin.isPending}
+                      onChange={(e) => pin.mutate({ s, clientCompanyId: e.target.value || null })}
+                      className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-xs text-[var(--fg)]">
+                      <option value="">Whichever client each alert names</option>
+                      {(clients ?? []).map((c) => <option key={c.id} value={c.id}>{c.name} only</option>)}
+                    </select>
+                  </label>
+                  {pin.isError && pin.variables?.s.id === s.id && (
+                    <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">{(pin.error as Error).message}</p>
+                  )}
                   {s.lastError && (
                     <p className="mt-1 inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
-                      <AlertTriangle size={12} /> Last delivery refused: {s.lastError}
+                      <AlertTriangle size={12} /> Last delivery: {s.lastError}
                     </p>
                   )}
                 </div>
@@ -151,8 +170,9 @@ function IssuedKey({ name, value, onDone }: { name: string; value: string; onDon
   );
 }
 
-function SourceForm({ boards, onClose, onCreated }: {
+function SourceForm({ boards, clients, onClose, onCreated }: {
   boards: { id: string; name: string }[];
+  clients: { id: string; name: string }[];
   onClose: () => void;
   onCreated: (r: { name: string; key: string }) => void;
 }) {
@@ -182,6 +202,16 @@ function SourceForm({ boards, onClose, onCreated }: {
         <select value={v.boardId} onChange={(e) => setV({ ...v, boardId: e.target.value })} className={field}>
           {boards.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
+      </label>
+      <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
+        Reports on
+        <select value={v.clientCompanyId ?? ''} onChange={(e) => setV({ ...v, clientCompanyId: e.target.value || null })} className={field}>
+          <option value="">Whichever client each alert names</option>
+          {clients.map((c) => <option key={c.id} value={c.id}>{c.name} only</option>)}
+        </select>
+        <span className="block font-normal">
+          Pin a tool that watches one client. On a board shown to clients, only a pinned tool&rsquo;s alerts reach the client.
+        </span>
       </label>
       <label className="flex items-start gap-2 self-end pb-2 text-xs text-[var(--muted)]">
         <input type="checkbox" checked={!!v.closeOnClear} className="mt-0.5"
@@ -237,7 +267,9 @@ function Setup() {
       <p className="mt-2 text-xs text-[var(--muted)]">
         Send the same alert id again with <span className="font-mono">&quot;status&quot;: &quot;cleared&quot;</span> when the
         condition resolves. Repeats of the same id update one ticket rather than opening more, and the
-        client name is matched against your own customer list.
+        client name is matched against your own customer list. A tool pinned to one client always files
+        under that client, whatever the alert says, and on a board shown to clients only a pinned
+        tool&rsquo;s alerts reach a client.
       </p>
     </section>
   );

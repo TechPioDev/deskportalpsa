@@ -47,9 +47,13 @@ public sealed record AlertSourceCreatedDto(AlertSourceDto Source, string Key);
 
 public sealed record AlertSourceDto(
     Guid Id, string Name, Guid BoardId, string BoardName, AlertVendor Vendor, string KeyHint,
-    bool IsActive, bool CloseOnClear, DateTimeOffset? LastReceivedAt, int ReceivedCount, string? LastError);
+    bool IsActive, bool CloseOnClear, DateTimeOffset? LastReceivedAt, int ReceivedCount, string? LastError,
+    Guid? ClientCompanyId = null, string? ClientName = null);
 
-public sealed record AlertSourceInput(string Name, Guid BoardId, AlertVendor Vendor = AlertVendor.Generic, bool CloseOnClear = true);
+public sealed record AlertSourceInput(
+    string Name, Guid BoardId, AlertVendor Vendor = AlertVendor.Generic, bool CloseOnClear = true,
+    /// <summary>Pins the source to one client; see AlertSource.ClientCompanyId.</summary>
+    Guid? ClientCompanyId = null);
 
 /// <summary>Managing which tools may open tickets. A lead's decision, like the boards themselves.</summary>
 public interface IAlertSourceService

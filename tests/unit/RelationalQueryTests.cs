@@ -93,6 +93,9 @@ public sealed class RelationalQueryTests : IDisposable
 
         all.Items.Should().ContainSingle().Which.Should().BeEquivalentTo(new { Number = "INT-000001", AssignedTeamName = "Level 2" });
         (await Reads.SearchAsync(new TicketQuery(Openness: "resolved", UnassignedOnly: true, FollowingOnly: true))).Total.Should().Be(0);
+        // A client's conversation search reads public notes only; the clause must still translate.
+        (await Reads.SearchAsync(new TicketQuery(Q: "swelling", IncludeNotes: true),
+            new ClientAccess(Org, Guid.NewGuid(), Guid.NewGuid(), IsCompanyAdministrator: true))).Total.Should().Be(0);
     }
 
     [Fact]

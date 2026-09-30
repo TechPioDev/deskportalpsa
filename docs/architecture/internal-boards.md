@@ -26,12 +26,18 @@ sides answerable separately.
 1. **A client never sees internal work.** Naming a client on an internal ticket records who the work
    was for; it does not publish it. Only an RMM board may be published, and only when someone turns
    that on deliberately. Asking for it on an internal board is ignored rather than obeyed.
+   Every client-facing path applies the same rule (`TicketReadService.ClientVisible`): the list,
+   detail, search, comments and attachments. A client's search reads public notes only. On any
+   internal ticket a client gets "not found", never a different error, so nothing confirms it exists.
+   The board routes (boards, topics, SLA plans, holidays) need a staff ticket view as well as their
+   own key: clients hold `tickets.create` to raise their own tickets, and that alone must not list
+   the team's boards.
 2. **Nothing is pushed.** No provider call is made for an internal ticket's creation, notes, status
    or time. There is no provider to call.
 3. **Internal tickets are not failures.** The "never reached the PSA" list and its critical alert
    cover tickets that belong in a PSA. An internal ticket is complete where it is.
 4. **Client reports count client work only.** Business reviews and client report runs exclude
-   internal tickets explicitly.
+   internal tickets explicitly, and the hours and people logged on them too (`MetricsFilter.PsaOnly`).
 5. **Productivity is split, not blended.** Client work and internal work are reported side by side,
    per technician, for tickets and for hours. Internal work is self-raised, and a single blended
    number invites the question of who is marking their own homework; the split answers it, and the
@@ -46,6 +52,13 @@ sides answerable separately.
 
 Deciding what boards exist is a lead's call. Handing work to a colleague is not, which is what a
 team running day and night shifts needs.
+
+A board with named members is theirs for raising as well as reading: someone outside it is refused
+("limited to its members") rather than posting onto a board they cannot read.
+
+Organization-wide lists that name tickets - the needs-attention list and the unsynced-tickets list -
+need `tickets.view.all` at **All** scope. Integration-health access alone is not enough; the
+Auditor role holds it with no ticket access at all.
 
 ## Switching it off
 
@@ -165,9 +178,14 @@ What the portal does with it:
   board and still counts in resolution-time figures. A source can be told to leave it open instead.
 - **Comes back if the fault does.** The same alert within a day of closing reopens that ticket
   instead of opening a second one.
-- **Names the client when it can.** The tool's client name is matched against the customer list,
-  ignoring case, spacing and punctuation. An unrecognised name is reported back and kept in the
-  ticket text rather than guessed at.
+- **Names the client when it can.** A source can be **pinned to one client**; its alerts are then
+  filed under that client whatever the alert text says. An unpinned source's client name is matched
+  against the customer list, ignoring case, spacing and punctuation, and an unrecognised name is
+  reported back and kept in the ticket text rather than guessed at.
+- **Only a pinned source publishes.** On a board shown to clients, the client decides whose
+  administrators read the alert, so free text never makes that choice: an unpinned source's alerts
+  there name no client and stay with the team, and the source shows how to fix it. Pinning is
+  audited with the client before and after.
 - **Severity becomes priority.** critical and high become HIGH, emergency becomes URGENT, warning
   becomes NORMAL, info becomes LOW, anything unrecognised becomes NORMAL.
 
