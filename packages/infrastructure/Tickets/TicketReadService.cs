@@ -159,8 +159,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             .Select(e => new { e.AppUserId, Ext = e.TechnicianExternalId, Name = e.TechnicianName, e.Ticket!.PsaConnectionId })
             .Distinct().ToListAsync(ct);
         var account = await IntegrationIdentity.LoadAsync(db, ct);
-        var all = holders.Select(h => (h.AssignedAppUserId, h.Ext, h.Name, h.PsaConnectionId))
-            .Concat(loggers.Select(l => (l.AppUserId, l.Ext, l.Name, l.PsaConnectionId)))
+        var links = await PsaLinks.LoadAsync(db, ct);
+        var all = holders.Select(h => (h.AssignedAppUserId ?? links.UserFor(h.PsaConnectionId, h.Ext), h.Ext, h.Name, h.PsaConnectionId))
+            .Concat(loggers.Select(l => (l.AppUserId ?? links.UserFor(l.PsaConnectionId, l.Ext), l.Ext, l.Name, l.PsaConnectionId)))
             .Where(p => p.Item1 is not null || !account.IsAccount(p.PsaConnectionId, p.Ext))
             .ToList();
         var ids = all.Where(p => p.Item1 is not null).Select(p => p.Item1!.Value).Distinct().ToList();
@@ -251,18 +252,24 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             Raised = t.PsaCreatedAt ?? t.CreatedAt,
         }).ToListAsync(ct);
         var account = await IntegrationIdentity.LoadAsync(db, ct);
-        var ids = rows.Where(r => r.AssignedAppUserId is not null).Select(r => r.AssignedAppUserId!.Value).Distinct().ToList();
+        var links = await PsaLinks.LoadAsync(db, ct);
+        // Who holds it: the portal assignee, else the portal user the PSA login is linked to.
+        Guid? Holder(Guid? app, string? ext, Guid? conn) => app ?? links.UserFor(conn, ext);
+        var ids = rows.Select(r => Holder(r.AssignedAppUserId, r.AssignedTechnicianExternalId, r.PsaConnectionId))
+            .Where(u => u is not null).Select(u => u!.Value).Distinct().ToList();
         var names = ids.Count == 0 ? new Dictionary<Guid, string>()
             : await db.AppUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
 
         string? KeyOf(Guid? app, string? ext, Guid? conn) => app is { } u ? PersonKey.For(u, null)
             : string.IsNullOrWhiteSpace(ext) || account.IsAccount(conn, ext) ? null : PersonKey.For(null, ext);
-        var held = rows.Select(r => (Row: r, Key: KeyOf(r.AssignedAppUserId, r.AssignedTechnicianExternalId, r.PsaConnectionId))).ToList();
+        var held = rows.Select(r => (Row: r,
+            Key: KeyOf(Holder(r.AssignedAppUserId, r.AssignedTechnicianExternalId, r.PsaConnectionId), r.AssignedTechnicianExternalId, r.PsaConnectionId))).ToList();
         var people = held.Where(h => h.Key is not null).GroupBy(h => h.Key!)
             .Select(g =>
             {
                 var first = g.First().Row;
-                var name = first.AssignedAppUserId is { } u ? names.GetValueOrDefault(u, "Unknown user")
+                var name = Holder(first.AssignedAppUserId, first.AssignedTechnicianExternalId, first.PsaConnectionId) is { } u
+                    ? names.GetValueOrDefault(u, "Unknown user")
                     : first.AssignedTechnicianName ?? first.AssignedTechnicianExternalId!.Trim();
                 return new WorkloadRow(g.Key, name, g.Count(), g.Count(h => h.Row.Overdue), g.Count(h => h.Row.High),
                     g.Count(h => h.Row.Moved < staleBefore), g.Min(h => (DateTimeOffset?)h.Row.Raised));
@@ -353,6 +360,10 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         {
             if (key.StartsWith("u:", StringComparison.Ordinal) && Guid.TryParse(key[2..], out var person))
                 scope = scope.Where(t => t.AssignedAppUserId == person
+                    // Held in the PSA by a login linked to them, with nobody here on it.
+                    || (t.AssignedAppUserId == null && db.UserPsaIdentities.Any(i => i.AppUserId == person
+                        && i.PsaConnectionId == t.PsaConnectionId && i.ExternalTechnicianId == t.AssignedTechnicianExternalId)
+                        && !db.PsaConnections.Any(c => c.Id == t.PsaConnectionId && c.DefaultTimeEntryResourceId == t.AssignedTechnicianExternalId))
                     || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == person));
             else if (key.StartsWith("x:", StringComparison.Ordinal))
             {
@@ -754,6 +765,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                         db.ClientUsers.Where(u => u.Id == s.ClientUserId).Select(u => u.DisplayName).FirstOrDefault(),
                         s.TechnicianName))
                     .FirstOrDefaultAsync(ct)
+                : null,
+            ResolvedByName: includeInternal && ticket.ResolvedByAppUserId is { } resolverId
+                ? await db.AppUsers.AsNoTracking().Where(u => u.Id == resolverId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
                 : null,
             BoardDetails: includeInternal && ticket.BoardId is { } boardId
                 ? new TicketBoardDetailsDto(boardId, ticket.BoardTopicId, ticket.DepartmentId, ticket.ClientCompanyId,

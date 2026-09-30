@@ -130,6 +130,27 @@ public sealed class RelationalQueryTests : IDisposable
         (await metrics.ForTechnicianAsync(self, Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
         (await metrics.DailyAsync(self)).Should().NotBeNull();
         (await metrics.TeamAsync(new Desk.Application.Analytics.MetricsFilter(), Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
+
+        // Credit through a linked PSA login: the correlated identity subqueries, for tickets and time.
+        var conn = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Autotask", Provider = Desk.Domain.Enums.ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://x", CredentialSecretRef = "m",
+        };
+        _db.PsaConnections.Add(conn);
+        _db.UserPsaIdentities.Add(new Desk.Domain.Identity.UserPsaIdentity
+            { MspOrganizationId = Org, AppUserId = _me, PsaConnectionId = conn.Id, ExternalTechnicianId = "123" });
+        await _db.SaveChangesAsync();
+        var manager = new Desk.Application.Analytics.MetricsFilter { AppUserId = _me };
+        (await metrics.ForTechnicianAsync(manager, Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
+        (await metrics.DailyAsync(manager)).Should().NotBeNull();
+        var login = new Desk.Application.Analytics.MetricsFilter { TechnicianExternalId = "123" };
+        (await metrics.ForTechnicianAsync(login, Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
+        (await metrics.DailyAsync(login)).Should().NotBeNull();
+        var reads = new TicketReadService(_db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: _me));
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(_me, null)))).Should().NotBeNull();
+        (await reads.WorkloadAsync()).Should().NotBeNull();
+        (await reads.FacetsAsync()).Should().NotBeNull();
     }
 
     [Fact]

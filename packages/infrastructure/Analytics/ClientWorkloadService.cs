@@ -73,6 +73,7 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
             .ToListAsync(ct);
         var entriesByClient = entries.ToLookup(e => e.ClientCompanyId);
         var account = await IntegrationIdentity.LoadAsync(db, ct);
+        var links = await PsaLinks.LoadAsync(db, ct);
 
         var userNames = await UserNamesAsync(
             rows.Where(r => r.AssignedAppUserId is not null).Select(r => r.AssignedAppUserId!.Value)
@@ -124,7 +125,9 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
 
                 foreach (var t in g)
                 {
-                    if (t.AssignedAppUserId is { } uid) For(uid, null).Assigned++;
+                    // A PSA login linked to a portal user is that person, not a second one.
+                    if ((t.AssignedAppUserId ?? links.UserFor(t.PsaConnectionId, t.AssignedTechnicianExternalId)) is { } uid)
+                        For(uid, null).Assigned++;
                     // Held by the account the portal writes as is held by nobody.
                     else if (!string.IsNullOrEmpty(t.AssignedTechnicianExternalId)
                              && !account.IsAccount(t.PsaConnectionId, t.AssignedTechnicianExternalId))
@@ -133,7 +136,8 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
                 foreach (var e in entriesByClient[g.Key])
                 {
                     if (e.AppUserId is null && account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId)) continue;
-                    For(e.AppUserId, e.TechnicianExternalId).Hours += e.Hours;
+                    var who = e.AppUserId ?? links.UserFor(e.PsaConnectionId, e.TechnicianExternalId);
+                    For(who, who is null ? e.TechnicianExternalId : null).Hours += e.Hours;
                 }
 
                 // The count IS the length of this list, so the figure and the list it opens cannot
