@@ -20,4 +20,8 @@ regexes = [
   # (gitleaks 8.24.3, scanning via `git log -p`), so it is listed here instead, scoped to the
   # literal value rather than the whole file.
   '''w\+WEoJiLQLVmZzgEm//uVd0YpeTwnhwm2rUyftBqdO8=''',
+  # The Web Push auth secret from RFC 8291 section 5's published worked example - public by
+  # definition. WebPushCryptoTests, PushTests and RelationalQueryTests use it to prove the encryption
+  # reproduces the RFC byte for byte. Scoped to the literal value, as above.
+  '''BTBZMqHH6r4Tts7J_aSIgg''',
 ]
