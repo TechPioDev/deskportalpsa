@@ -7,11 +7,12 @@ namespace Desk.Application.Boards;
 public sealed record BoardDto(
     Guid Id, string Name, string Key, string? Description, BoardKind Kind,
     bool ClientVisible, bool IsActive, int SortOrder, int MemberCount, int OpenTickets,
-    Guid? DefaultSlaPlanId = null, string? DefaultSlaPlanName = null);
+    Guid? DefaultSlaPlanId = null, string? DefaultSlaPlanName = null, bool RequireResolution = false);
 
 public sealed record BoardInput(
     string Name, string Key, string? Description, BoardKind Kind = BoardKind.Internal,
-    bool ClientVisible = false, int SortOrder = 0, Guid? DefaultSlaPlanId = null);
+    bool ClientVisible = false, int SortOrder = 0, Guid? DefaultSlaPlanId = null,
+    bool RequireResolution = false);
 
 public sealed record BoardMemberDto(Guid AppUserId, string DisplayName, string Email);
 
@@ -72,7 +73,21 @@ public sealed record BoardTopicInput(
 public sealed record InternalTicketCreatedDto(Guid TicketId, string Number, string Title, Guid BoardId);
 
 /// <summary>Raising a ticket on a board that belongs to no PSA. Never pushed anywhere.</summary>
+/// <summary>
+/// The editable details of a ticket on the team's own board, sent whole: what the form shows is what
+/// is saved. Status, assignment and time have their own paths and are not here.
+/// </summary>
+public sealed record InternalTicketEdit(
+    string Title, string? Description, string Priority, DateTimeOffset? DueAt = null,
+    Guid? BoardTopicId = null, string? Category = null, Guid? DepartmentId = null, Guid? ClientCompanyId = null);
+
 public interface IInternalTicketService
 {
     Task<InternalTicketCreatedDto> CreateAsync(Guid appUserId, InternalTicketInput input, CancellationToken ct = default);
+
+    /// <summary>
+    /// Changes a board ticket's details. The caller has already found the ticket through the
+    /// person's own scope; a PSA ticket is refused, because its details belong to the provider.
+    /// </summary>
+    Task EditAsync(Desk.Domain.Tickets.Ticket ticket, InternalTicketEdit input, CancellationToken ct = default);
 }

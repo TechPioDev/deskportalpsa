@@ -1,3 +1,4 @@
+using Desk.Application.Admin;
 using Desk.Application.Common;
 using Desk.Application.Connectors;
 using Desk.Application.Mapping;
@@ -17,14 +18,37 @@ namespace Desk.Infrastructure.Tickets;
 /// One writer, used by the status control and by approvals alike, so "waiting on the customer" pauses
 /// an SLA and closing checks the task list the same way whichever of them asked. The caller has
 /// already decided the person may change this ticket.
+///
+/// Every change is audited against the ticket, which is what its History reads. Moving a finished
+/// ticket back to work is a reopen: counted, dated, and for a board ticket its finished dates are
+/// cleared so it is measured as open again.
 /// </summary>
-public sealed class TicketStatusWriter(DeskDbContext db, IConnectorResolver connectors, IMappingEngine mapping)
+public sealed class TicketStatusWriter(
+    DeskDbContext db, IConnectorResolver connectors, IMappingEngine mapping, IAuditWriter? audit = null)
 {
-    public async Task<string> SetAsync(Ticket ticket, string status, CancellationToken ct = default)
+    public const int ResolutionMaxLength = 4000;
+
+    public Task<string> SetAsync(Ticket ticket, string status, CancellationToken ct = default)
+        => SetAsync(ticket, status, null, ct);
+
+    public async Task<string> SetAsync(Ticket ticket, string status, string? resolution, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(status))
             throw new ValidationFailedException("A status is required.");
         var portalStatus = status.Trim();
+        var from = ticket.PortalStatus;
+        var resolving = Resolved(portalStatus);
+        // Finished before (by date or by status), and not finished now.
+        var reopening = !resolving && (ticket.ResolvedAt is not null || ticket.ClosedAt is not null || Resolved(from));
+        resolution = string.IsNullOrWhiteSpace(resolution) ? null : resolution.Trim();
+        if (resolution is { Length: > ResolutionMaxLength })
+            throw new ValidationFailedException($"Keep the resolution to {ResolutionMaxLength} characters.");
+
+        // A board can ask for the resolution to be written down. Asked only when there is none yet,
+        // so moving a resolved ticket to closed does not ask twice.
+        if (resolving && resolution is null && string.IsNullOrWhiteSpace(ticket.Resolution)
+            && ticket.BoardId is { } boardId && await db.Boards.AnyAsync(b => b.Id == boardId && b.RequireResolution, ct))
+            throw new ValidationFailedException("This board asks for a resolution when a ticket is resolved. Say what fixed it.");
 
         // As in osTicket: the task list is only worth keeping if "closed" means it was done. Asked
         // before either branch, so it holds for PSA tickets as well — their tasks live here too.
@@ -45,10 +69,16 @@ public sealed class TicketStatusWriter(DeskDbContext db, IConnectorResolver conn
             // Waiting on the customer or on hold stops the SLA clock; moving on gives the time back.
             await Boards.SlaPlanner.ApplyStatusAsync(db, ticket, portalStatus, DateTimeOffset.UtcNow, ct);
             ticket.PortalStatus = portalStatus;
+            if (reopening)
+            {
+                // Open again, so no longer finished: left in place, the old dates would keep it out of
+                // every open-work list and make its eventual resolution time look instant.
+                ticket.ResolvedAt = null;
+                ticket.ClosedAt = null;
+            }
             if (Closed(portalStatus)) ticket.ClosedAt ??= DateTimeOffset.UtcNow;
             if (Resolved(portalStatus)) ticket.ResolvedAt ??= DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(ct);
-            return ticket.PortalStatus;
+            return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, ct);
         }
 
         if (string.IsNullOrEmpty(ticket.ExternalTicketId))
@@ -71,7 +101,23 @@ public sealed class TicketStatusWriter(DeskDbContext db, IConnectorResolver conn
 
         ticket.PortalStatus = portalStatus;
         ticket.PsaStatus = mappedName;
+        // The provider owns a PSA ticket's dates; sync brings them. The reopen is still counted here.
+        return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, ct);
+    }
+
+    private async Task<string> FinishAsync(
+        Ticket ticket, string from, string to, bool resolving, bool reopening, string? resolution, CancellationToken ct)
+    {
+        if (resolving && resolution is not null) ticket.Resolution = resolution;
+        if (reopening)
+        {
+            ticket.ReopenCount++;
+            ticket.LastReopenedAt = DateTimeOffset.UtcNow;
+        }
         await db.SaveChangesAsync(ct);
+        if (audit is not null && !string.Equals(from, to, StringComparison.Ordinal))
+            await audit.WriteAsync(reopening ? "ticket.reopened" : "ticket.status.changed", "Ticket", ticket.Id.ToString(),
+                new { from, to, resolutionRecorded = resolution is not null }, ct);
         return ticket.PortalStatus;
     }
 

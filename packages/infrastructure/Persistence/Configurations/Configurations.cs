@@ -195,6 +195,7 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
     public void Configure(EntityTypeBuilder<Ticket> b)
     {
         b.ToTable("tickets");
+        b.Property(x => x.Resolution).HasMaxLength(4000);
         b.HasKey(x => x.Id);
         b.Property(x => x.Title).HasMaxLength(500).IsRequired();
         b.Property(x => x.RequesterName).HasMaxLength(200).IsRequired();
@@ -249,6 +250,10 @@ public sealed class BoardConfig : IEntityTypeConfiguration<Board>
         b.Property(x => x.Name).HasMaxLength(120).IsRequired();
         b.Property(x => x.Key).HasMaxLength(8).IsRequired();
         b.Property(x => x.Description).HasMaxLength(500);
+        // Two people raising a ticket at the same moment read the same next number. As a concurrency
+        // token, the second save fails and retries with the next number instead of colliding on the
+        // unique ticket-number index.
+        b.Property(x => x.NextNumber).IsConcurrencyToken();
         // The prefix appears in every ticket number on the board, so two boards cannot share one.
         b.HasIndex(x => new { x.MspOrganizationId, x.Key }).IsUnique();
         b.HasMany(x => x.Members).WithOne(m => m.Board!).HasForeignKey(m => m.BoardId).OnDelete(DeleteBehavior.Cascade);

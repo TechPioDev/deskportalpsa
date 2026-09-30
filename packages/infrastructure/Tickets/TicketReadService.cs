@@ -523,6 +523,11 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                         db.ClientUsers.Where(u => u.Id == s.ClientUserId).Select(u => u.DisplayName).FirstOrDefault(),
                         s.TechnicianName))
                     .FirstOrDefaultAsync(ct)
+                : null,
+            BoardDetails: includeInternal && ticket.BoardId is { } boardId
+                ? new TicketBoardDetailsDto(boardId, ticket.BoardTopicId, ticket.DepartmentId, ticket.ClientCompanyId,
+                    ticket.Resolution, ticket.ReopenCount, ticket.LastReopenedAt,
+                    await db.Boards.AsNoTracking().Where(b => b.Id == boardId).Select(b => b.RequireResolution).FirstOrDefaultAsync(ct))
                 : null);
     }
 
