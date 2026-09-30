@@ -212,6 +212,19 @@ and both have an OAuth2 REST API. The webhook route needs no API credentials at 
 | **Board rows** | *Take it* claims an unclaimed ticket; the status can be moved between working statuses from the row. Resolving still happens on the ticket, where it asks what fixed it. *Only mine* matches by who holds the ticket, not by name. Leads edit a board's members from the board. |
 | **Counting rule** | A ticket is one row wherever it came from: a PSA ticket is counted once (its sync updates the same row), a team-board ticket once, a monitoring alert once however often it repeats. |
 
+## How productivity is counted
+
+| Rule | What it means |
+|---|---|
+| **One ticket, one count** | A ticket is one row wherever it came from: a PSA ticket once (sync updates the same row), a team-board ticket once, a monitoring alert once however often it repeats. Nothing links an internal ticket to a PSA ticket yet, so there is nothing to double count. |
+| **Three sources, never lumped** | Work is split into client (PSA), team boards and monitoring, and further by PSA connection (`BySource`). Monitoring used to count as internal. |
+| **Hours the PSA holds** | Daily hours, the technician report and client reviews count only time entries recorded in the PSA (`SyncStatus = Synced`); a rejected or pending push stays on the ticket for a retry but is not counted. Team-board time is recorded the moment it is logged. |
+| **A person's own view** | Someone linked to a PSA account and a portal user is counted as one person under either identity (`MetricsFilter.EitherIdentity`), so their team-board work is in their own figures. Anyone without the team permission is pinned to themselves. |
+| **Reply promises** | Measured on tickets that had one (an SLA plan with a reply time), from replies made through the portal. The average reply time states how many tickets it is from; replies made directly in the PSA are not seen. |
+| **Reopens** | Resolved tickets brought back through the portal (Phase 1's `ReopenCount`). A reopen done in the PSA is not seen. |
+| **Satisfaction** | The client's 1–5 rating; 4 or 5 counts as satisfied. |
+| **Score** | Reply promises, reopens and satisfaction now count toward the productivity score where measured; an unmeasured part is left out (weights renormalise), never scored as zero. The score is an indicator, not a basis for performance decisions on its own. |
+
 ## Changing, finishing and reopening a ticket
 
 | What | How it works |
