@@ -200,6 +200,18 @@ refused if it was — which is what makes a misconfigured webhook diagnosable wi
 **Tested (NinjaOne, Datto RMM):** both publish outbound webhooks with a payload you write yourself,
 and both have an OAuth2 REST API. The webhook route needs no API credentials at all.
 
+## My work, Team workload and the paged list
+
+| What | How it works |
+|---|---|
+| **Ticket list** | Paged in the database (`GET /api/tickets/page`, 50 a page, newest first, id as tie-break). Every filter the page shows runs there: text, status, priority, kind (PSA / team boards / monitoring), source, company, queue, technician, raised-since, and the views. The dropdowns come from `GET /api/tickets/facets` over everything the caller can see, not just page one. Hours shown are for the whole filtered set. Measured on 10,000 tickets: 23–45 ms a page. |
+| **Unassigned** | Nobody holds it: no portal assignee, and on the PSA side nobody or the integration account (it is not a person). The same rule the browser applied before paging. |
+| **Overview and Analytics** | Counted on the server (`/api/tickets/breakdown`, `/api/tickets/summary`) instead of loading every ticket. |
+| **My work** | Staff. What I hold, or what sits with a team I am in, from every source: open, overdue, high priority and resolved-this-week each open the list behind them; due today and waiting are shown as figures only, because the list has no filter that shows exactly those. Hours I logged this week. |
+| **Team workload** | For leads (`productivity.team.view`). Open work per person from the tickets the reader can see: open, overdue, high priority, gone quiet (no word for 7 days), oldest waiting; and what nobody holds. A name opens that person's open tickets. |
+| **Board rows** | *Take it* claims an unclaimed ticket; the status can be moved between working statuses from the row. Resolving still happens on the ticket, where it asks what fixed it. *Only mine* matches by who holds the ticket, not by name. Leads edit a board's members from the board. |
+| **Counting rule** | A ticket is one row wherever it came from: a PSA ticket is counted once (its sync updates the same row), a team-board ticket once, a monitoring alert once however often it repeats. |
+
 ## Changing, finishing and reopening a ticket
 
 | What | How it works |
