@@ -17,7 +17,7 @@ public sealed class TechnicianReportBuilder(DeskDbContext db, ITechnicianMetrics
 {
     public async Task<TechnicianReport> BuildAsync(
         Guid organizationId, DateTimeOffset from, DateTimeOffset to, DateOnly start, DateOnly end,
-        string label, Guid? clientCompanyId, CancellationToken ct)
+        string label, Guid? clientCompanyId, CancellationToken ct, bool psaOnly = false)
     {
         var org = await db.MspOrganizations.AsNoTracking()
             .Where(o => o.Id == organizationId).Select(o => new { o.Name, o.TimeZone }).FirstOrDefaultAsync(ct)
@@ -27,7 +27,7 @@ public sealed class TechnicianReportBuilder(DeskDbContext db, ITechnicianMetrics
                 ?? throw new NotFoundException("Client")
             : null;
 
-        var days = await metrics.DailyAsync(new MetricsFilter { From = from, To = to, ClientCompanyId = clientCompanyId }, ct);
+        var days = await metrics.DailyAsync(new MetricsFilter { From = from, To = to, ClientCompanyId = clientCompanyId, PsaOnly = psaOnly }, ct);
 
         // One row per person across the period — the same grouping the Technician hours page uses,
         // so the emailed figures match what the recipient sees when they open the portal.

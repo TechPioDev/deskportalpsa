@@ -65,6 +65,13 @@ public sealed record MetricsFilter
     public Guid? AppUserId { get; init; }
 
     public Guid? ClientCompanyId { get; init; }
+
+    /// <summary>
+    /// Only the client's own tickets - those from a PSA - and time on them. For anything a client
+    /// reads: internal and monitoring work filed under a client stays the team's own record.
+    /// </summary>
+    public bool PsaOnly { get; init; }
+
     public Guid? PsaConnectionId { get; init; }
     public string? Priority { get; init; }
 }

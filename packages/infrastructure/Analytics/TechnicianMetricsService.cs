@@ -42,6 +42,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         if (f.TechnicianExternalId is { } tech) q = q.Where(t => t.AssignedTechnicianExternalId == tech);
         if (f.AppUserId is { } assignee) q = q.Where(t => t.AssignedAppUserId == assignee);
         if (f.ClientCompanyId is { } company) q = q.Where(t => t.ClientCompanyId == company);
+        if (f.PsaOnly) q = q.Where(t => t.Origin == TicketOrigin.Psa);
         if (f.PsaConnectionId is { } conn) q = q.Where(t => t.PsaConnectionId == conn);
         if (f.Priority is { } prio) q = q.Where(t => t.PortalPriority == prio);
 
@@ -112,6 +113,8 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // stayed organization-wide, so a client's row would have shown the whole desk's time.
         if (filter.ClientCompanyId is { } client)
             entries = entries.Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.ClientCompanyId == client));
+        if (filter.PsaOnly)
+            entries = entries.Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.Origin == TicketOrigin.Psa));
 
         var loggedRaw = await entries
             .Select(e => new
