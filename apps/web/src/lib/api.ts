@@ -1516,8 +1516,11 @@ export const AlertSourceSchema = z.object({
   lastReceivedAt: z.string().nullable(),
   receivedCount: z.number(),
   lastError: z.string().nullable(),
+  // The one client this tool reports on; null means the client is taken from each alert's text.
+  clientCompanyId: z.string().nullable().optional(),
+  clientName: z.string().nullable().optional(),
 });
 export type AlertSource = z.infer<typeof AlertSourceSchema>;
 /** The key is here once and never again: it is not stored in a form anyone can read back. */
 export const AlertSourceCreatedSchema = z.object({ source: AlertSourceSchema, key: z.string() });
-export type AlertSourceInput = { name: string; boardId: string; vendor?: number; closeOnClear?: boolean };
+export type AlertSourceInput = { name: string; boardId: string; vendor?: number; closeOnClear?: boolean; clientCompanyId?: string | null };

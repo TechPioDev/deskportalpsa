@@ -24,7 +24,8 @@ public sealed class AlertSourceService(DeskDbContext db, ITenantContext tenant, 
             .OrderBy(s => s.Name)
             .Select(s => new AlertSourceDto(
                 s.Id, s.Name, s.BoardId, s.Board!.Name, s.Vendor, s.KeyHint, s.IsActive, s.CloseOnClear,
-                s.LastReceivedAt, s.ReceivedCount, s.LastError))
+                s.LastReceivedAt, s.ReceivedCount, s.LastError, s.ClientCompanyId,
+                db.ClientCompanies.Where(c => c.Id == s.ClientCompanyId).Select(c => c.Name).FirstOrDefault()))
             .ToListAsync(ct);
 
     public async Task<AlertSourceCreatedDto> CreateAsync(AlertSourceInput input, CancellationToken ct = default)
@@ -36,6 +37,7 @@ public sealed class AlertSourceService(DeskDbContext db, ITenantContext tenant, 
         // one kind whose tickets nobody on the team raised by hand.
         if (board.Kind != BoardKind.Rmm)
             throw new ValidationFailedException("Choose a monitoring board. Alerts do not belong on a board the team raises work on.");
+        var client = await ClientNameAsync(input.ClientCompanyId, ct);
 
         var (key, hash, hint) = NewKey();
         var source = new AlertSource
@@ -47,12 +49,13 @@ public sealed class AlertSourceService(DeskDbContext db, ITenantContext tenant, 
             KeyHash = hash,
             KeyHint = hint,
             CloseOnClear = input.CloseOnClear,
+            ClientCompanyId = input.ClientCompanyId,
             CreatedByUserId = user.UserId,
         };
         db.AlertSources.Add(source);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("alertsource.created", "AlertSource", source.Id.ToString(),
-            new { source.Name, board = board.Name, source.Vendor, source.KeyHint }, ct);
+            new { source.Name, board = board.Name, source.Vendor, source.KeyHint, client }, ct);
         return new AlertSourceCreatedDto(await OneAsync(source.Id, ct), key);
     }
 
@@ -63,14 +66,19 @@ public sealed class AlertSourceService(DeskDbContext db, ITenantContext tenant, 
         var board = await db.Boards.FirstOrDefaultAsync(b => b.Id == input.BoardId, ct) ?? throw new NotFoundException("Board");
         if (board.Kind != BoardKind.Rmm)
             throw new ValidationFailedException("Choose a monitoring board. Alerts do not belong on a board the team raises work on.");
+        var client = await ClientNameAsync(input.ClientCompanyId, ct);
+        var clientBefore = source.ClientCompanyId;
 
         source.Name = name;
         source.BoardId = board.Id;
         source.Vendor = input.Vendor;
         source.CloseOnClear = input.CloseOnClear;
+        source.ClientCompanyId = input.ClientCompanyId;
         await db.SaveChangesAsync(ct);
+        // Which client a source reports on decides whose administrators may see its alerts, so the
+        // change is recorded with what it was before.
         await audit.WriteAsync("alertsource.updated", "AlertSource", source.Id.ToString(),
-            new { source.Name, board = board.Name, source.Vendor, source.CloseOnClear }, ct);
+            new { source.Name, board = board.Name, source.Vendor, source.CloseOnClear, clientBefore, clientAfter = input.ClientCompanyId, client }, ct);
         return await OneAsync(source.Id, ct);
     }
 
@@ -93,6 +101,14 @@ public sealed class AlertSourceService(DeskDbContext db, ITenantContext tenant, 
         // The old key stops working the moment this is saved; whoever is holding it must be told.
         await audit.WriteAsync("alertsource.key.regenerated", "AlertSource", id.ToString(), new { source.Name, source.KeyHint }, ct);
         return new AlertSourceCreatedDto(await OneAsync(id, ct), key);
+    }
+
+    /// <summary>The pinned client's name, after checking it exists here; null when none is pinned.</summary>
+    private async Task<string?> ClientNameAsync(Guid? clientCompanyId, CancellationToken ct)
+    {
+        if (clientCompanyId is not { } id) return null;
+        return await db.ClientCompanies.AsNoTracking().Where(c => c.Id == id).Select(c => c.Name).FirstOrDefaultAsync(ct)
+            ?? throw new ValidationFailedException("That client does not exist.");
     }
 
     private async Task<AlertSourceDto> OneAsync(Guid id, CancellationToken ct)

@@ -87,7 +87,7 @@ public sealed class AlertIntakeService(
     {
         var board = source.Board!;
         var now = clock.GetUtcNow();
-        var client = await MatchClientAsync(message.Client, ct);
+        var client = await ClientForAsync(source, board, message.Client, ct);
         var number = await NextNumberAsync(board, ct);
         // Timed from when we were told, not from when the tool says the fault began: nobody can be
         // late answering an alert that had not arrived yet.
@@ -136,9 +136,12 @@ public sealed class AlertIntakeService(
 
         logger.LogInformation("Alert {AlertId} from {Source} opened {Number}", alertId, source.Name, number);
         return new AlertResult("opened", ticket.Id, number,
-            client is null && !string.IsNullOrWhiteSpace(message.Client)
-                ? $"No client here is called \"{message.Client}\", so the ticket names none."
-                : null);
+            client is not null || string.IsNullOrWhiteSpace(message.Client) ? null
+            // Say which reason it was: "no such client" to a tool whose client does exist sends
+            // whoever reads the log looking for a typo that is not there.
+            : source.ClientCompanyId is null && board.ClientVisible
+                ? "This board is shown to clients, so the client is only set when the source is pinned to one. The ticket names none."
+                : $"No client here is called \"{message.Client}\", so the ticket names none.");
     }
 
     /// <summary>
@@ -245,6 +248,26 @@ public sealed class AlertIntakeService(
             .ToListAsync(ct);
         // Two devices with the same name: which one is unknowable, so neither.
         return matches.Count == 1 ? matches[0] : null;
+    }
+
+    /// <summary>
+    /// Which client an alert is about. A pinned source decides, whatever the alert says. Otherwise the
+    /// name in the alert is matched - but not on a board published to clients: there the client
+    /// decides which company's administrators read the alert, and free text from a tool must not make
+    /// that choice. Those alerts stay with the team, and the source says why.
+    /// </summary>
+    private async Task<Desk.Domain.Tenancy.ClientCompany?> ClientForAsync(
+        AlertSource source, Board board, string? named, CancellationToken ct)
+    {
+        if (source.ClientCompanyId is { } pinned)
+            return await db.ClientCompanies.FirstOrDefaultAsync(c => c.Id == pinned, ct);
+        if (board.ClientVisible)
+        {
+            source.LastError = "This board is shown to clients, so alerts are only attached to a client when " +
+                "the source is pinned to one. Pin this source to its client to publish its alerts.";
+            return null;
+        }
+        return await MatchClientAsync(named, ct);
     }
 
     /// <summary>
