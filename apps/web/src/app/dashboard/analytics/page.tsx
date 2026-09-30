@@ -55,6 +55,8 @@ export default function Analytics() {
   // ticket would otherwise look new - the Tickets list and Client workload use the same date.
   const { data: raised } = useQuery({ queryKey: ['tickets', 'breakdown', fromIso], queryFn: () => api.ticketBreakdown(fromIso) });
   const { data: activity } = useQuery({ queryKey: ['notifications'], queryFn: api.notifications });
+  // Quality for the range: the desk's for a lead, the reader's own for anyone else (pinned on the server).
+  const { data: quality } = useQuery({ queryKey: ['technician-quality', fromIso], queryFn: () => api.technicianMetrics(fromIso), retry: false });
 
   const rows = [...(team?.team ?? [])].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const cutoff = Date.now() - days * 86400_000;
@@ -178,6 +180,46 @@ export default function Analytics() {
         </Card>
       </div>
 
+      {/* Quality: each measure only where there was something to measure, with what it rests on. */}
+      {quality && (
+        <section aria-labelledby="quality-heading" className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+          <h2 id="quality-heading" className="text-sm font-semibold">Quality in this range</h2>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <QualityFigure label="Reply promises kept"
+              value={quality.metrics.firstResponseEligible > 0 ? `${Math.round(100 * quality.metrics.firstResponseMet / quality.metrics.firstResponseEligible)}%` : null}
+              basis={quality.metrics.firstResponseEligible > 0
+                ? `${quality.metrics.firstResponseMet} of ${quality.metrics.firstResponseEligible} tickets with a reply time`
+                : 'No tickets had a reply time. SLA plans on the team’s boards set one.'} />
+            <QualityFigure label="First reply, on average"
+              value={quality.metrics.avgFirstResponseHours !== null ? `${quality.metrics.avgFirstResponseHours}h` : null}
+              basis={quality.metrics.firstResponseSample > 0
+                ? `From ${quality.metrics.firstResponseSample} ticket${quality.metrics.firstResponseSample === 1 ? '' : 's'} answered in the portal; replies made in the PSA are not seen`
+                : 'No replies made in the portal in this range.'} />
+            <QualityFigure label="Came back after resolving"
+              value={quality.metrics.reopenRatePct !== null ? `${quality.metrics.reopenRatePct}%` : null}
+              basis={quality.metrics.resolved > 0
+                ? `${quality.metrics.reopened} of ${quality.metrics.resolved} resolved tickets were reopened in the portal`
+                : 'Nothing resolved in this range.'} />
+            <QualityFigure label="Clients satisfied"
+              value={quality.metrics.rated > 0 ? `${Math.round(100 * quality.metrics.satisfied / quality.metrics.rated)}%` : null}
+              basis={quality.metrics.rated > 0
+                ? `${quality.metrics.satisfied} of ${quality.metrics.rated} ratings were 4 or 5 out of 5`
+                : 'No ratings in this range.'} />
+          </div>
+          {quality.metrics.bySource.length > 0 && (
+            <p className="mt-4 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+              <span>Work by where it came from:</span>
+              {quality.metrics.bySource.map((x) => (
+                <span key={x.label} className="rounded-full bg-[var(--bg)] px-2.5 py-1 text-[var(--fg)]">
+                  {x.label} <span className="tabular-nums font-semibold">{x.assigned}</span>
+                  <span className="text-[var(--muted)]"> · {x.resolved} resolved</span>
+                </span>
+              ))}
+            </p>
+          )}
+        </section>
+      )}
+
       {/* Charts + Recent activities */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:col-span-3">
@@ -291,6 +333,17 @@ export default function Analytics() {
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/** One quality measure: the figure, or a dash when there was nothing to measure, and what it rests on. */
+function QualityFigure({ label, value, basis }: { label: string; value: string | null; basis: string }) {
+  return (
+    <div>
+      <p className="text-xs text-[var(--muted)]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{value ?? '—'}</p>
+      <p className="mt-1 text-[11px] leading-snug text-[var(--faint)]">{basis}</p>
     </div>
   );
 }

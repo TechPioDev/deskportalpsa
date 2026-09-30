@@ -213,6 +213,17 @@ export const TechnicianMetricsSchema = z.object({
   billableHours: z.number(),
   nonBillableHours: z.number(),
   score: ProductivityScoreSchema.nullable(),
+  // Quality, measured only where there is something to measure (null otherwise).
+  firstResponseEligible: z.number().default(0),
+  firstResponseMet: z.number().default(0),
+  avgFirstResponseHours: z.number().nullable().default(null),
+  firstResponseSample: z.number().default(0),
+  reopened: z.number().default(0),
+  reopenRatePct: z.number().nullable().default(null),
+  rated: z.number().default(0),
+  satisfied: z.number().default(0),
+  // Where the work came from: each PSA connection, team boards, monitoring.
+  bySource: z.array(z.object({ label: z.string(), assigned: z.number(), resolved: z.number(), hours: z.number() })).default([]),
 });
 
 export const TechnicianResponseSchema = z.object({
@@ -256,6 +267,9 @@ export const TechnicianDaySchema = z.object({
   // previous build mid-deploy still parses.
   internalHours: z.number().default(0),
   resolvedInternal: z.number().default(0),
+  // ...and the part opened by monitoring alerts, apart from the team's own boards.
+  monitoringHours: z.number().default(0),
+  resolvedMonitoring: z.number().default(0),
 });
 export type TechnicianDay = z.output<typeof TechnicianDaySchema>;
 export type TechnicianResponse = z.infer<typeof TechnicianResponseSchema>;
