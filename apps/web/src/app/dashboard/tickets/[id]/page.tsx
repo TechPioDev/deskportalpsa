@@ -15,6 +15,7 @@ import { AssistantRail } from '@/components/AssistantRail';
 import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
 import { TasksPanel } from '@/components/TasksPanel';
 import { EditBoardTicketForm, EditDetailsButton, ResolutionPrompt, TicketHistoryPanel, finishes } from '@/components/BoardTicketTools';
+import { RelatedTicketsPanel, ReviewBanner } from '@/components/TicketReviewAndLinks';
 import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
 import { ApprovalPanel } from '@/components/ApprovalPanel';
@@ -718,7 +719,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 Windows default 125% scaling reports ~1090 CSS pixels and never reached it, so the
                 assistant dropped below the thread on the machines it is actually used on. The
                 side rails give up width at `lg` so the thread keeps a workable measure. */}
-            <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_260px] xl:grid-cols-[320px_minmax(0,1fr)_320px] lg:items-start">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_minmax(0,1fr)_260px] xl:grid-cols-[320px_minmax(0,1fr)_320px] lg:items-start">
             {/* Both rails are given the SAME height — one screen, less the top offset — so the two
                 sides of the ticket line up instead of one ending halfway up the other. Each scrolls
                 inside itself rather than stretching to the thread's height, which on a sixteen
@@ -771,6 +772,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               {editingDetails && ticket.boardDetails && (
                 <EditBoardTicketForm ticket={ticket} onClose={() => setEditingDetails(false)} />
               )}
+              {/* A board lead reviews resolved work where the board asks for it; never their own ticket. */}
+              <ReviewBanner ticket={ticket}
+                canReview={!!me?.permissions.includes('boards.manage') && !!me.userId && ticket.assignedAppUserId !== me.userId} />
               {ticket.boardDetails?.resolution && (
                 <div className="mt-3 rounded-lg bg-[var(--bg)] p-3 text-sm">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Resolution</p>
@@ -939,6 +943,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             )}
 
             {/* Who did what, for staff: the team's own record of the ticket, not the client's. */}
+            {isStaff && <RelatedTicketsPanel ticketId={id} canUpdate={canUpdate} />}
             {isStaff && <TicketHistoryPanel ticketId={id} />}
 
             </aside>

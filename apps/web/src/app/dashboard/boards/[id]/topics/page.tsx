@@ -135,6 +135,7 @@ function TopicForm({ boardId, topic, onClose, onSaved }: {
     dueInHours: topic?.dueInHours ?? null,
     sortOrder: topic?.sortOrder ?? 0,
     slaPlanId: topic?.slaPlanId ?? null,
+    requireReview: topic?.requireReview ?? false,
   });
   const { data: plans } = useQuery({ queryKey: ['sla-plans', false], queryFn: () => api.slaPlans(false), retry: false });
   const { data: departments } = useQuery({ queryKey: ['board-departments'], queryFn: api.boardDepartments, retry: false });
@@ -205,6 +206,11 @@ function TopicForm({ boardId, topic, onClose, onSaved }: {
         <span className="block text-[11px] font-normal text-[var(--faint)]">
           Sets when a reply is owed and when the ticket is due. A fixed &ldquo;Due within&rdquo; above wins for the due date.
         </span>
+      </label>
+      <label className="flex items-start gap-2 text-xs text-[var(--muted)] sm:col-span-2">
+        <input type="checkbox" checked={!!v.requireReview} className="mt-0.5" aria-label="Review this kind of work"
+          onChange={(e) => setV({ ...v, requireReview: e.target.checked })} />
+        <span>Review this kind of work before it closes, even if the board does not review everything.</span>
       </label>
       {save.isError && (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400 sm:col-span-2">{(save.error as Error).message}</p>

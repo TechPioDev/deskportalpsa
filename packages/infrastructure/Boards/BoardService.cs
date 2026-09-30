@@ -33,7 +33,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
                 db.Tickets.Count(t => t.BoardId == b.Id && t.ClosedAt == null),
                 b.DefaultSlaPlanId,
                 db.SlaPlans.Where(p => p.Id == b.DefaultSlaPlanId).Select(p => p.Name).FirstOrDefault(),
-                b.RequireResolution))
+                b.RequireResolution, b.RequireReview))
             .ToListAsync(ct);
     }
 
@@ -56,6 +56,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
             SortOrder = input.SortOrder,
             DefaultSlaPlanId = await PlanAsync(input.DefaultSlaPlanId, ct),
             RequireResolution = input.RequireResolution,
+            RequireReview = input.RequireReview,
         };
         db.Boards.Add(board);
         await db.SaveChangesAsync(ct);
@@ -86,9 +87,10 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         board.ClientVisible = board.Kind == BoardKind.Rmm && input.ClientVisible;
         board.DefaultSlaPlanId = await PlanAsync(input.DefaultSlaPlanId, ct);
         board.RequireResolution = input.RequireResolution;
+        board.RequireReview = input.RequireReview;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("board.updated", "Board", board.Id.ToString(),
-            new { board.Name, board.Key, board.ClientVisible, clientVisibilityChanged = wasClientVisible != board.ClientVisible, board.RequireResolution }, ct);
+            new { board.Name, board.Key, board.ClientVisible, clientVisibilityChanged = wasClientVisible != board.ClientVisible, board.RequireResolution, board.RequireReview }, ct);
         return await OneAsync(board.Id, ct);
     }
 
@@ -143,7 +145,8 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
                 t.DefaultPriority, t.DefaultAssigneeUserId,
                 db.AppUsers.Where(u => u.Id == t.DefaultAssigneeUserId).Select(u => u.DisplayName).FirstOrDefault(),
                 t.DueInHours, t.IsActive, t.SortOrder, t.SlaPlanId,
-                db.SlaPlans.Where(p => p.Id == t.SlaPlanId).Select(p => p.Name).FirstOrDefault()))
+                db.SlaPlans.Where(p => p.Id == t.SlaPlanId).Select(p => p.Name).FirstOrDefault(),
+                t.RequireReview))
             .ToListAsync(ct);
     }
 
@@ -163,6 +166,7 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
             DueInHours = input.DueInHours,
             SortOrder = input.SortOrder,
             SlaPlanId = await PlanAsync(input.SlaPlanId, ct),
+            RequireReview = input.RequireReview,
         };
         db.BoardTopics.Add(topic);
         await db.SaveChangesAsync(ct);
@@ -180,8 +184,9 @@ public sealed partial class BoardService(DeskDbContext db, ITenantContext tenant
         topic.DueInHours = input.DueInHours;
         topic.SortOrder = input.SortOrder;
         topic.SlaPlanId = await PlanAsync(input.SlaPlanId, ct);
+        topic.RequireReview = input.RequireReview;
         await db.SaveChangesAsync(ct);
-        await audit.WriteAsync("board.topic.updated", "Board", topic.BoardId.ToString(), new { topic.Name }, ct);
+        await audit.WriteAsync("board.topic.updated", "Board", topic.BoardId.ToString(), new { topic.Name, topic.RequireReview }, ct);
         return (await TopicsAsync(topic.BoardId, includeInactive: true, ct)).First(t => t.Id == topicId);
     }
 

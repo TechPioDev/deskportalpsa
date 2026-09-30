@@ -333,6 +333,20 @@ public sealed class TicketTaskConfig : IEntityTypeConfiguration<TicketTask>
     }
 }
 
+public sealed class TicketLinkConfig : IEntityTypeConfiguration<TicketLink>
+{
+    public void Configure(EntityTypeBuilder<TicketLink> b)
+    {
+        b.ToTable("ticket_links");
+        b.HasKey(x => x.Id);
+        // Read from either end: a ticket shows the links it made and the links made to it.
+        b.HasIndex(x => new { x.FromTicketId, x.ToTicketId, x.Kind }).IsUnique();
+        b.HasIndex(x => x.ToTicketId);
+        b.HasOne(x => x.FromTicket).WithMany().HasForeignKey(x => x.FromTicketId).OnDelete(DeleteBehavior.Cascade);
+        b.HasOne(x => x.ToTicket).WithMany().HasForeignKey(x => x.ToTicketId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedResponse>
 {
     public void Configure(EntityTypeBuilder<CannedResponse> b)

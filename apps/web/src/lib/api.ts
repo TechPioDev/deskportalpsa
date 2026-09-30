@@ -283,6 +283,14 @@ export const api = {
   /** A board ticket's details, sent whole. */
   editBoardTicket: (id: string, body: BoardTicketEdit) =>
     request(`/api/boards/tickets/${id}`, z.unknown(), { method: 'PUT', body: JSON.stringify(body) }),
+  /** Approve resolved work (it closes) or send it back with a note. Board leads only. */
+  reviewTicket: (id: string, body: { approve: boolean; note?: string | null }) =>
+    request(`/api/tickets/${id}/review`, z.unknown(), { method: 'POST', body: JSON.stringify(body) }),
+  ticketLinks: (id: string) => request(`/api/tickets/${id}/links`, z.array(TicketLinkSchema)) as Promise<TicketLink[]>,
+  addTicketLink: (id: string, otherTicketId: string, kind: number) =>
+    request(`/api/tickets/${id}/links`, TicketLinkSchema, { method: 'POST', body: JSON.stringify({ otherTicketId, kind }) }),
+  removeTicketLink: (id: string, linkId: string) =>
+    request(`/api/tickets/${id}/links/${linkId}`, z.unknown(), { method: 'DELETE' }),
   ticketHistory: (id: string) =>
     request(`/api/tickets/${id}/history`, z.array(TicketHistoryEntrySchema)) as Promise<TicketHistoryEntry[]>,
   // Same aggregate response as update/retry/delete — the endpoint recomputes the ticket's totals
@@ -1278,6 +1286,8 @@ export type TicketPageParams = {
   mine?: boolean; following?: boolean; unassigned?: boolean; overdue?: boolean; dueSoon?: boolean;
   company?: string; queue?: string; source?: string; person?: string; from?: string; kind?: string;
   skip?: number; take?: number;
+  /** "pending": resolved work waiting for a board lead's review. */
+  review?: string;
 };
 const TicketPageSchema = z.object({
   items: z.array(TicketListItemSchema), total: z.number(), skip: z.number(), take: z.number(),
@@ -1309,6 +1319,7 @@ const TeamWorkloadSchema = z.object({
     stale: z.number(), oldestRaisedAt: z.string().nullable(),
   })),
   unassigned: z.number(), unassignedOverdue: z.number(), stale: z.number(), staleDays: z.number(),
+  awaitingReview: z.number().default(0),
 });
 export type TeamWorkload = z.infer<typeof TeamWorkloadSchema>;
 
@@ -1330,6 +1341,12 @@ const TimeEntrySchema = z.object({
   mayChange: z.boolean().default(false),
 });
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
+
+export const TicketLinkSchema = z.object({
+  id: z.string(), relation: z.string(), otherTicketId: z.string(), otherReference: z.string().nullable(),
+  otherTitle: z.string(), otherStatus: z.string(), otherOrigin: z.number(),
+});
+export type TicketLink = z.infer<typeof TicketLinkSchema>;
 
 export const TicketHistoryEntrySchema = z.object({
   at: z.string(), who: z.string().nullable(), kind: z.string(), summary: z.string(), note: z.string().nullable().default(null),
@@ -1383,6 +1400,7 @@ export const BoardSchema = z.object({
   defaultSlaPlanId: z.string().nullable().default(null),
   defaultSlaPlanName: z.string().nullable().default(null),
   requireResolution: z.boolean().default(false),
+  requireReview: z.boolean().default(false),
 });
 export type Board = z.infer<typeof BoardSchema>;
 export const BoardMemberSchema = z.object({
@@ -1396,6 +1414,8 @@ export type BoardInput = {
   defaultSlaPlanId?: string | null;
   /** Resolving a ticket here needs a written resolution. Sent on every save: omitting it switches it off. */
   requireResolution?: boolean;
+  /** Resolved work here is reviewed by a board lead before it closes. Sent on every save. */
+  requireReview?: boolean;
 };
 export type InternalTicketInput = {
   boardId: string; title: string; description: string | null;
@@ -1419,12 +1439,15 @@ export const BoardTopicSchema = z.object({
   sortOrder: z.number(),
   slaPlanId: z.string().nullable().default(null),
   slaPlanName: z.string().nullable().default(null),
+  requireReview: z.boolean().default(false),
 });
 export type BoardTopic = z.infer<typeof BoardTopicSchema>;
 export type BoardTopicInput = {
   name: string; defaultDepartmentId?: string | null; defaultPriority?: string | null;
   defaultAssigneeUserId?: string | null; dueInHours?: number | null; sortOrder?: number;
   slaPlanId?: string | null;
+  /** This kind of work is reviewed before it closes. Sent on every save: omitting it switches it off. */
+  requireReview?: boolean;
 };
 
 /** How quickly board work is owed. Working days are a bitmask with Sunday as bit 0. */

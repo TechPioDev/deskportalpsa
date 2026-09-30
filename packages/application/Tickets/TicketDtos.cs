@@ -104,7 +104,9 @@ public sealed record TicketQuery(
     /// <summary>"psa", "internal" or "monitoring".</summary>
     string? Kind = null,
     /// <summary>For paging: how many matching tickets to pass over first.</summary>
-    int Skip = 0);
+    int Skip = 0,
+    /// <summary>Resolved work waiting for a board lead's review.</summary>
+    bool ReviewPending = false);
 
 /// <summary>One page of the ticket list, and what the whole filtered set adds up to.</summary>
 public sealed record TicketPage(
@@ -141,7 +143,7 @@ public sealed record WorkloadRow(
     string Key, string Name, int Open, int Overdue, int HighPriority, int Stale, DateTimeOffset? OldestRaisedAt);
 
 /// <summary>The team's open work by person, and what nobody holds yet.</summary>
-public sealed record TeamWorkload(IReadOnlyList<WorkloadRow> People, int Unassigned, int UnassignedOverdue, int Stale, int StaleDays);
+public sealed record TeamWorkload(IReadOnlyList<WorkloadRow> People, int Unassigned, int UnassignedOverdue, int Stale, int StaleDays, int AwaitingReview = 0);
 
 /// <summary>
 /// What a search found, and honestly whether that was all of it: a result set silently cut at the
@@ -274,7 +276,10 @@ public sealed record TicketDetailDto(
 
 public sealed record TicketBoardDetailsDto(
     Guid BoardId, Guid? BoardTopicId, Guid? DepartmentId, Guid? ClientCompanyId,
-    string? Resolution, int ReopenCount, DateTimeOffset? LastReopenedAt, bool RequireResolution);
+    string? Resolution, int ReopenCount, DateTimeOffset? LastReopenedAt, bool RequireResolution,
+    /// <summary>Whether this ticket's board or topic reviews resolved work, and where the review stands.</summary>
+    bool RequireReview = false, Desk.Domain.Tickets.TicketReviewState ReviewState = Desk.Domain.Tickets.TicketReviewState.None,
+    string? ReviewedBy = null, DateTimeOffset? ReviewedAt = null, int ReviewSendBacks = 0);
 
 /// <summary>A ticket's device. The serial and warranty reach staff only: the client's own device list
 /// is for their administrators, and a ticket page is read by whoever raised it.</summary>

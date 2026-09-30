@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { AlarmClock, Inbox, Snowflake } from 'lucide-react';
+import { AlarmClock, ClipboardCheck, Inbox, Snowflake } from 'lucide-react';
 import { api } from '@/lib/api';
 
 /** "3 days", "5 weeks": how long the oldest open ticket has waited. */
@@ -30,7 +30,7 @@ export default function WorkloadPage() {
         <p className="text-sm text-[var(--muted)]">Open work by who holds it, across Autotask, ConnectWise, team boards and monitoring.</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Link href="/dashboard/tickets?unassigned=1&view=open" className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 hover:border-brand/40">
           <Inbox size={16} className="text-brand" aria-hidden="true" />
           <p className="mt-2 text-2xl font-semibold tabular-nums">{data?.unassigned ?? '–'}</p>
@@ -46,6 +46,12 @@ export default function WorkloadPage() {
           <p className="mt-2 text-2xl font-semibold tabular-nums">{data?.stale ?? '–'}</p>
           <p className="text-xs text-[var(--muted)]">No word for {data?.staleDays ?? 7} days or more</p>
         </div>
+        {/* Resolved, but a board lead has not looked yet: not open work, and not finished either. */}
+        <Link href="/dashboard/tickets?review=pending" className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 hover:border-brand/40">
+          <ClipboardCheck size={16} className="text-amber-600 dark:text-amber-400" aria-hidden="true" />
+          <p className="mt-2 text-2xl font-semibold tabular-nums">{data?.awaitingReview ?? '–'}</p>
+          <p className="text-xs text-[var(--muted)]">Awaiting review</p>
+        </Link>
       </div>
 
       <section aria-labelledby="people-heading" className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">

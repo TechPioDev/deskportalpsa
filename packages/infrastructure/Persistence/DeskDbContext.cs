@@ -47,6 +47,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<SavedTicketView> SavedTicketViews => Set<SavedTicketView>();
     public DbSet<SlaPlan> SlaPlans => Set<SlaPlan>();
     public DbSet<TicketTask> TicketTasks => Set<TicketTask>();
+    public DbSet<TicketLink> TicketLinks => Set<TicketLink>();
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
     public DbSet<DeskHoliday> DeskHolidays => Set<DeskHoliday>();
     public DbSet<TicketSatisfaction> TicketSatisfactions => Set<TicketSatisfaction>();

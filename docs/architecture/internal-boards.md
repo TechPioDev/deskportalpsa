@@ -216,13 +216,14 @@ and both have an OAuth2 REST API. The webhook route needs no API credentials at 
 
 | Rule | What it means |
 |---|---|
-| **One ticket, one count** | A ticket is one row wherever it came from: a PSA ticket once (sync updates the same row), a team-board ticket once, a monitoring alert once however often it repeats. Nothing links an internal ticket to a PSA ticket yet, so there is nothing to double count. |
+| **One ticket, one count** | A ticket is one row wherever it came from: a PSA ticket once (sync updates the same row), a team-board ticket once, a monitoring alert once however often it repeats. A link between tickets (below) changes no count: an investigation linked to the PSA ticket it came from is still two tickets, each counted where it lives, and the hours on each stay on that ticket. |
 | **Three sources, never lumped** | Work is split into client (PSA), team boards and monitoring, and further by PSA connection (`BySource`). Monitoring used to count as internal. |
 | **Hours the PSA holds** | Daily hours, the technician report and client reviews count only time entries recorded in the PSA (`SyncStatus = Synced`); a rejected or pending push stays on the ticket for a retry but is not counted. Team-board time is recorded the moment it is logged. |
 | **A person's own view** | Someone linked to a PSA account and a portal user is counted as one person under either identity (`MetricsFilter.EitherIdentity`), so their team-board work is in their own figures. Anyone without the team permission is pinned to themselves. |
 | **Reply promises** | Measured on tickets that had one (an SLA plan with a reply time), from replies made through the portal. The average reply time states how many tickets it is from; replies made directly in the PSA are not seen. |
 | **Reopens** | Resolved tickets brought back through the portal (Phase 1's `ReopenCount`). A reopen done in the PSA is not seen. |
 | **Satisfaction** | The client's 1–5 rating; 4 or 5 counts as satisfied. |
+| **Review** | Tickets approved in the range, and how many were approved without a send-back (*Passed review first time*). Shown only where something was reviewed; not part of the score. |
 | **Score** | Reply promises, reopens and satisfaction now count toward the productivity score where measured; an unmeasured part is left out (weights renormalise), never scored as zero. The score is an indicator, not a basis for performance decisions on its own. |
 
 ## Changing, finishing and reopening a ticket
@@ -235,6 +236,20 @@ and both have an OAuth2 REST API. The webhook route needs no API credentials at 
 | **History** | `GET /api/tickets/{id}/history`, staff only and scoped: raised, handovers (with the handover note), team changes, status, reopens, edits and time, with who and when. Reads the handover rows and the audit trail; writes nothing. |
 | **Time** | Only the person who logged it, or a board lead (`boards.manage`), may edit or delete an entry; others are refused and do not see the buttons. A board ticket's time can be dated up to 30 days back, never forward; a PSA ticket's time is dated by the PSA. Every log, edit and delete is audited. Editing PSA time now updates the portal's own copy too. |
 | **Numbers** | `Board.NextNumber` is a concurrency token: two people raising a ticket at once no longer read the same number. |
+
+## Review and related tickets
+
+| What | How it works |
+|---|---|
+| **Asking for review** | Opt-in, per board (*Review resolved work*) or per topic (*Review this kind of work*), so a board can review only its firewall changes. Off everywhere by default: nothing changes for a board that does not ask. |
+| **Waiting for review** | Resolving such a ticket sets `ReviewState = Pending` instead of letting it close. Closing it any other way - the status list, the row, the API - is refused with "reviewed before it closes" (`TicketStatusWriter`, the one place statuses change). |
+| **Approve** | `POST /api/tickets/{id}/review {approve: true}`, `boards.manage` and inside the reviewer's own scope. Records who and when, then closes the ticket through the status writer (so tasks still have to be done). |
+| **Send back** | Same call with `approve: false` and a note (required). The note goes on the ticket as an internal note, the ticket returns to In progress and `ReviewSendBacks` goes up. It is **not** a reopen: `ReopenCount` measures work that came back after it was finished, and this never was. |
+| **Nobody reviews their own work** | The holder of the ticket is refused (`ForbiddenException`) and is not shown the buttons. |
+| **Finding it** | Team workload shows *Awaiting review*, which opens the list with `review=pending`. Reopening an approved ticket clears the approval; resolving it again waits for review again. |
+| **Links** | `GET/POST/DELETE /api/tickets/{id}/links`: related to, duplicate of, parent of / part of, blocks / blocked by. Stored once (`ticket_links`, unique per pair and kind) and read from either side. One link per pair of tickets; never to itself. Staff only. |
+| **Links never leak** | Both ends must be tickets the person can see. Linking to one they cannot see is "not found", exactly like opening it; a link someone else made to such a ticket is left out of their list, not named. Removing a link needs sight of both ends. Linking and unlinking go on both tickets' History. |
+| **Counts** | Links change no figure anywhere. See *One ticket, one count*. |
 
 ## What is not built yet
 

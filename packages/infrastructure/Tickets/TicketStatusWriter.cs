@@ -31,7 +31,12 @@ public sealed class TicketStatusWriter(
     public Task<string> SetAsync(Ticket ticket, string status, CancellationToken ct = default)
         => SetAsync(ticket, status, null, ct);
 
-    public async Task<string> SetAsync(Ticket ticket, string status, string? resolution, CancellationToken ct = default)
+    /// <param name="countReopen">
+    /// False when work goes back because a reviewer sent it back: that is a review finding, counted
+    /// as a send-back, not a ticket that came back after it was finished.
+    /// </param>
+    public async Task<string> SetAsync(
+        Ticket ticket, string status, string? resolution, CancellationToken ct = default, bool countReopen = true)
     {
         if (string.IsNullOrWhiteSpace(status))
             throw new ValidationFailedException("A status is required.");
@@ -49,6 +54,12 @@ public sealed class TicketStatusWriter(
         if (resolving && resolution is null && string.IsNullOrWhiteSpace(ticket.Resolution)
             && ticket.BoardId is { } boardId && await db.Boards.AnyAsync(b => b.Id == boardId && b.RequireResolution, ct))
             throw new ValidationFailedException("This board asks for a resolution when a ticket is resolved. Say what fixed it.");
+
+        // A board or topic that reviews resolved work: it waits for a lead's approval before it closes.
+        var reviewed = await ReviewRequiredAsync(ticket, ct);
+        if (reviewed && Closed(portalStatus) && ticket.ReviewState != TicketReviewState.Approved)
+            throw new ValidationFailedException(
+                "Work on this board is reviewed before it closes. Mark it resolved, and a board lead approves it from the ticket.");
 
         // As in osTicket: the task list is only worth keeping if "closed" means it was done. Asked
         // before either branch, so it holds for PSA tickets as well — their tasks live here too.
@@ -78,7 +89,7 @@ public sealed class TicketStatusWriter(
             }
             if (Closed(portalStatus)) ticket.ClosedAt ??= DateTimeOffset.UtcNow;
             if (Resolved(portalStatus)) ticket.ResolvedAt ??= DateTimeOffset.UtcNow;
-            return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, ct);
+            return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, reviewed, countReopen, ct);
         }
 
         if (string.IsNullOrEmpty(ticket.ExternalTicketId))
@@ -102,23 +113,40 @@ public sealed class TicketStatusWriter(
         ticket.PortalStatus = portalStatus;
         ticket.PsaStatus = mappedName;
         // The provider owns a PSA ticket's dates; sync brings them. The reopen is still counted here.
-        return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, ct);
+        return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, reviewed, countReopen, ct);
     }
 
     private async Task<string> FinishAsync(
-        Ticket ticket, string from, string to, bool resolving, bool reopening, string? resolution, CancellationToken ct)
+        Ticket ticket, string from, string to, bool resolving, bool reopening, string? resolution,
+        bool reviewed, bool countReopen, CancellationToken ct)
     {
         if (resolving && resolution is not null) ticket.Resolution = resolution;
         if (reopening)
         {
-            ticket.ReopenCount++;
-            ticket.LastReopenedAt = DateTimeOffset.UtcNow;
+            if (countReopen)
+            {
+                ticket.ReopenCount++;
+                ticket.LastReopenedAt = DateTimeOffset.UtcNow;
+            }
+            // Back to work: whatever review there was covered the old attempt, not the next one.
+            ticket.ReviewState = TicketReviewState.None;
         }
+        // Resolved on a reviewed board: it now waits for a lead.
+        if (reviewed && resolving && !Closed(to) && ticket.ReviewState != TicketReviewState.Approved)
+            ticket.ReviewState = TicketReviewState.Pending;
         await db.SaveChangesAsync(ct);
         if (audit is not null && !string.Equals(from, to, StringComparison.Ordinal))
             await audit.WriteAsync(reopening ? "ticket.reopened" : "ticket.status.changed", "Ticket", ticket.Id.ToString(),
                 new { from, to, resolutionRecorded = resolution is not null }, ct);
         return ticket.PortalStatus;
+    }
+
+    /// <summary>Whether this ticket's board, or its topic, reviews resolved work before it closes.</summary>
+    public async Task<bool> ReviewRequiredAsync(Ticket ticket, CancellationToken ct)
+    {
+        if (ticket.BoardId is not { } boardId) return false;
+        if (await db.Boards.AnyAsync(b => b.Id == boardId && b.RequireReview, ct)) return true;
+        return ticket.BoardTopicId is { } topicId && await db.BoardTopics.AnyAsync(t => t.Id == topicId && t.RequireReview, ct);
     }
 
     /// <summary>

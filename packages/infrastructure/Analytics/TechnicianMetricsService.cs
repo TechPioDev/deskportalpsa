@@ -15,7 +15,8 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         Guid Id, string? Tech, Guid? AppUserId, string? TechName, DateTimeOffset CreatedAt,
         DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? SlaDueAt,
         decimal Worked, decimal Billable, decimal NonBillable, bool HasNote, Guid? Conn, TicketOrigin Origin,
-        DateTimeOffset? FirstResponseDueAt, DateTimeOffset? FirstRespondedAt, int ReopenCount, int? Rating);
+        DateTimeOffset? FirstResponseDueAt, DateTimeOffset? FirstRespondedAt, int ReopenCount, int? Rating,
+        DateTimeOffset? ReviewedAt, int ReviewSendBacks);
 
     /// <param name="byResolution">
     /// Window on WHEN THE TICKET WAS RESOLVED instead of when it was raised, for "resolved in this
@@ -62,7 +63,8 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             t.TimeWorkedHours, t.BillableHours, t.NonBillableHours,
             t.Notes.Any(n => n.IsPublic), t.PsaConnectionId, t.Origin,
             t.FirstResponseDueAt, t.FirstRespondedAt, t.ReopenCount,
-            db.TicketSatisfactions.Where(x => x.TicketId == t.Id).Select(x => (int?)x.Rating).FirstOrDefault())).ToListAsync(ct);
+            db.TicketSatisfactions.Where(x => x.TicketId == t.Id).Select(x => (int?)x.Rating).FirstOrDefault(),
+            t.ReviewedAt, t.ReviewSendBacks)).ToListAsync(ct);
     }
 
     private Task<Dictionary<Guid, string>> ConnectionNamesAsync(CancellationToken ct)
@@ -336,6 +338,8 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             ReopenRatePct = reopenRate,
             Rated = rated.Count,
             Satisfied = satisfied,
+            Reviewed = rows.Count(r => r.ReviewedAt is not null),
+            PassedReviewFirstTime = rows.Count(r => r.ReviewedAt is not null && r.ReviewSendBacks == 0),
             Open = open,
             Overdue = overdue,
             WithinSla = withinSla,

@@ -133,6 +133,17 @@ public sealed class RelationalQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task Review_queue_and_links_translate()
+    {
+        var reads = new TicketReadService(_db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: _me));
+        (await reads.PageAsync(new TicketQuery(ReviewPending: true))).Total.Should().Be(0);
+        var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);
+        var links = new TicketLinkService(_db, new NoopTicketScopeQuery(), new Desk.Infrastructure.Admin.AuditWriter(_db, new TestCurrentUser(Org, userId: _me), _tenant, _clock));
+        (await links.ListAsync(ticket, _me)).Should().BeEmpty();
+        (await new TicketStatusWriter(_db, null!, null!).ReviewRequiredAsync(ticket, default)).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task Ticket_history_translates()
     {
         var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);

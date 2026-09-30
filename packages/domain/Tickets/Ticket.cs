@@ -182,6 +182,15 @@ public class Ticket : TenantEntity
     public int ReopenCount { get; set; }
     public DateTimeOffset? LastReopenedAt { get; set; }
 
+    /// <summary>
+    /// The opt-in review, on a board or topic that asks for one: resolved work waits here for a lead
+    /// to approve it before it can close. Who approved it, when, and how often it was sent back first.
+    /// </summary>
+    public TicketReviewState ReviewState { get; set; }
+    public Guid? ReviewedByUserId { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
+    public int ReviewSendBacks { get; set; }
+
     public decimal TimeWorkedHours { get; set; }
     public decimal BillableHours { get; set; }
     public decimal NonBillableHours { get; set; }

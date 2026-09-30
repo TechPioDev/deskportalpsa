@@ -205,6 +205,11 @@ export default function Analytics() {
               basis={quality.metrics.rated > 0
                 ? `${quality.metrics.satisfied} of ${quality.metrics.rated} ratings were 4 or 5 out of 5`
                 : 'No ratings in this range.'} />
+            {quality.metrics.reviewed > 0 && (
+              <QualityFigure label="Passed review first time"
+                value={`${Math.round(100 * quality.metrics.passedReviewFirstTime / quality.metrics.reviewed)}%`}
+                basis={`${quality.metrics.passedReviewFirstTime} of ${quality.metrics.reviewed} reviewed tickets were approved without being sent back`} />
+            )}
           </div>
           {quality.metrics.bySource.length > 0 && (
             <p className="mt-4 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">

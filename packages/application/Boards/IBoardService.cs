@@ -7,12 +7,13 @@ namespace Desk.Application.Boards;
 public sealed record BoardDto(
     Guid Id, string Name, string Key, string? Description, BoardKind Kind,
     bool ClientVisible, bool IsActive, int SortOrder, int MemberCount, int OpenTickets,
-    Guid? DefaultSlaPlanId = null, string? DefaultSlaPlanName = null, bool RequireResolution = false);
+    Guid? DefaultSlaPlanId = null, string? DefaultSlaPlanName = null, bool RequireResolution = false,
+    bool RequireReview = false);
 
 public sealed record BoardInput(
     string Name, string Key, string? Description, BoardKind Kind = BoardKind.Internal,
     bool ClientVisible = false, int SortOrder = 0, Guid? DefaultSlaPlanId = null,
-    bool RequireResolution = false);
+    bool RequireResolution = false, bool RequireReview = false);
 
 public sealed record BoardMemberDto(Guid AppUserId, string DisplayName, string Email);
 
@@ -64,11 +65,13 @@ public sealed record InternalTicketInput(
 public sealed record BoardTopicDto(
     Guid Id, Guid BoardId, string Name, Guid? DefaultDepartmentId, string? DefaultDepartmentName,
     string? DefaultPriority, Guid? DefaultAssigneeUserId, string? DefaultAssigneeName,
-    int? DueInHours, bool IsActive, int SortOrder, Guid? SlaPlanId = null, string? SlaPlanName = null);
+    int? DueInHours, bool IsActive, int SortOrder, Guid? SlaPlanId = null, string? SlaPlanName = null,
+    bool RequireReview = false);
 
 public sealed record BoardTopicInput(
     string Name, Guid? DefaultDepartmentId = null, string? DefaultPriority = null,
-    Guid? DefaultAssigneeUserId = null, int? DueInHours = null, int SortOrder = 0, Guid? SlaPlanId = null);
+    Guid? DefaultAssigneeUserId = null, int? DueInHours = null, int SortOrder = 0, Guid? SlaPlanId = null,
+    bool RequireReview = false);
 
 public sealed record InternalTicketCreatedDto(Guid TicketId, string Number, string Title, Guid BoardId);
 

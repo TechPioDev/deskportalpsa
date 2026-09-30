@@ -49,6 +49,12 @@ public class Board : TenantEntity
     /// </summary>
     public bool RequireResolution { get; set; }
 
+    /// <summary>
+    /// Resolved work here is reviewed by a board lead before it can close. Off by default: most work
+    /// does not need a second pair of eyes, and a review on everything becomes a rubber stamp.
+    /// </summary>
+    public bool RequireReview { get; set; }
+
     public Guid? CreatedByUserId { get; set; }
 
     public ICollection<BoardMember> Members { get; set; } = new List<BoardMember>();
@@ -86,6 +92,9 @@ public class BoardTopic : TenantEntity
     /// resolve-by date, being the more specific instruction; the plan still sets when a reply is owed.
     /// </summary>
     public Guid? SlaPlanId { get; set; }
+
+    /// <summary>This kind of work is reviewed before it closes, even on a board that does not review everything.</summary>
+    public bool RequireReview { get; set; }
 
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }

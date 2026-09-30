@@ -89,6 +89,8 @@ function TicketsList() {
   const [unassigned, setUnassigned] = useState(() => params.get('unassigned') === '1');
   const [overdue, setOverdue] = useState(() => params.get('overdue') === '1');
   const [dueSoon, setDueSoon] = useState(() => params.get('due') === 'soon');
+  // Resolved work waiting for a board lead: arrives from the workload page, cleared with the rest.
+  const [reviewPending, setReviewPending] = useState(() => params.get('review') === 'pending');
   const [pageIndex, setPageIndex] = useState(0);
 
   const settledQ = useSettled(q.trim());
@@ -103,6 +105,7 @@ function TicketsList() {
     person: tech === ALL ? undefined : tech,
     openness, mine, following, unassigned, overdue, dueSoon,
     from: from ?? undefined,
+    review: reviewPending ? 'pending' : undefined,
   };
   const filterKey = JSON.stringify(query);
   // Any change of filter starts from the first page: page 3 of a different question is meaningless.
@@ -139,12 +142,13 @@ function TicketsList() {
 
   const anyTickets = (facets?.statuses.length ?? 0) > 0 || total > 0;
   const active = q.trim() !== '' || openness !== null || from !== null
-    || mine || following || unassigned || overdue || dueSoon
+    || mine || following || unassigned || overdue || dueSoon || reviewPending
     || [status, priority, source, company, queue, tech, kind].some((v) => v !== ALL);
   const router = useRouter();
   const clear = () => {
     setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL); setTech(ALL); setKind(ALL);
     setOpenness(null); setMine(false); setFollowing(false); setUnassigned(false); setOverdue(false); setDueSoon(false);
+    setReviewPending(false);
     // Drops the URL's own filters as well. Leaving them would clear every visible control and still
     // filter the list, which reads as the page ignoring the button.
     if (params.toString()) router.replace('/dashboard/tickets');
@@ -247,6 +251,12 @@ function TicketsList() {
             {total === 0 ? 'No tickets' : `${first}–${last} of ${total} ticket${total === 1 ? '' : 's'}`}
             {data && data.hoursWorked > 0 && <span> · {fmtHours(data.hoursWorked)} worked, {fmtHours(data.hoursBillable)} billable</span>}
           </span>
+          {reviewPending && (
+            <button type="button" onClick={() => setReviewPending(false)} aria-label="Stop showing only work awaiting review"
+              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200 dark:bg-amber-950/50 dark:text-amber-200">
+              Awaiting review <X size={12} />
+            </button>
+          )}
           {active && (
             <button onClick={clear} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
               <X size={13} /> Clear

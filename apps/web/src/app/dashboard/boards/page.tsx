@@ -43,7 +43,7 @@ export default function BoardsPage() {
             board says so.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex items-center gap-2 text-sm text-[var(--muted)]">
             <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
             Show closed boards
@@ -181,6 +181,7 @@ function BoardForm({ board, onClose, onSaved }: { board: Board | null; onClose: 
     sortOrder: board?.sortOrder ?? 0,
     defaultSlaPlanId: board?.defaultSlaPlanId ?? null,
     requireResolution: board?.requireResolution ?? false,
+    requireReview: board?.requireReview ?? false,
   });
   const { data: plans } = useQuery({ queryKey: ['sla-plans', false], queryFn: () => api.slaPlans(false), retry: false });
   const save = useMutation({
@@ -256,6 +257,14 @@ function BoardForm({ board, onClose, onSaved }: { board: Board | null; onClose: 
         <span>
           Ask for a resolution when a ticket here is resolved: a line or two on what fixed it, for
           whoever picks up the same problem next.
+        </span>
+      </label>
+      <label className="flex items-start gap-2 text-xs text-[var(--muted)] sm:col-span-2">
+        <input type="checkbox" checked={!!v.requireReview} className="mt-0.5" aria-label="Review resolved work"
+          onChange={(e) => setV({ ...v, requireReview: e.target.checked })} />
+        <span>
+          Review resolved work before it closes: a board lead approves it, or sends it back with a note.
+          Nobody reviews their own work. To review only some kinds of work, set it on a topic instead.
         </span>
       </label>
       {isRmm && (
