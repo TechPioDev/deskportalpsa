@@ -41,20 +41,31 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             if (f.From is { } from) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) >= from);
             if (f.To is { } to) q = q.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) <= to);
         }
-        if (f.EitherIdentity && f.AppUserId is { } me && f.TechnicianExternalId is { } myTech)
-            q = q.Where(t => t.AssignedAppUserId == me || t.AssignedTechnicianExternalId == myTech);
-        else
+        // Whose ticket it is, for every figure: whoever resolved it in the portal; else whoever is
+        // working it in the portal; else the PSA login it is assigned to, as the portal user that
+        // login is linked to. A desk with one PSA login and a team in the portal credits each person
+        // with their own work - not the whole team's to the one login.
+        if (f.AppUserId is { } me)
         {
-            if (f.TechnicianExternalId is { } tech) q = q.Where(t => t.AssignedTechnicianExternalId == tech);
-            if (f.AppUserId is { } assignee) q = q.Where(t => t.AssignedAppUserId == assignee);
+            var myTech = f.EitherIdentity ? f.TechnicianExternalId : null;
+            q = q.Where(t => (t.ResolvedByAppUserId ?? t.AssignedAppUserId) == me
+                || ((t.ResolvedByAppUserId ?? t.AssignedAppUserId) == null && t.AssignedTechnicianExternalId != null
+                    && ((myTech != null && t.AssignedTechnicianExternalId == myTech)
+                        || db.UserPsaIdentities.Any(i => i.AppUserId == me && i.PsaConnectionId == t.PsaConnectionId
+                            && i.ExternalTechnicianId == t.AssignedTechnicianExternalId))
+                    // Never the integration account: it holds the whole team's work, not one person's.
+                    && !db.PsaConnections.Any(c => c.Id == t.PsaConnectionId && c.DefaultTimeEntryResourceId == t.AssignedTechnicianExternalId)));
         }
+        else if (f.TechnicianExternalId is { } tech)
+            // A PSA login's own figures: only what nobody here took on or finished.
+            q = q.Where(t => t.ResolvedByAppUserId == null && t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == tech);
         if (f.ClientCompanyId is { } company) q = q.Where(t => t.ClientCompanyId == company);
         if (f.PsaOnly) q = q.Where(t => t.Origin == TicketOrigin.Psa);
         if (f.PsaConnectionId is { } conn) q = q.Where(t => t.PsaConnectionId == conn);
         if (f.Priority is { } prio) q = q.Where(t => t.PortalPriority == prio);
 
-        return await q.Select(t => new Row(
-            t.Id, t.AssignedTechnicianExternalId, t.AssignedAppUserId,
+        var rows = await q.Select(t => new Row(
+            t.Id, t.AssignedTechnicianExternalId, t.ResolvedByAppUserId ?? t.AssignedAppUserId,
             // The provider's own display name, already cached on the ticket by the sync. Without it
             // a PSA-side technician shows as a bare id - "29682889" in a table headed Technician
             // Performance, which nobody can read as a person.
@@ -65,6 +76,10 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             t.FirstResponseDueAt, t.FirstRespondedAt, t.ReopenCount,
             db.TicketSatisfactions.Where(x => x.TicketId == t.Id).Select(x => (int?)x.Rating).FirstOrDefault(),
             t.ReviewedAt, t.ReviewSendBacks)).ToListAsync(ct);
+
+        // Nobody here took it on: a PSA login that is linked to a portal user is that person.
+        var links = await PsaLinks.LoadAsync(db, ct);
+        return rows.Select(r => r.AppUserId is null && links.UserFor(r.Conn, r.Tech) is { } linked ? r with { AppUserId = linked } : r).ToList();
     }
 
     private Task<Dictionary<Guid, string>> ConnectionNamesAsync(CancellationToken ct)
@@ -125,13 +140,22 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // on the ticket for a retry but is not an hour the provider holds, and counting it here made the
         // day's figures disagree with the PSA's. Board time is recorded the moment it is logged.
         entries = entries.Where(e => e.SyncStatus == TimeEntrySyncStatus.Synced);
-        if (filter.EitherIdentity && filter.AppUserId is { } me && filter.TechnicianExternalId is { } myTech)
-            entries = entries.Where(e => e.AppUserId == me || e.TechnicianExternalId == myTech);
-        else
+        // An hour is whoever logged it in the portal. Only time with no portal author - entered in the
+        // PSA itself - falls to the PSA login, and to the portal user that login is linked to. Time a
+        // portal user logged is pushed under some PSA login too, so matching on the login alone
+        // credited a colleague's hours to whoever owns it.
+        if (filter.AppUserId is { } who)
         {
-            if (filter.AppUserId is { } who) entries = entries.Where(e => e.AppUserId == who);
-            if (filter.TechnicianExternalId is { } tech) entries = entries.Where(e => e.TechnicianExternalId == tech);
+            var myTech = filter.EitherIdentity ? filter.TechnicianExternalId : null;
+            entries = entries.Where(e => e.AppUserId == who
+                || (e.AppUserId == null && e.TechnicianExternalId != null
+                    && ((myTech != null && e.TechnicianExternalId == myTech)
+                        || db.UserPsaIdentities.Any(i => i.AppUserId == who && i.PsaConnectionId == e.Ticket!.PsaConnectionId
+                            && i.ExternalTechnicianId == e.TechnicianExternalId))
+                    && !db.PsaConnections.Any(c => c.Id == e.Ticket!.PsaConnectionId && c.DefaultTimeEntryResourceId == e.TechnicianExternalId)));
         }
+        else if (filter.TechnicianExternalId is { } tech)
+            entries = entries.Where(e => e.AppUserId == null && e.TechnicianExternalId == tech);
         // A time entry has no client of its own — it belongs to a ticket, and the ticket has one.
         // Without this the ticket half of the answer narrowed to one client while the HOURS half
         // stayed organization-wide, so a client's row would have shown the whole desk's time.
@@ -140,14 +164,18 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         if (filter.PsaOnly)
             entries = entries.Where(e => db.Tickets.Any(t => t.Id == e.TicketId && t.Origin == TicketOrigin.Psa));
 
-        var loggedRaw = await entries
+        var links = await PsaLinks.LoadAsync(db, ct);
+        var loggedRaw = (await entries
             .Select(e => new
             {
                 e.AppUserId, e.TechnicianExternalId, e.EntryDate, e.Hours, e.Billable, e.TicketId,
                 Conn = e.Ticket!.PsaConnectionId,
                 Origin = e.Ticket!.Origin,
             })
-            .ToListAsync(ct);
+            .ToListAsync(ct))
+            // Entered in the PSA under a linked login: that person's hour.
+            .Select(e => e.AppUserId is null && links.UserFor(e.Conn, e.TechnicianExternalId) is { } linked ? e with { AppUserId = linked } : e)
+            .ToList();
 
         // Resolution counts come from the tickets themselves, attributed to whoever holds them.
         // Counted on the day the resolution landed, so windowed on that day too: a ticket raised before

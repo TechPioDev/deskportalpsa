@@ -1,3 +1,4 @@
+using Desk.Application.Abstractions;
 using Desk.Application.Admin;
 using Desk.Application.Common;
 using Desk.Application.Connectors;
@@ -24,7 +25,8 @@ namespace Desk.Infrastructure.Tickets;
 /// cleared so it is measured as open again.
 /// </summary>
 public sealed class TicketStatusWriter(
-    DeskDbContext db, IConnectorResolver connectors, IMappingEngine mapping, IAuditWriter? audit = null)
+    DeskDbContext db, IConnectorResolver connectors, IMappingEngine mapping, IAuditWriter? audit = null,
+    ICurrentUser? user = null)
 {
     public const int ResolutionMaxLength = 4000;
 
@@ -121,8 +123,12 @@ public sealed class TicketStatusWriter(
         bool reviewed, bool countReopen, CancellationToken ct)
     {
         if (resolving && resolution is not null) ticket.Resolution = resolution;
+        // Credit for the resolution: whoever finished it here. Taken when it first finishes, so the
+        // lead who later moves Resolved to Closed, or approves it in review, does not take it over.
+        if (resolving && !Finished(from) && user?.UserId is { } resolver) ticket.ResolvedByAppUserId = resolver;
         if (reopening)
         {
+            ticket.ResolvedByAppUserId = null;
             if (countReopen)
             {
                 ticket.ReopenCount++;
@@ -155,6 +161,9 @@ public sealed class TicketStatusWriter(
     /// figures — the exact fault the attention list reports for ConnectWise today.
     /// </summary>
     private static bool Closed(string status) => status.Contains("CLOSED", StringComparison.OrdinalIgnoreCase);
-    private static bool Resolved(string status) =>
-        Closed(status) || status.Contains("RESOLV", StringComparison.OrdinalIgnoreCase);
+    private static bool Resolved(string status) => Finished(status);
+
+    /// <summary>Resolved or closed: the work is done, whatever the provider calls the status.</summary>
+    public static bool Finished(string? status) => status is not null
+        && (Closed(status) || status.Contains("RESOLV", StringComparison.OrdinalIgnoreCase));
 }

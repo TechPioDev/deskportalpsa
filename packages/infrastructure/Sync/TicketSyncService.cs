@@ -111,6 +111,9 @@ public sealed class TicketSyncService(
         ticket.AssignedTechnicianExternalId = incoming.AssignedTechnicianExternalId;
         ticket.ResolvedAt = incoming.ResolvedAt;
         ticket.ClosedAt = incoming.ClosedAt;
+        // Reopened in the PSA: the resolution credited here was undone, so it is credited to nobody
+        // until someone finishes it again - here, or in the PSA (then it goes to whoever holds it).
+        if (!Tickets.TicketStatusWriter.Finished(portalStatus)) ticket.ResolvedByAppUserId = null;
         ticket.SlaDueAt = incoming.SlaDueAt;
         // Only ever set from the provider — never defaulted to "now" when absent, because a
         // fabricated raise date would make an unknown-age ticket look brand new.

@@ -147,6 +147,11 @@ function TechnicianProductivity() {
           <p className="text-sm text-[var(--muted)]">
             Hours logged and tickets resolved, per person · <span className="tabular-nums">{rangeLabel}</span>
           </p>
+          <p className="mt-1 max-w-2xl text-xs text-[var(--muted)]">
+            Credit goes to whoever does the work in the portal: the person who resolved a ticket, else whoever is
+            working it, and hours to whoever logged them. Work done directly in the PSA counts for that PSA login,
+            or for the person it is linked to.
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

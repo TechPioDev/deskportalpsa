@@ -8,7 +8,7 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Pencil, MoreHorizontal, Paperclip,
   Send, ArrowUpDown, Lock, Monitor, Wifi, Mail, KeyRound, Cpu, Ticket,
   Copy, RefreshCw, Download, Clock, Trash2, Check, X, ClipboardList, UserCog, ExternalLink, AlertTriangle,
-  Eye, UserPlus} from 'lucide-react';
+  Eye, Hand, UserPlus} from 'lucide-react';
 import { useTimer } from '@/components/TimerProvider';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
@@ -817,6 +817,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   <Meta label="Assigned to (PSA)" value={ticket.assignedTechnicianName ?? ticket.assignedTechnicianExternalId ?? 'Unassigned'} />
                 )}
                 <Meta label="Working it" value={ticket.assignedAppUserName ?? (isFromPsa ? '—' : 'Unclaimed')} />
+                {/* Who productivity credits: whoever resolved it here, whatever the PSA's assignee says. */}
+                {ticket.resolvedByName && <Meta label="Resolved by" value={ticket.resolvedByName} />}
                 {/* Only when there is one: a Team row reading "—" on every ticket of a desk that does
                     not route by team is a question the desk never asked. */}
                 {ticket.assignedTeamName && <Meta label="Team" value={ticket.assignedTeamName} />}
@@ -878,10 +880,26 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               {canUpdate && (
               <div className="mt-4 border-t border-[var(--border)] pt-4">
                 {!assignOpen ? (
-                  <button onClick={() => setAssignOpen(true)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--bg)]">
-                    <UserCog size={14} /> {ticket.assignedTechnicianName || ticket.assignedAppUserName ? 'Reassign or move queue' : 'Assign technician'}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* One click to say "I'm on this". Portal only: the PSA assignment is left as it is,
+                        and the work - and its resolution - is credited to whoever takes it here. */}
+                    {isStaff && me?.userId && ticket.assignedAppUserId !== me.userId
+                      && !['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase()) && (
+                      <button type="button" onClick={() => assign.mutate({ appUserId: me.userId! })} disabled={assign.isPending}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
+                        <Hand size={14} /> {assign.isPending ? 'Taking it…' : 'Take it'}
+                      </button>
+                    )}
+                    <button onClick={() => { assign.reset(); setAssignOpen(true); }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--bg)]">
+                      <UserCog size={14} /> {ticket.assignedTechnicianName || ticket.assignedAppUserName ? 'Reassign or move queue' : 'Assign technician'}
+                    </button>
+                    {assign.isError && (
+                      <p role="alert" className="w-full text-xs text-red-600 dark:text-red-400">
+                        {assign.error instanceof Error ? assign.error.message : 'The ticket could not be taken.'}
+                      </p>
+                    )}
+                  </div>
                 ) : (
                   <AssignPanel
                     options={assignOpts}

@@ -187,6 +187,14 @@ public class Ticket : TenantEntity
     /// to approve it before it can close. Who approved it, when, and how often it was sent back first.
     /// </summary>
     public TicketReviewState ReviewState { get; set; }
+
+    /// <summary>
+    /// The portal user who resolved it, when it was resolved in the portal. Productivity credits the
+    /// resolution to them - whoever the PSA says the ticket is assigned to, since a desk with one
+    /// PSA login would otherwise credit its whole team's work to that one login. Cleared when the
+    /// ticket goes back to work. Null when it was resolved in the PSA itself.
+    /// </summary>
+    public Guid? ResolvedByAppUserId { get; set; }
     public Guid? ReviewedByUserId { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }
     public int ReviewSendBacks { get; set; }

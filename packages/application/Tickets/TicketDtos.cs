@@ -272,7 +272,9 @@ public sealed record TicketDetailDto(
     /// The team's own record of a board ticket: its details as the edit form shows them, what fixed
     /// it, how often it came back, and whether its board asks for a resolution. Staff only.
     /// </summary>
-    TicketBoardDetailsDto? BoardDetails = null);
+    TicketBoardDetailsDto? BoardDetails = null,
+    /// <summary>Who resolved it in the portal - the person productivity credits it to. Staff only.</summary>
+    string? ResolvedByName = null);
 
 public sealed record TicketBoardDetailsDto(
     Guid BoardId, Guid? BoardTopicId, Guid? DepartmentId, Guid? ClientCompanyId,
