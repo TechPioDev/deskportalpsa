@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Desk.Application.Abstractions;
 using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
@@ -39,21 +40,24 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             && (access.IsCompanyAdministrator || t.RequesterUserId == access.ClientUserId));
 
     public async Task<IReadOnlyList<TicketListItem>> ListAsync(ClientAccess access, CancellationToken ct = default)
-        => await Visible(access)
-            .AsNoTracking()
-            .OrderByDescending(t => t.CreatedAt)
+        => await ClientRows(Visible(access).AsNoTracking().OrderByDescending(t => t.CreatedAt)).ToListAsync(ct);
+
+    /// <summary>
+    /// A client's view of a list row. One projection for the list, the search and the paged list: the
+    /// difference from the staff row IS the privacy rule, so it lives in one place.
+    /// </summary>
+    private IQueryable<TicketListItem> ClientRows(IQueryable<Ticket> ordered)
+        => ordered.Select(t => new TicketListItem(
+            t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
+            t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
             // Company + connection names let users tell tickets apart when an MSP runs multiple
             // PSA connections (even several tenants of the same provider).
-            .Select(t => new TicketListItem(
-                t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
-                t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
-                db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
-                db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
-                // People stays null on the client list: no technician identity reaches a client, and
-                // neither does a board or an assignee's name.
-                t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
-                null, null, null, null, 0, null, null, null, false, 0, 0, null, null, null))
-            .ToListAsync(ct);
+            db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
+            db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
+            // People stays null on the client list: no technician identity reaches a client, and
+            // neither does a board or an assignee's name.
+            t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
+            null, null, null, null, 0, null, null, null, false, 0, 0, null, null, null, t.Origin));
 
     /// <summary>
     /// Every ticket the tenant holds, across all connections and companies — the STAFF list. The
@@ -96,20 +100,206 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         // A client's results carry no technician identity, no board and no team, exactly as their
         // list does. The projection difference IS the privacy rule, so it is not shared.
         IReadOnlyList<TicketListItem> items = access is not null
-            ? await scope.AsNoTracking()
-                .OrderByDescending(t => t.UpdatedAt)
-                .Take(take)
-                .Select(t => new TicketListItem(
-                    t.Id, t.ExternalTicketId, t.Provider, t.Title, t.PortalStatus, t.PortalPriority,
-                    t.QueueOrBoard, t.CreatedAt, t.LastSyncedAt,
-                    db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
-                    db.PsaConnections.Where(p => p.Id == t.PsaConnectionId).Select(p => p.Name).FirstOrDefault(),
-                    t.PsaCreatedAt ?? t.CreatedAt, t.TimeWorkedHours, t.BillableHours, null, null, null, null,
-                    null, null, null, null, 0, null, null, null, false, 0, 0, null, null, null))
-                .ToListAsync(ct)
+            ? await ClientRows(scope.AsNoTracking().OrderByDescending(t => t.UpdatedAt).Take(take)).ToListAsync(ct)
             : await ProjectStaffAsync(scope, take, byLastUpdate: true, ct);
 
         return new TicketSearchResult(items, total, total > items.Count);
+    }
+
+    public async Task<TicketPage> PageAsync(TicketQuery query, ClientAccess? access = null, CancellationToken ct = default)
+    {
+        var scope = access is { } a ? Visible(a) : await StaffVisibleAsync(ct);
+        scope = await NarrowAsync(scope, query, staff: access is null, ct);
+        var take = Math.Clamp(query.Take, 1, 200);
+        var skip = Math.Max(0, query.Skip);
+
+        var total = await scope.CountAsync(ct);
+        // Summed as double: SQLite, which local mode runs, cannot sum decimals, and two decimals of
+        // hours survive the round trip.
+        var worked = await scope.SumAsync(t => (double)t.TimeWorkedHours, ct);
+        var billable = await scope.SumAsync(t => (double)t.BillableHours, ct);
+
+        IReadOnlyList<TicketListItem> items = access is not null
+            ? await ClientRows(scope.AsNoTracking().OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id).Skip(skip).Take(take)).ToListAsync(ct)
+            : await ProjectStaffAsync(scope, take, byLastUpdate: false, ct, skip);
+        return new TicketPage(items, total, skip, take, Math.Round((decimal)worked, 2), Math.Round((decimal)billable, 2));
+    }
+
+    public async Task<TicketFacets> FacetsAsync(ClientAccess? access = null, CancellationToken ct = default)
+    {
+        var scope = access is { } a ? Visible(a) : await StaffVisibleAsync(ct);
+        var statuses = await scope.Select(t => t.PortalStatus).Distinct().ToListAsync(ct);
+        var priorities = await scope.Select(t => t.PortalPriority).Distinct().ToListAsync(ct);
+        var companies = await db.ClientCompanies.AsNoTracking().Where(c => scope.Any(t => t.ClientCompanyId == c.Id))
+            .Select(c => c.Name).Distinct().ToListAsync(ct);
+        var queues = await scope.Where(t => t.QueueOrBoard != null && t.QueueOrBoard != "")
+            .Select(t => t.QueueOrBoard!).Distinct().ToListAsync(ct);
+        var sources = await db.PsaConnections.AsNoTracking().Where(p => scope.Any(t => t.PsaConnectionId == p.Id))
+            .Select(p => p.Name).Distinct().ToListAsync(ct);
+        var people = access is null ? await PeopleAsync(scope, ct) : [];
+
+        static List<string> Sorted(IEnumerable<string> v) => v.Where(x => !string.IsNullOrWhiteSpace(x))
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        return new TicketFacets(Sorted(statuses), Sorted(priorities), Sorted(companies), Sorted(queues), Sorted(sources), people);
+    }
+
+    /// <summary>
+    /// Everyone who holds or logged time on a visible ticket, keyed as the list keys them, by name. The
+    /// integration account is nobody. Distinct pairs only come back from the database, not tickets.
+    /// </summary>
+    private async Task<List<TicketPersonRef>> PeopleAsync(IQueryable<Ticket> scope, CancellationToken ct)
+    {
+        var holders = await scope
+            .Where(t => t.AssignedAppUserId != null || (t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId != ""))
+            .Select(t => new { t.AssignedAppUserId, Ext = t.AssignedTechnicianExternalId, Name = t.AssignedTechnicianName, t.PsaConnectionId })
+            .Distinct().ToListAsync(ct);
+        var loggers = await db.TicketTimeEntries.AsNoTracking()
+            .Where(e => scope.Any(t => t.Id == e.TicketId))
+            .Where(e => e.AppUserId != null || (e.TechnicianExternalId != null && e.TechnicianExternalId != ""))
+            .Select(e => new { e.AppUserId, Ext = e.TechnicianExternalId, Name = e.TechnicianName, e.Ticket!.PsaConnectionId })
+            .Distinct().ToListAsync(ct);
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        var all = holders.Select(h => (h.AssignedAppUserId, h.Ext, h.Name, h.PsaConnectionId))
+            .Concat(loggers.Select(l => (l.AppUserId, l.Ext, l.Name, l.PsaConnectionId)))
+            .Where(p => p.Item1 is not null || !account.IsAccount(p.PsaConnectionId, p.Ext))
+            .ToList();
+        var ids = all.Where(p => p.Item1 is not null).Select(p => p.Item1!.Value).Distinct().ToList();
+        var names = ids.Count == 0 ? new Dictionary<Guid, string>()
+            : await db.AppUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+        return all
+            .Select(p => p.Item1 is { } u
+                ? new TicketPersonRef(PersonKey.For(u, null), names.GetValueOrDefault(u, "Unknown user"), false)
+                : new TicketPersonRef(PersonKey.For(null, p.Ext), p.Name ?? p.Ext!.Trim(), false))
+            .GroupBy(p => p.Key).Select(g => g.First())
+            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public async Task<TicketBreakdown> BreakdownAsync(DateTimeOffset? raisedSince, ClientAccess? access = null, CancellationToken ct = default)
+    {
+        var scope = access is { } a ? Visible(a) : await StaffVisibleAsync(ct);
+        if (raisedSince is { } since) scope = scope.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) >= since);
+        var total = await scope.CountAsync(ct);
+        var open = await scope.Where(TicketStatusRules.Open()).CountAsync(ct);
+        var byPriority = await scope.GroupBy(t => t.PortalPriority.ToUpper()).Select(g => new LabelCount(g.Key, g.Count())).ToListAsync(ct);
+        var byQueue = await scope.GroupBy(t => t.QueueOrBoard).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
+        return new TicketBreakdown(total, open, byPriority,
+            byQueue.Select(q => new LabelCount(string.IsNullOrWhiteSpace(q.Key) ? "Unassigned" : q.Key, q.Count))
+                .GroupBy(q => q.Label).Select(g => new LabelCount(g.Key, g.Sum(x => x.Count)))
+                .OrderByDescending(q => q.Count).ToList());
+    }
+
+    public async Task<TicketSummary> SummaryAsync(bool mineOnly, CancellationToken ct = default)
+    {
+        var scope = await StaffVisibleAsync(ct);
+        if (mineOnly) scope = await NarrowAsync(scope, new TicketQuery(MineOnly: true), staff: true, ct);
+        var open = scope.Where(TicketStatusRules.Open());
+        var now = DateTimeOffset.UtcNow;
+        var soon = now.AddHours(TicketStatusRules.DueSoonHours);
+        var zone = Desk.Domain.Common.TimeZones.Resolve(await db.MspOrganizations.AsNoTracking()
+            .Where(o => o.Id == user.OrganizationId).Select(o => o.TimeZone).FirstOrDefaultAsync(ct));
+        var localNow = TimeZoneInfo.ConvertTime(now, zone);
+        var endOfToday = new DateTimeOffset(localNow.Date.AddDays(1), localNow.Offset).ToUniversalTime();
+        var monday = localNow.Date.AddDays(-(((int)localNow.DayOfWeek + 6) % 7));
+        var weekStart = new DateTimeOffset(monday, zone.GetUtcOffset(monday)).ToUniversalTime();
+
+        var running = open.Where(t => t.SlaPausedAt == null);
+        var bySource = await open.GroupBy(t => new { t.Origin, t.PsaConnectionId }).Select(g => new { g.Key.Origin, g.Key.PsaConnectionId, Count = g.Count() }).ToListAsync(ct);
+        var connectionNames = await db.PsaConnections.AsNoTracking().ToDictionaryAsync(p => p.Id, p => p.Name, ct);
+
+        decimal? hours = null;
+        if (mineOnly && user.UserId is { } uid)
+            hours = Math.Round((decimal)await db.TicketTimeEntries.AsNoTracking()
+                .Where(e => e.AppUserId == uid && e.EntryDate >= weekStart).SumAsync(e => (double)e.Hours, ct), 2);
+
+        return new TicketSummary(
+            Open: await open.CountAsync(ct),
+            Overdue: await running.CountAsync(t => t.SlaDueAt != null && t.SlaDueAt < now, ct),
+            DueToday: await running.CountAsync(t => t.SlaDueAt != null && t.SlaDueAt >= now && t.SlaDueAt < endOfToday, ct),
+            DueSoon: await running.CountAsync(t => t.SlaDueAt != null && t.SlaDueAt >= now && t.SlaDueAt <= soon, ct),
+            Waiting: await open.CountAsync(t => t.SlaPausedAt != null || t.PortalStatus.ToUpper().Contains("WAITING") || t.PortalStatus.ToUpper().Contains("HOLD"), ct),
+            HighPriority: await open.CountAsync(t => t.PortalPriority.ToUpper() == "HIGH" || t.PortalPriority.ToUpper() == "URGENT" || t.PortalPriority.ToUpper() == "CRITICAL", ct),
+            Unassigned: await (await UnassignedAsync(open, ct)).CountAsync(ct),
+            ResolvedLast7Days: await scope.CountAsync(t => t.ResolvedAt != null && t.ResolvedAt >= now.AddDays(-7), ct),
+            OpenByPriority: await open.GroupBy(t => t.PortalPriority.ToUpper()).Select(g => new LabelCount(g.Key, g.Count())).ToListAsync(ct),
+            OpenBySource: bySource
+                .Select(x => new LabelCount(x.Origin switch
+                {
+                    TicketOrigin.Internal => "Team boards",
+                    TicketOrigin.Rmm => "Monitoring",
+                    _ => x.PsaConnectionId is { } c && connectionNames.TryGetValue(c, out var name) ? name : "PSA",
+                }, x.Count))
+                .GroupBy(x => x.Label).Select(g => new LabelCount(g.Key, g.Sum(x => x.Count)))
+                .OrderByDescending(x => x.Count).ToList(),
+            HoursLoggedThisWeek: hours);
+    }
+
+    /// <summary>How long without a word before open work counts as stale on the workload view.</summary>
+    public const int StaleDays = 7;
+
+    public async Task<TeamWorkload> WorkloadAsync(CancellationToken ct = default)
+    {
+        var open = (await StaffVisibleAsync(ct)).Where(TicketStatusRules.Open());
+        var now = DateTimeOffset.UtcNow;
+        var staleBefore = now.AddDays(-StaleDays);
+        // Open work only, and only the columns the counts need: bounded by the size of the queue.
+        var rows = await open.AsNoTracking().Select(t => new
+        {
+            t.AssignedAppUserId, t.AssignedTechnicianExternalId, t.AssignedTechnicianName, t.PsaConnectionId,
+            Overdue = t.SlaPausedAt == null && t.SlaDueAt != null && t.SlaDueAt < now,
+            High = t.PortalPriority.ToUpper() == "HIGH" || t.PortalPriority.ToUpper() == "URGENT" || t.PortalPriority.ToUpper() == "CRITICAL",
+            Moved = t.Notes.Max(n => (DateTimeOffset?)n.NoteCreatedAt) ?? t.UpdatedAt,
+            Raised = t.PsaCreatedAt ?? t.CreatedAt,
+        }).ToListAsync(ct);
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        var ids = rows.Where(r => r.AssignedAppUserId is not null).Select(r => r.AssignedAppUserId!.Value).Distinct().ToList();
+        var names = ids.Count == 0 ? new Dictionary<Guid, string>()
+            : await db.AppUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
+        string? KeyOf(Guid? app, string? ext, Guid? conn) => app is { } u ? PersonKey.For(u, null)
+            : string.IsNullOrWhiteSpace(ext) || account.IsAccount(conn, ext) ? null : PersonKey.For(null, ext);
+        var held = rows.Select(r => (Row: r, Key: KeyOf(r.AssignedAppUserId, r.AssignedTechnicianExternalId, r.PsaConnectionId))).ToList();
+        var people = held.Where(h => h.Key is not null).GroupBy(h => h.Key!)
+            .Select(g =>
+            {
+                var first = g.First().Row;
+                var name = first.AssignedAppUserId is { } u ? names.GetValueOrDefault(u, "Unknown user")
+                    : first.AssignedTechnicianName ?? first.AssignedTechnicianExternalId!.Trim();
+                return new WorkloadRow(g.Key, name, g.Count(), g.Count(h => h.Row.Overdue), g.Count(h => h.Row.High),
+                    g.Count(h => h.Row.Moved < staleBefore), g.Min(h => (DateTimeOffset?)h.Row.Raised));
+            })
+            .OrderByDescending(p => p.Open).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        var nobody = held.Where(h => h.Key is null).Select(h => h.Row).ToList();
+        return new TeamWorkload(people, nobody.Count, nobody.Count(r => r.Overdue), rows.Count(r => r.Moved < staleBefore), StaleDays);
+    }
+
+    /// <summary>
+    /// Nobody holds it: no portal assignee, and on the provider side either nobody or the account the
+    /// integration writes as - which the list has always shown as unassigned, because it is not a person.
+    /// </summary>
+    private async Task<IQueryable<Ticket>> UnassignedAsync(IQueryable<Ticket> scope, CancellationToken ct)
+    {
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        Expression<Func<Ticket, bool>> none = t => t.AssignedAppUserId == null
+            && (t.AssignedTechnicianExternalId == null || t.AssignedTechnicianExternalId == "");
+        foreach (var (connection, id) in account.Accounts)
+        {
+            var c = connection;
+            var a = id;
+            none = Or(none, t => t.AssignedAppUserId == null && t.PsaConnectionId == c && t.AssignedTechnicianExternalId!.Trim() == a);
+        }
+        return scope.Where(none);
+    }
+
+    private static Expression<Func<Ticket, bool>> Or(Expression<Func<Ticket, bool>> left, Expression<Func<Ticket, bool>> right)
+    {
+        var parameter = left.Parameters[0];
+        var body = new SwapParameter(right.Parameters[0], parameter).Visit(right.Body)!;
+        return Expression.Lambda<Func<Ticket, bool>>(Expression.OrElse(left.Body, body), parameter);
+    }
+
+    private sealed class SwapParameter(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) => node == from ? to : base.VisitParameter(node);
     }
 
     /// <summary>
@@ -133,9 +323,44 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         else if (string.Equals(q.Openness, "resolved", StringComparison.OrdinalIgnoreCase))
             scope = scope.Where(TicketStatusRules.Resolved());
 
-        if (q.UnassignedOnly)
-            scope = scope.Where(t => t.AssignedAppUserId == null
-                && (t.AssignedTechnicianExternalId == null || t.AssignedTechnicianExternalId == ""));
+        if (q.UnassignedOnly) scope = await UnassignedAsync(scope, ct);
+
+        if (!string.IsNullOrWhiteSpace(q.CompanyName))
+        {
+            var companyName = q.CompanyName;
+            scope = scope.Where(t => db.ClientCompanies.Any(c => c.Id == t.ClientCompanyId && c.Name == companyName));
+        }
+        if (!string.IsNullOrWhiteSpace(q.QueueName)) scope = scope.Where(t => t.QueueOrBoard == q.QueueName);
+        if (!string.IsNullOrWhiteSpace(q.ConnectionName))
+        {
+            var connection = q.ConnectionName;
+            scope = scope.Where(t => db.PsaConnections.Any(p => p.Id == t.PsaConnectionId && p.Name == connection));
+        }
+        if (q.RaisedSince is { } raisedSince) scope = scope.Where(t => (t.PsaCreatedAt ?? t.CreatedAt) >= raisedSince);
+        scope = q.Kind?.Trim().ToLowerInvariant() switch
+        {
+            "psa" => scope.Where(t => t.Origin == TicketOrigin.Psa),
+            "internal" => scope.Where(t => t.Origin == TicketOrigin.Internal),
+            "monitoring" => scope.Where(t => t.Origin == TicketOrigin.Rmm),
+            _ => scope,
+        };
+        // Holds it OR logged time on it - the rule the People figures count by, so a name there opens
+        // exactly the tickets it was counted from. Staff only: a client list carries no people.
+        if (staff && q.PersonKey is { Length: > 2 } key)
+        {
+            if (key.StartsWith("u:", StringComparison.Ordinal) && Guid.TryParse(key[2..], out var person))
+                scope = scope.Where(t => t.AssignedAppUserId == person
+                    || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == person));
+            else if (key.StartsWith("x:", StringComparison.Ordinal))
+            {
+                var ext = key[2..];
+                scope = scope.Where(t =>
+                    (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId.Trim().ToLower() == ext)
+                    || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == null
+                        && e.TechnicianExternalId != null && e.TechnicianExternalId.Trim().ToLower() == ext));
+            }
+            else scope = scope.Where(_ => false);
+        }
 
         // Overdue means past its due date AND still open. A ticket closed late is history, not work
         // to do, and a list that keeps showing it is a list nobody can ever empty.
@@ -219,16 +444,19 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     /// provider may or may not push down, and the id list is bounded by the limit anyway.
     /// </param>
     private async Task<List<TicketListItem>> ProjectStaffAsync(
-        IQueryable<Ticket> visible, int? take, bool byLastUpdate, CancellationToken ct)
+        IQueryable<Ticket> visible, int? take, bool byLastUpdate, CancellationToken ct, int skip = 0)
     {
         // Who is asking, for the Following column. Null only for a caller with no portal identity,
         // who then follows nothing — which is true, not a failure.
         var me = user.UserId;
 
+        // Id as the tie-break: a bulk import stamps many tickets with the same moment, and paging over
+        // an order with ties can show a ticket on two pages and another on none.
         var ordered = byLastUpdate
-            ? visible.AsNoTracking().OrderByDescending(t => t.UpdatedAt)
-            : visible.AsNoTracking().OrderByDescending(t => t.CreatedAt);
-        var limited = take is { } n ? ordered.Take(n) : ordered;
+            ? visible.AsNoTracking().OrderByDescending(t => t.UpdatedAt).ThenByDescending(t => t.Id)
+            : visible.AsNoTracking().OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id);
+        IQueryable<Ticket> limited = skip > 0 ? ordered.Skip(skip) : ordered;
+        if (take is { } n) limited = limited.Take(n);
 
         var rows = await limited
             .Select(t => new
@@ -252,7 +480,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     me != null && db.TicketFollowers.Any(f => f.TicketId == t.Id && f.AppUserId == me),
                     db.TicketTasks.Count(k => k.TicketId == t.Id),
                     db.TicketTasks.Count(k => k.TicketId == t.Id && k.IsDone),
-                    t.FirstResponseDueAt, t.FirstRespondedAt, t.SlaPausedAt),
+                    t.FirstResponseDueAt, t.FirstRespondedAt, t.SlaPausedAt, t.Origin),
                 t.AssignedAppUserId,
                 t.AssignedTechnicianExternalId,
                 t.AssignedTechnicianName,

@@ -58,6 +58,50 @@ public sealed class TicketSearchController(
         return Ok(await reads.SearchAsync(query, access, ct));
     }
 
+    /// <summary>
+    /// The ticket list, one page at a time, filtered in the database with the filters the list page
+    /// shows. Replaces loading every ticket and filtering in the browser, which slows with every ticket
+    /// the desk ever holds. Same caller rule as search: staff first, then the client's own company.
+    /// </summary>
+    [HttpGet("page")]
+    public async Task<IActionResult> Page([FromQuery] PageRequest req, CancellationToken ct)
+    {
+        var query = new TicketQuery(
+            Q: req.Q, BoardId: req.BoardId, Status: req.Status, Priority: req.Priority, Openness: req.Openness,
+            MineOnly: req.Mine ?? false, FollowingOnly: req.Following ?? false, UnassignedOnly: req.Unassigned ?? false,
+            OverdueOnly: req.Overdue ?? false, DueSoonOnly: req.DueSoon ?? false,
+            CompanyName: req.Company, QueueName: req.Queue, ConnectionName: req.Source, PersonKey: req.Person,
+            RaisedSince: req.From, Kind: req.Kind, Skip: req.Skip ?? 0, Take: req.Take ?? 50);
+        return Ok(await reads.PageAsync(query, await CallerAsync(ct), ct));
+    }
+
+    /// <summary>What the list's filters can be set to, across everything the caller can see.</summary>
+    [HttpGet("facets")]
+    public async Task<IActionResult> Facets(CancellationToken ct) => Ok(await reads.FacetsAsync(await CallerAsync(ct), ct));
+
+    /// <summary>Tickets raised since a date (or ever), counted by status, priority and queue.</summary>
+    [HttpGet("breakdown")]
+    public async Task<IActionResult> Breakdown([FromQuery] DateTimeOffset? from, CancellationToken ct)
+        => Ok(await reads.BreakdownAsync(from, await CallerAsync(ct), ct));
+
+    /// <summary>Open work counted: all the caller can see, or with mine=true what they hold (My Work).</summary>
+    [HttpGet("summary")]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
+    public async Task<IActionResult> Summary([FromQuery] bool? mine, CancellationToken ct)
+        => Ok(await reads.SummaryAsync(mine ?? false, ct));
+
+    /// <summary>Open work per person, for balancing the team. Counts only tickets the caller can see.</summary>
+    [HttpGet("workload")]
+    [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
+    public async Task<IActionResult> Workload(CancellationToken ct) => Ok(await reads.WorkloadAsync(ct));
+
+    /// <summary>Null for staff; the client's access otherwise. Anyone else is refused.</summary>
+    private async Task<ClientAccess?> CallerAsync(CancellationToken ct)
+        => user.SeesStaffTickets()
+            ? null
+            : await accessResolver.ResolveAsync(user.Subject ?? "", ct)
+              ?? throw new ForbiddenException("This endpoint is for client portal users.");
+
     /// <summary>The ids of the tickets the caller follows, for the view that shows exactly those.</summary>
     [HttpGet("following")]
     [RequirePermission(Permissions.TicketsViewAll, Permissions.TicketsViewAssigned)]
@@ -126,6 +170,29 @@ public sealed class TicketSearchController(
         [Range(1, 3650)] int? WithinDays = null,
         bool? Notes = null,
         bool? DueSoon = null,
+        [Range(1, 200)] int? Take = null);
+
+    /// <param name="Company">A company by the NAME the list shows. Queue and Source likewise.</param>
+    /// <param name="Person">A PersonKey (u:... or x:...): tickets that person holds or logged time on.</param>
+    /// <param name="Kind">psa, internal or monitoring.</param>
+    public sealed record PageRequest(
+        [StringLength(200)] string? Q = null,
+        Guid? BoardId = null,
+        [StringLength(50)] string? Status = null,
+        [StringLength(20)] string? Priority = null,
+        [StringLength(20)] string? Openness = null,
+        bool? Mine = null,
+        bool? Following = null,
+        bool? Unassigned = null,
+        bool? Overdue = null,
+        bool? DueSoon = null,
+        [StringLength(200)] string? Company = null,
+        [StringLength(200)] string? Queue = null,
+        [StringLength(200)] string? Source = null,
+        [StringLength(200)] string? Person = null,
+        DateTimeOffset? From = null,
+        [StringLength(20)] string? Kind = null,
+        [Range(0, 1_000_000)] int? Skip = null,
         [Range(1, 200)] int? Take = null);
 
     public sealed record FollowerRequest(Guid? AppUserId = null);

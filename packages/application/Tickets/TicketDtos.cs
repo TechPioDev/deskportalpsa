@@ -61,7 +61,9 @@ public sealed record TicketListItem(
     DateTimeOffset? FirstResponseDueAt = null,
     DateTimeOffset? FirstRespondedAt = null,
     // Set while the SLA clock is stopped — waiting on the customer, or on hold.
-    DateTimeOffset? SlaPausedAt = null);
+    DateTimeOffset? SlaPausedAt = null,
+    // Where it came from: a PSA, the team's own board, or a monitoring alert. Drives the source badge.
+    Desk.Domain.Enums.TicketOrigin Origin = Desk.Domain.Enums.TicketOrigin.Psa);
 
 /// <summary>
 /// A named, validated filter set. Every field is optional and an absent one means "do not narrow by
@@ -90,7 +92,56 @@ public sealed record TicketQuery(
     int? RaisedWithinDays = null,
     bool IncludeNotes = false,
     bool DueSoonOnly = false,
-    int Take = 50);
+    int Take = 50,
+    // The list page's own filters, by the names it shows: company, queue, source connection.
+    string? CompanyName = null,
+    string? QueueName = null,
+    string? ConnectionName = null,
+    /// <summary>A PersonKey: tickets that person holds or logged time on.</summary>
+    string? PersonKey = null,
+    /// <summary>Raised on or after this moment - the date a figure elsewhere was counted from.</summary>
+    DateTimeOffset? RaisedSince = null,
+    /// <summary>"psa", "internal" or "monitoring".</summary>
+    string? Kind = null,
+    /// <summary>For paging: how many matching tickets to pass over first.</summary>
+    int Skip = 0);
+
+/// <summary>One page of the ticket list, and what the whole filtered set adds up to.</summary>
+public sealed record TicketPage(
+    IReadOnlyList<TicketListItem> Items, int Total, int Skip, int Take, decimal HoursWorked, decimal HoursBillable);
+
+/// <summary>
+/// What the list's filters can be set to, taken from every ticket the caller can see - not just the
+/// page on screen, which would offer only the companies that happen to be on page one.
+/// </summary>
+public sealed record TicketFacets(
+    IReadOnlyList<string> Statuses, IReadOnlyList<string> Priorities, IReadOnlyList<string> Companies,
+    IReadOnlyList<string> Queues, IReadOnlyList<string> Sources, IReadOnlyList<TicketPersonRef> People);
+
+/// <summary>A count with a label, for a breakdown.</summary>
+public sealed record LabelCount(string Label, int Count);
+
+/// <summary>
+/// The open work, counted: for the Overview across everything the caller can see, for My Work across
+/// what they hold. Counted in the database, never by loading the tickets.
+/// </summary>
+public sealed record TicketSummary(
+    int Open, int Overdue, int DueToday, int DueSoon, int Waiting, int HighPriority, int Unassigned,
+    int ResolvedLast7Days, IReadOnlyList<LabelCount> OpenByPriority, IReadOnlyList<LabelCount> OpenBySource,
+    decimal? HoursLoggedThisWeek = null);
+
+/// <summary>
+/// The tickets raised in a window (or ever), counted: how many, how many still open, and how they split
+/// by priority and queue. For the Overview and Analytics, which used to load every ticket to count.
+/// </summary>
+public sealed record TicketBreakdown(int Total, int Open, IReadOnlyList<LabelCount> ByPriority, IReadOnlyList<LabelCount> ByQueue);
+
+/// <summary>One person's share of the open work, for a lead balancing the team.</summary>
+public sealed record WorkloadRow(
+    string Key, string Name, int Open, int Overdue, int HighPriority, int Stale, DateTimeOffset? OldestRaisedAt);
+
+/// <summary>The team's open work by person, and what nobody holds yet.</summary>
+public sealed record TeamWorkload(IReadOnlyList<WorkloadRow> People, int Unassigned, int UnassignedOverdue, int Stale, int StaleDays);
 
 /// <summary>
 /// What a search found, and honestly whether that was all of it: a result set silently cut at the

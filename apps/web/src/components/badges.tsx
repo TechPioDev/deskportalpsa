@@ -45,7 +45,19 @@ const providerMeta: Record<number, { name: string; abbr: string; className: stri
  * Which PSA (and which connection/tenant) a ticket came from — vital when an MSP runs several.
  * A ticket with no provider is the team's own work; it says so rather than inventing a PSA name.
  */
-export function SourceBadge({ provider, connectionName }: { provider: string | number | null; connectionName?: string | null }) {
+export function SourceBadge({ provider, connectionName, origin }: {
+  provider: string | number | null; connectionName?: string | null;
+  /** 2 = opened by a monitoring alert. Not a PSA and not work the team raised, so it says so. */
+  origin?: number;
+}) {
+  if (origin === 2) {
+    return (
+      <span className="inline-flex items-center gap-1.5" title="Opened by a monitoring alert">
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">MON</span>
+        <span className="max-w-[10rem] truncate text-xs text-[var(--muted)]">Monitoring</span>
+      </span>
+    );
+  }
   if (provider === null || provider === undefined) {
     return (
       <span className="inline-flex items-center gap-1.5" title="Raised by the team, on an internal board">

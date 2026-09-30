@@ -30,6 +30,21 @@ public interface ITicketReadService
     /// </param>
     Task<TicketSearchResult> SearchAsync(TicketQuery query, ClientAccess? access = null, CancellationToken ct = default);
 
+    /// <summary>One page of the list, filtered in the database, with the filtered set's hours.</summary>
+    Task<TicketPage> PageAsync(TicketQuery query, ClientAccess? access = null, CancellationToken ct = default);
+
+    /// <summary>What the list's filters can be set to, from everything the caller can see.</summary>
+    Task<TicketFacets> FacetsAsync(ClientAccess? access = null, CancellationToken ct = default);
+
+    /// <summary>Tickets raised since a moment (or ever) counted and split, for the caller - client or staff.</summary>
+    Task<TicketBreakdown> BreakdownAsync(DateTimeOffset? raisedSince, ClientAccess? access = null, CancellationToken ct = default);
+
+    /// <summary>Open work counted for staff: the whole visible set, or only what the caller holds.</summary>
+    Task<TicketSummary> SummaryAsync(bool mineOnly, CancellationToken ct = default);
+
+    /// <summary>Open work per person across the tickets the caller can see.</summary>
+    Task<TeamWorkload> WorkloadAsync(CancellationToken ct = default);
+
     /// <summary>Any ticket in the tenant, for staff holding TicketsViewAll.</summary>
     Task<TicketDetailDto?> GetDetailForStaffAsync(Guid ticketId, CancellationToken ct = default);
     Task<IReadOnlyList<NotificationDto>> RecentActivityAsync(ClientAccess access, int take = 10, CancellationToken ct = default);

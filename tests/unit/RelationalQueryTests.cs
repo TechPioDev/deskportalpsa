@@ -102,6 +102,27 @@ public sealed class RelationalQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task The_paged_list_facets_breakdown_summary_and_workload_translate()
+    {
+        // Every new list query through a real SQL translator: group-bys on an upper-cased column,
+        // distinct anonymous pairs, sums as double, the integration account's OR-chain.
+        var reads = new TicketReadService(_db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: _me));
+        var page = await reads.PageAsync(new TicketQuery(
+            Q: "swelling", Status: "IN_PROGRESS", Priority: "HIGH", Openness: "open", MineOnly: true, FollowingOnly: true,
+            UnassignedOnly: true, OverdueOnly: true, DueSoonOnly: true, CompanyName: "Acme", QueueName: "Internal",
+            ConnectionName: "Autotask", PersonKey: PersonKey.For(_me, null), RaisedSince: DateTimeOffset.UtcNow.AddDays(-30),
+            Kind: "internal", Skip: 0, Take: 10));
+        page.Total.Should().Be(0);
+        (await reads.PageAsync(new TicketQuery(PersonKey: "x:123", Skip: 1, Take: 5))).Total.Should().BeGreaterThanOrEqualTo(0);
+        (await reads.PageAsync(new TicketQuery())).Total.Should().BeGreaterThan(0);
+        (await reads.FacetsAsync()).Statuses.Should().NotBeEmpty();
+        (await reads.BreakdownAsync(DateTimeOffset.UtcNow.AddDays(-30))).Should().NotBeNull();
+        (await reads.SummaryAsync(mineOnly: true)).Should().NotBeNull();
+        (await reads.SummaryAsync(mineOnly: false)).Open.Should().BeGreaterThanOrEqualTo(0);
+        (await reads.WorkloadAsync()).Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task Ticket_history_translates()
     {
         var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);

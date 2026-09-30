@@ -12,7 +12,7 @@ import {
 import { MiniSpark, TrendChart, Donut } from '@/components/charts';
 import { StatusBadge, PriorityBadge } from '@/components/badges';
 import { api } from '@/lib/api';
-import { isResolvedStatus } from '@/lib/status';
+import { isStaffPermissions } from '@/lib/staff';
 const PRIORITY_META: Record<string, { color: string; order: number }> = {
   CRITICAL: { color: '#ef4444', order: 0 }, HIGH: { color: '#f97316', order: 1 },
   NORMAL: { color: '#3b82f6', order: 2 }, LOW: { color: '#94a3b8', order: 3 },
@@ -40,7 +40,14 @@ function Head({ title, right }: { title: string; right?: React.ReactNode }) {
 
 export default function Overview() {
   const qc = useQueryClient();
-  const { data: tickets } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
+  // Counted on the server. This page used to load every ticket the desk holds to count them, which
+  // slows with every ticket ever synced.
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
+  const isStaff = me ? isStaffPermissions(me.permissions) : false;
+  const { data: breakdown } = useQuery({ queryKey: ['tickets', 'breakdown', 'all'], queryFn: () => api.ticketBreakdown() });
+  const { data: recent } = useQuery({ queryKey: ['tickets', 'page', 'recent'], queryFn: () => api.ticketPage({ take: 5 }) });
+  // Due dates are staff information; a client's list never carried them, so a client has no banners.
+  const { data: summary } = useQuery({ queryKey: ['tickets', 'summary', false], queryFn: () => api.ticketSummary(false), enabled: isStaff });
   // A real 7-day window behind the "Last 7 days" this page shows. Both queries were unwindowed, so
   // SLA, the resolved count and the chart all quietly covered every ticket ever held.
   const fromIso = useMemo(() => new Date(Date.now() - 7 * 86400_000).toISOString(), []);
@@ -49,10 +56,11 @@ export default function Overview() {
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.health });
   const { data: activity } = useQuery({ queryKey: ['notifications'], queryFn: api.notifications });
 
-  const ts = tickets ?? [];
+  const recentRows = recent?.items ?? [];
+  const totalTickets = breakdown?.total ?? 0;
   // Open is a state, not an event: every ticket open right now, whenever it was raised. Classified by
-  // status (tolerates raw PSA values on unmapped tickets) - never inferred from a closed status list.
-  const open = ts.filter((t) => !isResolvedStatus(t.portalStatus)).length;
+  // status on the server with the same rule the list's Open view uses.
+  const open = breakdown?.open ?? 0;
   const teamRows = team?.team ?? [];
   const totalResolved = teamRows.reduce((a, r) => a + r.resolved, 0) || 1;
   const slaPct = teamRows.length
@@ -69,29 +77,18 @@ export default function Overview() {
   // Resolutions in the last 7 days, by resolution date - including tickets raised before the window.
   const resolved = resolvedSeries.reduce((a, b) => a + b, 0);
 
-  const byPriority = Object.entries(
-    ts.reduce<Record<string, number>>((m, t) => {
-      const k = t.portalPriority.toUpperCase();
-      m[k] = (m[k] ?? 0) + 1;
-      return m;
-    }, {}),
-  )
-    .map(([label, value]) => ({ label, value, color: PRIORITY_META[label]?.color ?? '#94a3b8', order: PRIORITY_META[label]?.order ?? 9 }))
+  const byPriority = (breakdown?.byPriority ?? [])
+    .map(({ label, count }) => ({ label, value: count, color: PRIORITY_META[label]?.color ?? '#94a3b8', order: PRIORITY_META[label]?.order ?? 9 }))
     .sort((a, b) => a.order - b.order);
 
   // SLA at a glance, counted with exactly the rules the linked lists use (the ticket list's Overdue
   // and Due soon views), so the number on the banner is the number of rows the click shows. A
   // client's list carries no due dates, so for a client this is always nothing and never shows.
-  const nowMs = Date.now();
-  const openDue = ts.filter((t) => t.dueAt && !isResolvedStatus(t.portalStatus) && !t.slaPausedAt);
-  const pastSla = openDue.filter((t) => new Date(t.dueAt!).getTime() < nowMs).length;
-  const dueSoon = openDue.filter((t) => {
-    const due = new Date(t.dueAt!).getTime();
-    return due >= nowMs && due <= nowMs + 8 * 3_600_000;
-  }).length;
+  const pastSla = summary?.overdue ?? 0;
+  const dueSoon = summary?.dueSoon ?? 0;
 
   const stats = [
-    { label: 'Open Tickets', value: open, sub: `${ts.length} total`, icon: Inbox, tone: 'blue', spark: created, color: '#3b82f6', href: '/dashboard/tickets?view=open' },
+    { label: 'Open Tickets', value: open, sub: `${totalTickets} total`, icon: Inbox, tone: 'blue', spark: created, color: '#3b82f6', href: '/dashboard/tickets?view=open' },
     { label: 'Resolved', value: resolved, sub: 'last 7 days', icon: CheckCircle2, tone: 'green', spark: resolvedSeries, color: '#22c55e', href: '/dashboard/tickets?view=resolved' },
     { label: 'SLA Compliance', value: `${slaPct.toFixed(1)}%`, sub: 'weighted across techs', icon: ShieldCheck, tone: 'violet', spark: null, color: '#8b5cf6', href: '/dashboard/analytics' },
     { label: 'Active Connections', value: connections.length, sub: 'monitored', icon: Plug, tone: 'orange', spark: null, color: '#f97316', href: '/dashboard/connections' },
@@ -179,7 +176,7 @@ export default function Overview() {
         <Card className="xl:col-span-4">
           <Head title="Recent Tickets" right={<Link href="/dashboard/tickets" className="text-xs font-medium text-brand hover:underline">View all</Link>} />
           <ul className="divide-y divide-[var(--border)]">
-            {ts.slice(0, 5).map((t) => (
+            {recentRows.map((t) => (
               <li key={t.id} className="px-5 py-2.5">
                 <Link href={`/dashboard/tickets/${t.id}`} className="flex items-center justify-between gap-2">
                   <span className="min-w-0">
@@ -190,7 +187,7 @@ export default function Overview() {
                 </Link>
               </li>
             ))}
-            {ts.length === 0 && <li className="px-5 py-6 text-center text-sm text-[var(--muted)]">No tickets.</li>}
+            {recent && recentRows.length === 0 && <li className="px-5 py-6 text-center text-sm text-[var(--muted)]">No tickets.</li>}
           </ul>
         </Card>
 
@@ -244,7 +241,7 @@ export default function Overview() {
         <Card>
           <Head title="Tickets by Priority" />
           <div className="flex items-center gap-3 px-5 py-4">
-            {byPriority.length > 0 ? <Donut segments={byPriority} total={ts.length} size={150} /> : <div className="py-8 text-sm text-[var(--muted)]">No tickets.</div>}
+            {byPriority.length > 0 ? <Donut segments={byPriority} total={totalTickets} size={150} /> : <div className="py-8 text-sm text-[var(--muted)]">No tickets.</div>}
             <ul className="space-y-1.5 text-xs">
               {byPriority.map((d) => (
                 <li key={d.label}>
