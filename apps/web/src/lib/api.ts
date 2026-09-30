@@ -197,6 +197,26 @@ export const api = {
     })) as Promise<{ items: TicketListItem[]; total: number; truncated: boolean }>;
   },
 
+  /** One page of the ticket list, filtered in the database; hours cover the whole filtered set. */
+  ticketPage: (params: TicketPageParams) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '' || v === false) continue;
+      qs.set(k, String(v));
+    }
+    return request(`/api/tickets/page?${qs}`, TicketPageSchema) as Promise<TicketPage>;
+  },
+  /** What the list's filters can be set to, across every ticket I can see. */
+  ticketFacets: () => request('/api/tickets/facets', TicketFacetsSchema) as Promise<TicketFacets>,
+  /** Tickets raised since a date (or ever), counted: total, open, by priority and queue. */
+  ticketBreakdown: (from?: string) =>
+    request(`/api/tickets/breakdown${from ? `?from=${encodeURIComponent(from)}` : ''}`, TicketBreakdownSchema) as Promise<TicketBreakdown>,
+  /** Open work counted; mine=true for what I hold (My Work). Staff only. */
+  ticketSummary: (mine = false) =>
+    request(`/api/tickets/summary${mine ? '?mine=true' : ''}`, TicketSummarySchema) as Promise<TicketSummary>,
+  /** Open work per person, for balancing the team. */
+  teamWorkload: () => request('/api/tickets/workload', TeamWorkloadSchema) as Promise<TeamWorkload>,
+
   /** The ids of the tickets I follow — enough for the list to mark and filter them. */
   followingTicketIds: () => request('/api/tickets/following', z.array(z.string())),
   ticketFollowers: (id: string) =>
@@ -468,6 +488,8 @@ export const api = {
     request(`/api/boards/${id}/members`, z.array(BoardMemberSchema),
       { method: 'PUT', body: JSON.stringify({ appUserIds }) }) as Promise<BoardMember[]>,
   // Monitoring tools allowed to open tickets. The key comes back once, on create and regenerate.
+  /** The organization's active staff, for a lead choosing a board's members. */
+  boardPeople: () => request('/api/boards/people', z.array(BoardMemberSchema)) as Promise<BoardMember[]>,
   alertSources: () => request('/api/boards/sources', z.array(AlertSourceSchema)) as Promise<AlertSource[]>,
   createAlertSource: (input: AlertSourceInput) =>
     request('/api/boards/sources', AlertSourceCreatedSchema, { method: 'POST', body: JSON.stringify(input) }),
@@ -1248,6 +1270,45 @@ const ResyncResultSchema = z.object({
   externalTicketId: z.string().nullable(),
   error: z.string().nullable(),
 });
+
+export type TicketPageParams = {
+  q?: string; boardId?: string; status?: string; priority?: string; openness?: string | null;
+  mine?: boolean; following?: boolean; unassigned?: boolean; overdue?: boolean; dueSoon?: boolean;
+  company?: string; queue?: string; source?: string; person?: string; from?: string; kind?: string;
+  skip?: number; take?: number;
+};
+const TicketPageSchema = z.object({
+  items: z.array(TicketListItemSchema), total: z.number(), skip: z.number(), take: z.number(),
+  hoursWorked: z.number(), hoursBillable: z.number(),
+});
+export type TicketPage = z.infer<typeof TicketPageSchema>;
+const TicketFacetsSchema = z.object({
+  statuses: z.array(z.string()), priorities: z.array(z.string()), companies: z.array(z.string()),
+  queues: z.array(z.string()), sources: z.array(z.string()),
+  people: z.array(z.object({ key: z.string(), name: z.string(), holds: z.boolean() })),
+});
+export type TicketFacets = z.infer<typeof TicketFacetsSchema>;
+const LabelCountSchema = z.object({ label: z.string(), count: z.number() });
+export type LabelCount = z.infer<typeof LabelCountSchema>;
+const TicketBreakdownSchema = z.object({
+  total: z.number(), open: z.number(), byPriority: z.array(LabelCountSchema), byQueue: z.array(LabelCountSchema),
+});
+export type TicketBreakdown = z.infer<typeof TicketBreakdownSchema>;
+const TicketSummarySchema = z.object({
+  open: z.number(), overdue: z.number(), dueToday: z.number(), dueSoon: z.number(), waiting: z.number(),
+  highPriority: z.number(), unassigned: z.number(), resolvedLast7Days: z.number(),
+  openByPriority: z.array(LabelCountSchema), openBySource: z.array(LabelCountSchema),
+  hoursLoggedThisWeek: z.number().nullable(),
+});
+export type TicketSummary = z.infer<typeof TicketSummarySchema>;
+const TeamWorkloadSchema = z.object({
+  people: z.array(z.object({
+    key: z.string(), name: z.string(), open: z.number(), overdue: z.number(), highPriority: z.number(),
+    stale: z.number(), oldestRaisedAt: z.string().nullable(),
+  })),
+  unassigned: z.number(), unassignedOverdue: z.number(), stale: z.number(), staleDays: z.number(),
+});
+export type TeamWorkload = z.infer<typeof TeamWorkloadSchema>;
 
 const TimeEntrySchema = z.object({
   externalId: z.string(),

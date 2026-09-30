@@ -3,7 +3,7 @@
 import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, UserCircle2, Users, CalendarClock, Settings2, ListChecks } from 'lucide-react';
+import { ArrowLeft, Plus, UserCircle2, Users, CalendarClock, Settings2, ListChecks, UserPlus } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { TicketListItem } from '@/lib/types';
 
@@ -72,13 +72,34 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
   });
 
   const board = boards?.find((b) => b.id === id);
+  const [editingMembers, setEditingMembers] = useState(false);
+  const canUpdate = !!me?.permissions?.includes('tickets.update');
+  const myKey = me?.userId ? `u:${me.userId}` : null;
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['board-tickets', id] });
+    qc.invalidateQueries({ queryKey: ['boards'] });
+    qc.invalidateQueries({ queryKey: ['tickets'] });
+  };
+  // "Take it": the unclaimed ticket becomes mine, from the row. Passing it to somebody else is a
+  // handover, with a note, and happens on the ticket.
+  const take = useMutation({
+    mutationFn: (ticketId: string) => api.assignTicket(ticketId, { appUserId: me!.userId! }),
+    onSuccess: refresh,
+  });
+  // Working statuses from the row. Resolving asks what fixed it, so it happens on the ticket.
+  const setStatus = useMutation({
+    mutationFn: (v: { ticketId: string; status: string }) => api.updateTicketStatus(v.ticketId, v.status),
+    onSuccess: refresh,
+  });
+  const rowError = (take.error ?? setStatus.error) as Error | null;
   const rows = tickets ?? [];
   const departments = useMemo(
     () => [...new Set(rows.map((t) => t.departmentName).filter(Boolean) as string[])].sort(),
     [rows]);
 
   const shown = rows.filter((t) =>
-    (!mineOnly || (!!t.assignedToName && t.assignedToName === me?.displayName))
+    // By who holds it, not by name: two people can share a name, and a name match took both.
+    (!mineOnly || (!!myKey && !!t.people?.some((p) => p.holds && p.key === myKey)))
     && (!department || t.departmentName === department));
   const open = shown.filter((t) => isOpen(t.portalStatus));
   const done = shown.filter((t) => !isOpen(t.portalStatus));
@@ -112,6 +133,12 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
             Only mine
           </label>
           {canManage && (
+            <button type="button" onClick={() => setEditingMembers((v) => !v)}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+              <Users size={15} /> Members
+            </button>
+          )}
+          {canManage && (
             <Link href={`/dashboard/boards/${id}/topics`}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
               <Settings2 size={15} /> Topics
@@ -134,6 +161,15 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
           }} />
       )}
 
+      {editingMembers && <MembersEditor boardId={id} current={members?.map((m) => m.appUserId) ?? []}
+        onDone={() => { setEditingMembers(false); qc.invalidateQueries({ queryKey: ['board-members', id] }); qc.invalidateQueries({ queryKey: ['boards'] }); }} />}
+
+      {rowError && (
+        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {rowError.message}
+        </p>
+      )}
+
       {isLoading && <div className="h-40 animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)]" />}
 
       {!isLoading && rows.length === 0 && (
@@ -143,13 +179,23 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
         </div>
       )}
 
-      <TicketTable title={`Open (${open.length})`} rows={open} />
+      <TicketTable title={`Open (${open.length})`} rows={open}
+        actions={canUpdate && me?.userId ? {
+          onTake: (ticketId) => take.mutate(ticketId),
+          onStatus: (ticketId, status) => setStatus.mutate({ ticketId, status }),
+          busy: take.isPending || setStatus.isPending,
+        } : undefined} />
       {done.length > 0 && <TicketTable title={`Closed (${done.length})`} rows={done} muted />}
     </div>
   );
 }
 
-function TicketTable({ title, rows, muted }: { title: string; rows: TicketListItem[]; muted?: boolean }) {
+/** Working statuses a row can move a ticket between. Finishing asks what fixed it, on the ticket. */
+const ROW_STATUSES = ['NEW', 'IN_PROGRESS', 'WAITING_CUSTOMER', 'ON_HOLD'];
+
+type RowActions = { onTake: (ticketId: string) => void; onStatus: (ticketId: string, status: string) => void; busy: boolean };
+
+function TicketTable({ title, rows, muted, actions }: { title: string; rows: TicketListItem[]; muted?: boolean; actions?: RowActions }) {
   if (rows.length === 0) return null;
   // Oldest activity last: a queue is read newest-first, like every desk tool the team already uses.
   const sorted = [...rows].sort((a, b) =>
@@ -165,6 +211,7 @@ function TicketTable({ title, rows, muted }: { title: string; rows: TicketListIt
               <th className="px-2 py-2.5 font-medium">Last update</th>
               <th className="px-2 py-2.5 font-medium">Subject</th>
               <th className="px-2 py-2.5 font-medium">With</th>
+              {actions && <th className="px-2 py-2.5 font-medium">Status</th>}
               <th className="px-2 py-2.5 font-medium">Department</th>
               <th className="px-2 py-2.5 font-medium">Priority</th>
               <th className="px-2 py-2.5 font-medium">Due</th>
@@ -202,8 +249,33 @@ function TicketTable({ title, rows, muted }: { title: string; rows: TicketListIt
                   <td className="px-2 py-3">
                     {t.assignedToName
                       ? <span className="inline-flex items-center gap-1.5 text-xs"><UserCircle2 size={13} className="text-[var(--faint)]" />{t.assignedToName}</span>
-                      : <span className="text-xs text-[var(--faint)]">Unclaimed</span>}
+                      : (
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs text-[var(--faint)]">Unclaimed</span>
+                          {actions && (
+                            <button type="button" disabled={actions.busy} onClick={() => actions.onTake(t.id)}
+                              aria-label={`Take ${t.number ?? t.title}`}
+                              className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-0.5 text-xs font-medium text-brand hover:bg-[var(--bg)] disabled:opacity-50">
+                              <UserPlus size={12} /> Take it
+                            </button>
+                          )}
+                        </span>
+                      )}
                   </td>
+                  {actions && (
+                    <td className="px-2 py-3">
+                      <select value={t.portalStatus} disabled={actions.busy} aria-label={`Status of ${t.number ?? t.title}`}
+                        onChange={(e) => {
+                          if (e.target.value === '__resolve') window.location.assign(`/dashboard/tickets/${t.id}`);
+                          else actions.onStatus(t.id, e.target.value);
+                        }}
+                        className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-xs outline-none focus:border-brand">
+                        {!ROW_STATUSES.includes(t.portalStatus) && <option value={t.portalStatus}>{t.portalStatus.replace(/_/g, ' ')}</option>}
+                        {ROW_STATUSES.map((st) => <option key={st} value={st}>{st.replace(/_/g, ' ')}</option>)}
+                        <option value="__resolve">Resolve…</option>
+                      </select>
+                    </td>
+                  )}
                   <td className="px-2 py-3 text-xs text-[var(--muted)]">{t.departmentName ?? '—'}</td>
                   <td className="px-2 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${PRIORITY_TONE[t.portalPriority.toUpperCase()] ?? PRIORITY_TONE.NORMAL}`}>
@@ -220,6 +292,53 @@ function TicketTable({ title, rows, muted }: { title: string; rows: TicketListIt
             })}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Who works this board. Nobody ticked means the whole team; naming people limits it to them, for
+ * reading and for raising alike. A lead's decision, like the board itself.
+ */
+function MembersEditor({ boardId, current, onDone }: { boardId: string; current: string[]; onDone: () => void }) {
+  const { data: people } = useQuery({ queryKey: ['board-people'], queryFn: api.boardPeople, staleTime: 5 * 60_000 });
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(current));
+  const [filter, setFilter] = useState('');
+  const save = useMutation({ mutationFn: () => api.setBoardMembers(boardId, [...chosen]), onSuccess: onDone });
+  const shown = (people ?? []).filter((p) => !filter || `${p.displayName} ${p.email}`.toLowerCase().includes(filter.toLowerCase()));
+  const toggle = (idToToggle: string) => setChosen((s) => {
+    const next = new Set(s);
+    if (next.has(idToToggle)) next.delete(idToToggle); else next.add(idToToggle);
+    return next;
+  });
+  return (
+    <section aria-label="Board members" className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">Who works this board</h2>
+        <span className="text-xs text-[var(--muted)]">
+          {chosen.size === 0 ? 'Nobody chosen: the whole team can see and raise tickets here.' : `${chosen.size} chosen: only they can see and raise tickets here.`}
+        </span>
+      </div>
+      <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Find a person…" aria-label="Find a person"
+        className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-brand sm:w-72" />
+      <ul className="grid max-h-64 gap-1 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+        {shown.map((p) => (
+          <li key={p.appUserId}>
+            <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-[var(--bg)]">
+              <input type="checkbox" aria-label={p.displayName} checked={chosen.has(p.appUserId)} onChange={() => toggle(p.appUserId)} />
+              <span className="min-w-0 truncate">{p.displayName}<span className="ml-1 text-xs text-[var(--faint)]">{p.email}</span></span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      {save.isError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{(save.error as Error).message}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onDone} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg)]">Cancel</button>
+        <button type="button" onClick={() => save.mutate()} disabled={save.isPending}
+          className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-60">
+          {save.isPending ? 'Saving…' : 'Save members'}
+        </button>
       </div>
     </section>
   );

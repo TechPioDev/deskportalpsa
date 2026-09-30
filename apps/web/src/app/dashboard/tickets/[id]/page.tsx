@@ -443,7 +443,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // The API answers 404 both for a ticket that does not exist and for one outside this person's
   // view - a technician following a link to a colleague's ticket - so the message covers both.
   const notFound = error instanceof ApiError && error.status === 404;
-  const { data: list } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
+  // Previous/Next step through the page of the list this ticket was opened from, which the list page
+  // leaves here. Opened from a link instead, there is no list to step through.
+  const { data: navIds } = useQuery<string[]>({ queryKey: ['ticket-nav'], queryFn: () => [], enabled: false, staleTime: Infinity });
   // Only fetched once the picker is opened: it costs a provider round trip for coverage data that
   // most visits to a ticket never need.
   // Asked for by the followers panel as well as the picker: adding a colleague needs the same staff
@@ -622,9 +624,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   }
 
   // Prev/next navigation across the ticket list (ordered newest-first by the API).
-  const idx = list?.findIndex((t) => t.id === id) ?? -1;
-  const prev = idx > 0 ? list?.[idx - 1] : undefined;
-  const next = idx >= 0 && list ? list[idx + 1] : undefined;
+  const idx = navIds?.indexOf(id) ?? -1;
+  const prev = idx > 0 ? navIds?.[idx - 1] : undefined;
+  const next = idx >= 0 && navIds ? navIds[idx + 1] : undefined;
 
   // Full width, like every other dashboard page. The old max-w-4xl centred the page in 896px and
   // left the rest of a widescreen empty — a sensible cap for one narrow column, but wasted space
@@ -662,9 +664,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             )}
           </div>
           <div className="flex items-center">
-            <button disabled={!prev} onClick={() => prev && router.push(`/dashboard/tickets/${prev.id}`)} aria-label="Previous ticket"
+            <button disabled={!prev} onClick={() => prev && router.push(`/dashboard/tickets/${prev}`)} aria-label="Previous ticket"
               className="rounded-l-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-40"><ChevronLeft size={16} /></button>
-            <button disabled={!next} onClick={() => next && router.push(`/dashboard/tickets/${next.id}`)} aria-label="Next ticket"
+            <button disabled={!next} onClick={() => next && router.push(`/dashboard/tickets/${next}`)} aria-label="Next ticket"
               className="rounded-r-lg border border-l-0 border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-40"><ChevronRight size={16} /></button>
           </div>
         </div>

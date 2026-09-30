@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Ticket, Plug, Bell, User, BarChart3, Activity, ListChecks, ShieldCheck,
-  SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile, BookOpen, LifeBuoy,
+  SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile, BookOpen, LifeBuoy, Briefcase, Scale,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { isStaffPermissions } from '@/lib/staff';
@@ -71,6 +71,9 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
     items: [
       { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
       { href: '/dashboard/tickets', label: 'Tickets', icon: Ticket },
+      // Everything that is mine to do, from every source. Staff only: a client's list is already theirs.
+      { href: '/dashboard/my-work', label: 'My work', icon: Briefcase, permissions: ['tickets.view.all', 'tickets.view.assigned'], audience: 'staff' },
+      { href: '/dashboard/workload', label: 'Team workload', icon: Scale, permissions: ['productivity.team.view'], audience: 'staff' },
       // The team's own work, kept apart from the provider queues above so the two never blur.
       { href: '/dashboard/boards', label: 'Internal boards', icon: ClipboardList, permissions: ['tickets.create'], feature: 'internalBoards' },
       { href: '/dashboard/knowledge', label: 'Knowledge base', icon: BookOpen, permissions: ['tickets.view.all', 'tickets.view.assigned'], audience: 'staff' },

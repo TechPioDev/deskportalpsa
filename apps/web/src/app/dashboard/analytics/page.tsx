@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import { MiniSpark, TrendChart, BarChart, Donut } from '@/components/charts';
 import { api } from '@/lib/api';
-import { isResolvedStatus } from '@/lib/status';
 
 const RANGES = [7, 30, 90] as const;
 const PRIORITY_META: Record<string, { color: string; order: number }> = {
@@ -51,19 +50,16 @@ export default function Analytics() {
 
   const { data: team } = useQuery({ queryKey: ['team', days], queryFn: () => api.teamMetrics(fromIso) });
   const { data: trend } = useQuery({ queryKey: ['trend', days], queryFn: () => api.trend(fromIso) });
-  const { data: tickets } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
+  // Tickets RAISED in the range, counted on the server. This page used to load every ticket the desk
+  // holds and filter them here. The raise date, not the import date: after a bulk import every old
+  // ticket would otherwise look new - the Tickets list and Client workload use the same date.
+  const { data: raised } = useQuery({ queryKey: ['tickets', 'breakdown', fromIso], queryFn: () => api.ticketBreakdown(fromIso) });
   const { data: activity } = useQuery({ queryKey: ['notifications'], queryFn: api.notifications });
 
   const rows = [...(team?.team ?? [])].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  // The ticket list isn't range-filtered server-side; apply the window client-side so every KPI
-  // reflects the selected range. Resolved is classified by status (tolerating raw PSA values),
-  // never inferred as "not open" — unmapped statuses count as open.
   const cutoff = Date.now() - days * 86400_000;
-  // Tickets RAISED in the window. createdAt is the day the portal imported a ticket, so after a bulk
-  // import every old ticket looked new; the Tickets list and Client workload already use the raise date.
-  const ts = (tickets ?? []).filter((t) => new Date(t.raisedAt ?? t.createdAt).getTime() >= cutoff);
-  const assigned = ts.length;
-  const open = ts.filter((t) => !isResolvedStatus(t.portalStatus)).length;
+  const assigned = raised?.total ?? 0;
+  const open = raised?.open ?? 0;
   const totalResolved = rows.reduce((a, r) => a + r.resolved, 0);
   const slaPct = totalResolved > 0 ? rows.reduce((a, r) => a + r.slaCompliancePct * r.resolved, 0) / totalResolved : 0;
   const score = rows.length ? rows.reduce((a, r) => a + (r.score ?? 0), 0) / rows.length : 0;
@@ -81,15 +77,13 @@ export default function Analytics() {
   // before the range included. Counting resolved statuses among tickets RAISED in it missed them all.
   const resolvedCount = resolvedSeries.reduce((a, b) => a + b, 0);
 
-  const byPriority = Object.entries(
-    ts.reduce<Record<string, number>>((m, t) => { const k = t.portalPriority.toUpperCase(); m[k] = (m[k] ?? 0) + 1; return m; }, {}),
-  ).map(([label, value]) => ({ label, value, color: PRIORITY_META[label]?.color ?? '#94a3b8', order: PRIORITY_META[label]?.order ?? 9 }))
-   .sort((a, b) => a.order - b.order);
+  const byPriority = (raised?.byPriority ?? [])
+    .map(({ label, count }) => ({ label, value: count, color: PRIORITY_META[label]?.color ?? '#94a3b8', order: PRIORITY_META[label]?.order ?? 9 }))
+    .sort((a, b) => a.order - b.order);
 
-  const byQueue = Object.entries(
-    ts.reduce<Record<string, number>>((m, t) => { const k = t.queueOrBoard ?? 'Unassigned'; m[k] = (m[k] ?? 0) + 1; return m; }, {}),
-  ).map(([label, value], i) => ({ label, value, color: QUEUE_COLORS[i % QUEUE_COLORS.length] }))
-   .sort((a, b) => b.value - a.value);
+  const byQueue = (raised?.byQueue ?? [])
+    .map(({ label, count }, i) => ({ label, value: count, color: QUEUE_COLORS[i % QUEUE_COLORS.length] }))
+    .sort((a, b) => b.value - a.value);
   const maxQueue = Math.max(1, ...byQueue.map((q) => q.value));
 
   const maxResolved = Math.max(1, ...rows.map((r) => r.resolved));

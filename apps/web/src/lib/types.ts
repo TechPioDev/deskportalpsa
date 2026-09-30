@@ -44,6 +44,8 @@ export const TicketListItemSchema = z.object({
   firstRespondedAt: z.string().nullable().default(null),
   // Set while the SLA clock is stopped: waiting on the customer, or on hold.
   slaPausedAt: z.string().nullable().default(null),
+  // 0 = a PSA, 1 = the team's own board, 2 = a monitoring alert. Drives the source badge.
+  origin: z.number().default(0),
 });
 export type TicketListItem = z.infer<typeof TicketListItemSchema>;
 

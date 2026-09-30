@@ -2,27 +2,26 @@
 
 import Link from 'next/link';
 import { MyApprovalsBanner } from '@/components/MyApprovalsBanner';
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
-import { Plus, Inbox, Search, X, Eye, Users } from 'lucide-react';
-import { api } from '@/lib/api';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Plus, Inbox, Search, X, Eye, Users, ChevronLeft, ChevronRight } from 'lucide-react';
+import { api, type TicketPageParams } from '@/lib/api';
 import { StatusBadge, PriorityBadge, SourceBadge } from '@/components/badges';
 import { TicketViewBar, EMPTY_FILTERS } from '@/components/TicketViewBar';
-import type { TicketListItem, SavedViewFilters } from '@/lib/types';
-import { isResolvedStatus } from '@/lib/status';
+import type { SavedViewFilters } from '@/lib/types';
 import { fmtHours } from '@/lib/format';
 
 const ALL = '__all__';
 
-/** The same window the server's Due soon filter and the board's "soon" label use. */
-const DUE_SOON_HOURS = 8;
+/** Rows per page. Enough to scan, few enough that the page answers at once however many tickets there are. */
+const PAGE_SIZE = 50;
 
-/** Distinct, sorted values for a column — the filter options come from the data itself, so they
- *  stay correct for any PSA without hard-coding provider vocabulary. */
-function optionsFor(rows: TicketListItem[], pick: (t: TicketListItem) => string | null | undefined) {
-  return Array.from(new Set(rows.map((r) => pick(r) ?? '').filter(Boolean))).sort();
-}
+const KINDS: { value: string; label: string }[] = [
+  { value: 'psa', label: 'From a PSA' },
+  { value: 'internal', label: 'Team boards' },
+  { value: 'monitoring', label: 'Monitoring' },
+];
 
 function Select({ label, value, onChange, options, labelFor, title }: {
   label: string; value: string; onChange: (v: string) => void; options: string[];
@@ -53,127 +52,105 @@ export default function TicketsPage() {
   );
 }
 
-function TicketsList() {
-  const { data, isLoading, isError } = useQuery({ queryKey: ['tickets'], queryFn: api.listTickets });
+/** The value once it has stopped changing for a moment, so typing asks the server once, not per key. */
+function useSettled<T>(value: T, ms = 300): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
+}
 
+function TicketsList() {
   // Filters can arrive in the URL, so a figure on the dashboard can link to the tickets behind it
   // — and so the resulting view is a link someone can send to a colleague. `view` handles the two
-  // that are not a single status: "open" and "resolved" are each a SET of statuses, and which
-  // statuses those are is a decision that already lives in isResolvedStatus.
+  // that are not a single status: "open" and "resolved" are each a SET of statuses.
   const params = useSearchParams();
   const view = params.get('view');
   // A window on the date the ticket was RAISED - the same axis the client-workload figures use.
-  // Filtering on the import date instead would make this list disagree with the number that
-  // linked here, which is the one thing a link from a figure must never do.
   const from = params.get('from');
 
   const [q, setQ] = useState(() => params.get('q') ?? '');
   const [status, setStatus] = useState(() => params.get('status') ?? ALL);
   const [priority, setPriority] = useState(() => params.get('priority') ?? ALL);
-  // Company arrives by NAME, not id: this list filters on the name it displays, and a link that
-  // carried an id would have to resolve it before it could select anything.
+  // Company arrives by NAME, not id: the list filters on the name it displays.
   const [company, setCompany] = useState(() => params.get('company') ?? ALL);
   const [source, setSource] = useState(ALL);
   const [queue, setQueue] = useState(ALL);
-  // A person KEY ("u:<portal user>" or "x:<PSA resource>"), not a name: two people can share a
-  // name, and Client workload's People list links here with exactly the key it counted by.
+  const [kind, setKind] = useState(() => params.get('kind') ?? ALL);
+  // A person KEY ("u:<portal user>" or "x:<PSA resource>"), not a name: two people can share a name.
   const [tech, setTech] = useState(() => params.get('tech') ?? ALL);
 
-  // The view filters that are not a column: open/resolved, and the four questions about the person
-  // reading the page. Initialised from the URL — `view` has always carried the first of them — and
-  // then owned here, because a view chip has to be able to set all of them in one go.
+  // The view filters that are not a column: open/resolved, and the questions about the person reading.
   const [openness, setOpenness] = useState<string | null>(() => view);
   const [mine, setMine] = useState(() => params.get('mine') === '1');
   const [following, setFollowing] = useState(() => params.get('following') === '1');
   const [unassigned, setUnassigned] = useState(() => params.get('unassigned') === '1');
   const [overdue, setOverdue] = useState(() => params.get('overdue') === '1');
   const [dueSoon, setDueSoon] = useState(() => params.get('due') === 'soon');
+  const [pageIndex, setPageIndex] = useState(0);
 
-  // Who is asking. "Mine" is a question about them, and without an answer it would quietly mean
-  // "nobody's" — so the chip is only offered once this has arrived.
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 10 * 60_000, retry: false });
-  const myKey = me?.userId ? `u:${me.userId}` : null;
-  // Memoised: a fresh [] on every render would re-run the filter memo below on every render too.
-  const myTeams = useMemo(() => me?.teamIds ?? [], [me]);
+  const settledQ = useSettled(q.trim());
+  const query: TicketPageParams = {
+    q: settledQ || undefined,
+    status: status === ALL ? undefined : status,
+    priority: priority === ALL ? undefined : priority,
+    company: company === ALL ? undefined : company,
+    queue: queue === ALL ? undefined : queue,
+    source: source === ALL ? undefined : source,
+    kind: kind === ALL ? undefined : kind,
+    person: tech === ALL ? undefined : tech,
+    openness, mine, following, unassigned, overdue, dueSoon,
+    from: from ?? undefined,
+  };
+  const filterKey = JSON.stringify(query);
+  // Any change of filter starts from the first page: page 3 of a different question is meaningless.
+  useEffect(() => { setPageIndex(0); }, [filterKey]);
 
-  const rows = useMemo(() => data ?? [], [data]);
+  const { data, isLoading, isError, isFetching } = useQuery({
+    queryKey: ['tickets', 'page', filterKey, pageIndex],
+    queryFn: () => api.ticketPage({ ...query, skip: pageIndex * PAGE_SIZE, take: PAGE_SIZE }),
+    // The old page stays on screen while the next one loads, instead of flashing empty.
+    placeholderData: keepPreviousData,
+  });
+  const { data: facets } = useQuery({ queryKey: ['tickets', 'facets'], queryFn: api.ticketFacets, staleTime: 60_000 });
 
-  // Everyone who holds or logged time on a ticket in the list. Staff lists carry this; a client's
-  // carries none, and then neither the filter nor the Assignee column is offered.
-  const hasPeople = rows.some((t) => t.people !== null);
-  const techNames = useMemo(() => {
-    const names = new Map<string, string>();
-    for (const t of rows) for (const p of t.people ?? []) if (!names.has(p.key)) names.set(p.key, p.name);
-    return names;
-  }, [rows]);
+  const rows = useMemo(() => data?.items ?? [], [data]);
+  const total = data?.total ?? 0;
+
+  // Previous/Next on a ticket steps through what is on screen here.
+  const qc = useQueryClient();
+  useEffect(() => { if (rows.length) qc.setQueryData(['ticket-nav'], rows.map((t) => t.id)); }, [rows, qc]);
+
+  // Everyone who holds or logged time on a ticket the caller can see. A client's list carries none,
+  // and then neither the filter nor the Assignee column is offered.
+  const people = facets?.people ?? [];
+  const hasPeople = people.length > 0 || rows.some((t) => t.people !== null);
+  const techNames = useMemo(() => new Map(people.map((p) => [p.key, p.name])), [people]);
   const techOptions = useMemo(() => {
-    const keys = Array.from(techNames.keys())
-      .sort((a, b) => techNames.get(a)!.localeCompare(techNames.get(b)!));
-    // A key from a link that no ticket here carries must still be selectable, or the control would
-    // read "All" while the list stayed filtered - the page contradicting itself.
+    const keys = people.map((p) => p.key);
+    // A key from a link that no ticket carries must still be selectable, or the control would read
+    // "All" while the list stayed filtered.
     return tech !== ALL && !techNames.has(tech) ? [tech, ...keys] : keys;
-  }, [techNames, tech]);
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    const now = Date.now();
-    return rows.filter((t) => {
-      const resolved = isResolvedStatus(t.portalStatus);
-      const holder = (t.people ?? []).find((p) => p.holds);
-      return (!needle
-          || (t.title ?? '').toLowerCase().includes(needle)
-          || (t.externalTicketId ?? '').toLowerCase().includes(needle)
-          // The board number people actually quote to each other, which a search for "INT-00012"
-          // was finding nothing for.
-          || (t.number ?? '').toLowerCase().includes(needle)
-          || (t.customerName ?? '').toLowerCase().includes(needle))
-        && (status === ALL || t.portalStatus === status)
-        && (openness !== 'open' || !resolved)
-        && (openness !== 'resolved' || resolved)
-        && (!from || new Date(t.raisedAt ?? t.createdAt) >= new Date(from))
-        && (priority === ALL || t.portalPriority === priority)
-        && (source === ALL || (t.connectionName ?? '') === source)
-        && (company === ALL || (t.customerName ?? '') === company)
-        && (queue === ALL || (t.queueOrBoard ?? '') === queue)
-        // Holds it OR logged time on it - the rule People counts by. Holder alone would send anyone
-        // who only logged time from that list to an empty one.
-        && (tech === ALL || (t.people ?? []).some((p) => p.key === tech))
-        // Mine covers a team I am in as well as my own name: a ticket routed to Level 2 is mine to
-        // pick up, which is the whole point of routing it there.
-        && (!mine || holder?.key === myKey
-            || (t.assignedTeamId !== null && myTeams.includes(t.assignedTeamId)))
-        && (!following || t.following)
-        && (!unassigned || holder === undefined)
-        // Overdue means past due AND still open. A ticket closed late is history, not work to do,
-        // and a list that keeps showing it can never be emptied.
-        // ...and not paused: a ticket waiting on the customer is not late, which is what the server's
-        // own Overdue filter and the needs-attention list already say.
-        && (!overdue || (t.dueAt !== null && new Date(t.dueAt).getTime() < now && !resolved && !t.slaPausedAt))
-        // Due soon: not late yet, due within the same 8 hours the board's "soon" label uses.
-        && (!dueSoon || (t.dueAt !== null && !resolved && !t.slaPausedAt
-            && new Date(t.dueAt).getTime() >= now && new Date(t.dueAt).getTime() <= now + DUE_SOON_HOURS * 3_600_000));
-    });
-  }, [rows, q, status, priority, source, company, queue, openness, from, tech,
-      mine, following, unassigned, overdue, dueSoon, myKey, myTeams]);
+  }, [people, techNames, tech]);
+  const withCurrent = (options: string[] | undefined, current: string) =>
+    current !== ALL && !(options ?? []).includes(current) ? [current, ...(options ?? [])] : (options ?? []);
 
-  // The hours behind what is on screen. Opened from a client's hours figure, this is the same
-  // sum - which is what makes that link honest rather than approximate.
-  const totalWorked = filtered.reduce((a, t) => a + t.timeWorkedHours, 0);
-  const totalBillable = filtered.reduce((a, t) => a + t.billableHours, 0);
-
+  const anyTickets = (facets?.statuses.length ?? 0) > 0 || total > 0;
   const active = q.trim() !== '' || openness !== null || from !== null
     || mine || following || unassigned || overdue || dueSoon
-    || [status, priority, source, company, queue, tech].some((v) => v !== ALL);
+    || [status, priority, source, company, queue, tech, kind].some((v) => v !== ALL);
   const router = useRouter();
   const clear = () => {
-    setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL); setTech(ALL);
+    setQ(''); setStatus(ALL); setPriority(ALL); setSource(ALL); setCompany(ALL); setQueue(ALL); setTech(ALL); setKind(ALL);
     setOpenness(null); setMine(false); setFollowing(false); setUnassigned(false); setOverdue(false); setDueSoon(false);
     // Drops the URL's own filters as well. Leaving them would clear every visible control and still
     // filter the list, which reads as the page ignoring the button.
     if (params.toString()) router.replace('/dashboard/tickets');
   };
 
-  // The filter set as a view sees it, and the one way back. Everything the bar can set is set here,
-  // so a chip cannot leave a stale control behind contradicting the list.
+  // The filter set as a view sees it, and the one way back.
   const filters: SavedViewFilters = {
     ...EMPTY_FILTERS,
     search: q.trim() || null,
@@ -208,6 +185,10 @@ function TicketsList() {
     if (params.toString()) router.replace('/dashboard/tickets');
   };
 
+  const first = total === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const last = Math.min(total, (pageIndex + 1) * PAGE_SIZE);
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -225,7 +206,7 @@ function TicketsList() {
 
       <MyApprovalsBanner />
 
-      {!isError && rows.length > 0 && (
+      {!isError && anyTickets && (
         <TicketViewBar filters={filters} onApply={applyView} canSave={hasPeople} />
       )}
 
@@ -238,30 +219,33 @@ function TicketsList() {
         />
       )}
 
-      {!isError && data && rows.length === 0 && (
+      {!isError && data && !anyTickets && !active && (
         <EmptyState title="No tickets yet" body="Create a ticket, or run a sync from PSA Connections to pull them from your PSA." />
       )}
 
-      {!isError && rows.length > 0 && (
+      {!isError && (anyTickets || active) && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
           <div className="relative">
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by title, number or customer…"
+              aria-label="Filter tickets"
               className="w-56 rounded-lg border border-[var(--border)] bg-[var(--bg)] py-1.5 pl-8 pr-3 text-sm outline-none focus:border-brand" />
           </div>
-          <Select label="Status" value={status} onChange={setStatus} options={optionsFor(rows, (t) => t.portalStatus)} />
-          <Select label="Priority" value={priority} onChange={setPriority} options={optionsFor(rows, (t) => t.portalPriority)} />
-          <Select label="Source" value={source} onChange={setSource} options={optionsFor(rows, (t) => t.connectionName)} />
-          <Select label="Company" value={company} onChange={setCompany} options={optionsFor(rows, (t) => t.customerName)} />
-          <Select label="Queue" value={queue} onChange={setQueue} options={optionsFor(rows, (t) => t.queueOrBoard)} />
+          <Select label="Status" value={status} onChange={setStatus} options={withCurrent(facets?.statuses, status)} />
+          <Select label="Priority" value={priority} onChange={setPriority} options={withCurrent(facets?.priorities, priority)} />
+          <Select label="Kind" value={kind} onChange={setKind} options={KINDS.map((k) => k.value)}
+            labelFor={(v) => KINDS.find((k) => k.value === v)?.label ?? v} title="Where the ticket came from" />
+          <Select label="Source" value={source} onChange={setSource} options={withCurrent(facets?.sources, source)} />
+          <Select label="Company" value={company} onChange={setCompany} options={withCurrent(facets?.companies, company)} />
+          <Select label="Queue" value={queue} onChange={setQueue} options={withCurrent(facets?.queues, queue)} />
           {hasPeople && (
             <Select label="Technician" value={tech} onChange={setTech} options={techOptions}
               labelFor={(k) => techNames.get(k) ?? 'Selected technician'}
               title="Tickets this person holds, or logged time on" />
           )}
-          <span className="ml-auto text-xs text-[var(--muted)]">
-            {filtered.length === rows.length ? `${rows.length} tickets` : `${filtered.length} of ${rows.length} tickets`}
-            {totalWorked > 0 && <span> · {fmtHours(totalWorked)} worked, {fmtHours(totalBillable)} billable</span>}
+          <span className="ml-auto text-xs text-[var(--muted)]" aria-live="polite">
+            {total === 0 ? 'No tickets' : `${first}–${last} of ${total} ticket${total === 1 ? '' : 's'}`}
+            {data && data.hoursWorked > 0 && <span> · {fmtHours(data.hoursWorked)} worked, {fmtHours(data.hoursBillable)} billable</span>}
           </span>
           {active && (
             <button onClick={clear} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
@@ -271,12 +255,12 @@ function TicketsList() {
         </div>
       )}
 
-      {!isError && rows.length > 0 && filtered.length === 0 && (
+      {!isError && data && total === 0 && (anyTickets || active) && (
         <EmptyState title="No tickets match your filters" body="Try a different search term, or clear the filters to see everything." />
       )}
 
-      {!isError && filtered.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      {!isError && rows.length > 0 && (
+        <div className={`overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] ${isFetching ? 'opacity-70' : ''}`}>
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase tracking-wide text-[var(--muted)]">
               <tr className="border-b border-[var(--border)]">
@@ -292,18 +276,18 @@ function TicketsList() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((t) => (
+              {rows.map((t) => (
                 <tr key={t.id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)]">
                   <td className="px-4 py-3">
                     <Link href={`/dashboard/tickets/${t.id}`} className="font-medium hover:underline">
                       {t.title}
                     </Link>
-                    {t.externalTicketId && (
-                      <span className="ml-2 text-xs text-[var(--muted)]">#{t.externalTicketId}</span>
+                    {(t.externalTicketId ?? t.number) && (
+                      <span className="ml-2 text-xs text-[var(--muted)]">{t.externalTicketId ? `#${t.externalTicketId}` : t.number}</span>
                     )}
                   </td>
                   <td className="px-4 py-3">{t.customerName ?? '—'}</td>
-                  <td className="px-4 py-3"><SourceBadge provider={t.provider} connectionName={t.connectionName} /></td>
+                  <td className="px-4 py-3"><SourceBadge provider={t.provider} connectionName={t.connectionName} origin={t.origin} /></td>
                   <td className="px-4 py-3"><StatusBadge status={t.portalStatus} /></td>
                   <td className="px-4 py-3"><PriorityBadge priority={t.portalPriority} /></td>
                   <td className="px-4 py-3 text-[var(--muted)]">{t.queueOrBoard ?? '—'}</td>
@@ -317,14 +301,27 @@ function TicketsList() {
                     </td>
                   )}
                   <td className="px-4 py-3 text-right tabular-nums text-[var(--muted)]">{t.timeWorkedHours > 0 ? fmtHours(t.timeWorkedHours) : '—'}</td>
-                  {/* The raise date, not the import date: the from-filter works on this one, and
-                      a list showing one date while filtering on another looks broken. */}
+                  {/* The raise date, not the import date: the from-filter works on this one. */}
                   <td className="px-4 py-3 text-[var(--muted)]">{new Date(t.raisedAt ?? t.createdAt).toLocaleDateString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {!isError && total > PAGE_SIZE && (
+        <nav aria-label="Pages" className="flex items-center justify-end gap-2 text-sm">
+          <span className="text-xs text-[var(--muted)]">Page {pageIndex + 1} of {pages}</span>
+          <button type="button" onClick={() => setPageIndex((p) => Math.max(0, p - 1))} disabled={pageIndex === 0}
+            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--bg)] disabled:opacity-40">
+            <ChevronLeft size={13} /> Previous
+          </button>
+          <button type="button" onClick={() => setPageIndex((p) => Math.min(pages - 1, p + 1))} disabled={pageIndex >= pages - 1}
+            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--bg)] disabled:opacity-40">
+            Next <ChevronRight size={13} />
+          </button>
+        </nav>
       )}
     </div>
   );
