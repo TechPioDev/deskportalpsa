@@ -43,7 +43,7 @@ export default function BoardsPage() {
             board says so.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex items-center gap-2 text-sm text-[var(--muted)]">
             <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
             Show closed boards

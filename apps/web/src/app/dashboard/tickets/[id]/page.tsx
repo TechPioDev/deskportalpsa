@@ -719,7 +719,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 Windows default 125% scaling reports ~1090 CSS pixels and never reached it, so the
                 assistant dropped below the thread on the machines it is actually used on. The
                 side rails give up width at `lg` so the thread keeps a workable measure. */}
-            <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_260px] xl:grid-cols-[320px_minmax(0,1fr)_320px] lg:items-start">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_minmax(0,1fr)_260px] xl:grid-cols-[320px_minmax(0,1fr)_320px] lg:items-start">
             {/* Both rails are given the SAME height — one screen, less the top offset — so the two
                 sides of the ticket line up instead of one ending halfway up the other. Each scrolls
                 inside itself rather than stretching to the thread's height, which on a sixteen
