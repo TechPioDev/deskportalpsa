@@ -42,6 +42,9 @@ public sealed class IntegrationIdentity
     /// A null connection is a ticket that belongs to no PSA (the team's own board, or an RMM alert):
     /// there is no integration account to mistake its work for, so the answer is always false.
     /// </summary>
+    /// <summary>Each connection's integration account, for filters that must treat it as nobody.</summary>
+    public IReadOnlyDictionary<Guid, string> Accounts => _accountByConnection;
+
     public bool IsAccount(Guid? connectionId, string? externalId)
         => connectionId is { } id
            && !string.IsNullOrWhiteSpace(externalId)

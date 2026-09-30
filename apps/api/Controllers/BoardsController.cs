@@ -70,6 +70,16 @@ public sealed class BoardsController(
     public async Task<IActionResult> Members(Guid id, CancellationToken ct)
         => Ok(await boards.MembersAsync(id, ct));
 
+    /// <summary>
+    /// Who could be put on a board: the organization's active staff. For the lead choosing members;
+    /// names and addresses of colleagues, so behind the same key as the membership itself.
+    /// </summary>
+    [HttpGet("people")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> People([FromServices] DeskDbContext db, CancellationToken ct)
+        => Ok(await db.AppUsers.AsNoTracking().Where(u => u.IsActive).OrderBy(u => u.DisplayName)
+            .Select(u => new BoardMemberDto(u.Id, u.DisplayName, u.Email)).ToListAsync(ct));
+
     /// <summary>Replaces the membership. An empty list reopens the board to the whole team.</summary>
     [HttpPut("{id:guid}/members")]
     [RequirePermission(Permissions.BoardsManage)]

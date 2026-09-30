@@ -209,6 +209,13 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
             .IsUnique()
             .HasFilter("\"ExternalTicketId\" IS NOT NULL");
         b.HasIndex(x => new { x.MspOrganizationId, x.PortalStatus });
+        // The paged list's order (newest first), the Overdue / Due soon / Due today counts, the
+        // resolved-this-week count, and "raised by me" on the team's boards. Each is a query the list,
+        // My Work or the Overview now runs in the database instead of in the browser.
+        b.HasIndex(x => new { x.MspOrganizationId, x.CreatedAt });
+        b.HasIndex(x => new { x.MspOrganizationId, x.SlaDueAt });
+        b.HasIndex(x => new { x.MspOrganizationId, x.ResolvedAt });
+        b.HasIndex(x => new { x.MspOrganizationId, x.CreatedByUserId });
         b.HasIndex(x => x.CorrelationId);
         // Client-portal list queries filter by company; dashboard metrics group by technician.
         b.HasIndex(x => x.ClientCompanyId);
