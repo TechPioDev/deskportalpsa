@@ -25,12 +25,16 @@ test.describe('review and related tickets', () => {
       await f.getByRole('button', { name: 'Raise ticket' }).click();
       await expect(page.locator('tr').filter({ hasText: title })).toBeVisible();
     };
-    await raise('Open port 443 on the edge firewall');
-    await raise('Publish the intranet externally');
+    // Titles carry this run's key: CI runs every browser against one database, and a link search
+    // that finds the same title from an earlier browser's run cannot tell which ticket to pick.
+    const firewall = `Open port 443 on the edge firewall ${key}`;
+    const intranet = `Publish the intranet externally ${key}`;
+    await raise(firewall);
+    await raise(intranet);
     const boardUrl = page.url();
-    await page.locator('tr').filter({ hasText: 'Open port 443 on the edge firewall' })
-      .getByRole('link', { name: 'Open port 443 on the edge firewall' }).click();
-    await expect(page.getByRole('heading', { name: 'Open port 443 on the edge firewall' })).toBeVisible();
+    await page.locator('tr').filter({ hasText: firewall })
+      .getByRole('link', { name: firewall }).click();
+    await expect(page.getByRole('heading', { name: firewall })).toBeVisible();
     await expect(page.getByText('A board lead reviews this work before it closes')).toBeVisible();
 
     // Resolved: it waits for a lead instead of closing.
@@ -74,17 +78,17 @@ test.describe('review and related tickets', () => {
     const related = page.getByRole('region', { name: 'Related tickets' });
     await related.getByRole('button', { name: 'Link a ticket' }).click();
     await related.getByLabel('How it relates').selectOption({ label: 'Blocks' });
-    await related.getByLabel('Find a ticket to link').fill('Publish the intranet');
-    await related.getByRole('button', { name: /Publish the intranet externally/ }).click();
+    await related.getByLabel('Find a ticket to link').fill(intranet);
+    await related.getByRole('button', { name: new RegExp(intranet) }).click();
     await expect(related.getByRole('listitem')).toContainText('Blocks');
-    await expect(related.getByRole('listitem')).toContainText('Publish the intranet externally');
+    await expect(related.getByRole('listitem')).toContainText(intranet);
 
     await page.goto(boardUrl);
-    await page.locator('tr').filter({ hasText: 'Publish the intranet externally' })
-      .getByRole('link', { name: 'Publish the intranet externally' }).click();
+    await page.locator('tr').filter({ hasText: intranet })
+      .getByRole('link', { name: intranet }).click();
     const other = page.getByRole('region', { name: 'Related tickets' });
     await expect(other.getByRole('listitem')).toContainText('Blocked by');
-    await expect(other.getByRole('listitem')).toContainText('Open port 443 on the edge firewall');
+    await expect(other.getByRole('listitem')).toContainText(firewall);
     await expect(page.getByRole('region', { name: 'History' })).toContainText('Linked: Blocked by');
 
     // Removed from this side, gone from both.
