@@ -90,7 +90,11 @@ test('skills are added to the catalogue, given to a person, and filter the workf
   await expect(page.getByText(skill, { exact: true })).toBeVisible();
 
   await page.goto(`/dashboard/workforce/people/${sam.id}`);
+  // Their name arrives with the schedule, so the page is live by then: a tab clicked earlier is lost
+  // as the page starts up, and the skills box never appears (Firefox, main, 1 Oct).
+  await expect(page.getByRole('heading', { name: sam.displayName })).toBeVisible();
   await page.getByRole('tab', { name: 'Skills' }).click();
+  await expect(page.getByRole('tab', { name: 'Skills' })).toHaveAttribute('aria-selected', 'true');
   await page.getByLabel('Skill to add').selectOption({ label: skill });
   await page.getByLabel('Level').selectOption({ label: 'Expert' });
   await page.getByRole('button', { name: 'Add skill' }).click();
