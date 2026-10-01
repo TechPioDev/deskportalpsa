@@ -44,11 +44,18 @@ test('view the portal as a technician, read-only, and exit', async ({ page }) =>
 });
 
 test('find anyone to view as from the Users page', async ({ page }) => {
+  // Its own person: tests run in parallel, so nothing another test created can be relied on.
+  const stamp = Date.now().toString().slice(-6);
+  const roles = await page.request.get('/api/bff/api/admin/roles').then((r) => r.json()) as { id: string; name: string }[];
+  const tech = roles.find((r) => /technician/i.test(r.name))!;
+  await page.request.post('/api/bff/api/admin/users', {
+    data: { displayName: `Picker Person ${stamp}`, email: `picker.${stamp}@techpio.test`, roleIds: [tech.id] },
+  });
   await page.goto('/dashboard/users');
   await page.getByRole('button', { name: 'View as…' }).click();
   const dialog = page.getByRole('dialog', { name: 'View as' });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel('Find a person').fill('view test');
+  await dialog.getByLabel('Find a person').fill(`picker person ${stamp}`);
   await expect(dialog.getByRole('listitem').first()).toContainText('Staff');
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toHaveCount(0);
