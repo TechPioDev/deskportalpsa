@@ -78,6 +78,15 @@ builder.Services.AddHealthChecks()
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // The browser-test suite signs every test in as one local user, so a full run spends one
+    // person's allowance many times over and ordinary page loads were refused at random. Local mode
+    // (Development only, refused in Production below) may raise the two limits; nothing else can.
+    var perUserLimit = localMode
+        ? config.GetValue("RateLimiting:PerUserPermitLimit", RateLimitPartitions.PerUserPermitLimit)
+        : RateLimitPartitions.PerUserPermitLimit;
+    var perOrganizationLimit = localMode
+        ? config.GetValue("RateLimiting:PerOrganizationPermitLimit", RateLimitPartitions.PerOrganizationPermitLimit)
+        : RateLimitPartitions.PerOrganizationPermitLimit;
     // Two limits, chained: the person's own allowance, and a much larger ceiling for their whole
     // organization. Per organization alone made colleagues compete for one budget; per person alone
     // would let one tenant's headcount set the load the host has to carry. See RateLimitPartitions.
@@ -87,14 +96,14 @@ builder.Services.AddRateLimiter(o =>
                 partitionKey: RateLimitPartitions.UserKey(ctx),
                 _ => new FixedWindowRateLimiterOptions
                 {
-                    PermitLimit = RateLimitPartitions.PerUserPermitLimit,
+                    PermitLimit = perUserLimit,
                     Window = TimeSpan.FromMinutes(1),
                 })),
         PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
             RateLimitPartitions.OrganizationKey(ctx) is { } org
                 ? RateLimitPartition.GetFixedWindowLimiter(org, _ => new FixedWindowRateLimiterOptions
                 {
-                    PermitLimit = RateLimitPartitions.PerOrganizationPermitLimit,
+                    PermitLimit = perOrganizationLimit,
                     Window = TimeSpan.FromMinutes(1),
                 })
                 // Anonymous traffic is bounded by the per-address limit above and by the narrower
