@@ -19,6 +19,13 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
 {
     private const int MaxCopyTargets = 200;
 
+    /// <summary>
+    /// Schedules with their days and breaks, in one query on purpose: a version has at most 7 days of
+    /// at most 4 breaks, so the joined rows stay few, and a split query would add two round trips.
+    /// Saying so also keeps EF's "multiple collection include" warning out of the log.
+    /// </summary>
+    private IQueryable<WorkSchedule> WithDays => db.WorkSchedules.Include(s => s.Days).ThenInclude(d => d.Breaks).AsSingleQuery();
+
     public async Task<PersonScheduleDto> GetAsync(Guid callerId, Guid appUserId, CancellationToken ct = default)
     {
         var person = await access.VisiblePersonAsync(callerId, appUserId, ct);
@@ -32,7 +39,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
         var effectiveFrom = EffectiveFrom(input.EffectiveFrom, zoneId);
 
         var before = await InForceAsync(appUserId, effectiveFrom, ct);
-        var existing = await db.WorkSchedules.Include(s => s.Days).ThenInclude(d => d.Breaks)
+        var existing = await WithDays
             .FirstOrDefaultAsync(s => s.AppUserId == appUserId && s.EffectiveFrom == effectiveFrom, ct);
         if (existing is not null)
         {
@@ -66,7 +73,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
     public async Task<PersonScheduleDto> RemoveUpcomingAsync(Guid callerId, Guid appUserId, DateOnly effectiveFrom, CancellationToken ct = default)
     {
         var person = await access.ManagedPersonAsync(callerId, appUserId, ct);
-        var version = await db.WorkSchedules.Include(s => s.Days).ThenInclude(d => d.Breaks)
+        var version = await WithDays
             .FirstOrDefaultAsync(s => s.AppUserId == appUserId && s.EffectiveFrom == effectiveFrom, ct)
             ?? throw new NotFoundException("Schedule");
         // Only a change that has not started yet can be withdrawn: a day already worked under a
@@ -91,7 +98,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
         if (targets.Count > MaxCopyTargets) throw new ValidationFailedException($"Copy to at most {MaxCopyTargets} people at a time.");
 
         // The schedule in force today, else the first one set to start.
-        var versions = await db.WorkSchedules.AsNoTracking().Include(s => s.Days).ThenInclude(d => d.Breaks)
+        var versions = await WithDays.AsNoTracking()
             .Where(s => s.AppUserId == fromUserId).OrderBy(s => s.EffectiveFrom).ToListAsync(ct);
         var template = InForce(versions) ?? versions.FirstOrDefault()
             ?? throw new ValidationFailedException($"{source.DisplayName} has no schedule to copy yet.");
@@ -147,7 +154,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
         var departments = await db.UserDepartments.AsNoTracking().Where(m => ids.Contains(m.AppUserId))
             .Select(m => new { m.AppUserId, m.Department!.Name }).ToListAsync(ct);
         var skills = await SkillsOfAsync(ids, ct);
-        var versions = await db.WorkSchedules.AsNoTracking().Include(s => s.Days).ThenInclude(d => d.Breaks)
+        var versions = await WithDays.AsNoTracking()
             .Where(s => ids.Contains(s.AppUserId)).ToListAsync(ct);
 
         return people.Select(p =>
@@ -167,7 +174,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
 
     private async Task<PersonScheduleDto> DtoAsync(AppUser person, bool canManage, CancellationToken ct)
     {
-        var versions = await db.WorkSchedules.AsNoTracking().Include(s => s.Days).ThenInclude(d => d.Breaks)
+        var versions = await WithDays.AsNoTracking()
             .Where(s => s.AppUserId == person.Id).OrderBy(s => s.EffectiveFrom).ToListAsync(ct);
         var current = InForce(versions);
         var upcoming = versions.Where(v => v.EffectiveFrom > Today(v.TimeZone)).OrderBy(v => v.EffectiveFrom).FirstOrDefault();
@@ -205,7 +212,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
     }
 
     private async Task<WorkSchedule?> InForceAsync(Guid appUserId, DateOnly on, CancellationToken ct)
-        => await db.WorkSchedules.AsNoTracking().Include(s => s.Days).ThenInclude(d => d.Breaks)
+        => await WithDays.AsNoTracking()
             .Where(s => s.AppUserId == appUserId && s.EffectiveFrom <= on)
             .OrderByDescending(s => s.EffectiveFrom).FirstOrDefaultAsync(ct);
 

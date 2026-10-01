@@ -12,6 +12,7 @@ using Desk.Infrastructure.Tickets;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace Desk.Tests.Unit;
@@ -47,7 +48,14 @@ public sealed class RelationalQueryTests : IDisposable
         // only while a connection to it does.
         _connection.Open();
         _tenant.SetTenant(Org);
-        _db = new DeskDbContext(new DbContextOptionsBuilder<DeskDbContext>().UseSqlite(_connection).Options, _tenant, _clock);
+        // Strict about the query warnings production would log: a query that loads two collections must
+        // say AsSingleQuery or AsSplitQuery on purpose, and a split one must not take "the first" of an
+        // unordered set (its separate queries could then disagree on which row that is).
+        _db = new DeskDbContext(new DbContextOptionsBuilder<DeskDbContext>().UseSqlite(_connection)
+            .ConfigureWarnings(w => w.Throw(
+                RelationalEventId.MultipleCollectionIncludeWarning,
+                CoreEventId.RowLimitingOperationWithoutOrderByWarning,
+                CoreEventId.FirstWithoutOrderByAndFilterWarning)).Options, _tenant, _clock);
         _db.Database.EnsureCreated();
 
         var org = new MspOrganization { Id = Org, Name = "TechPio", Slug = "techpio" };
