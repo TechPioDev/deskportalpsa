@@ -11,7 +11,8 @@ namespace Desk.Api.Auth;
 /// permission claims for the matching internal user. Keeping the DB as the source of truth
 /// means access can change without re-issuing tokens. Runs idempotently per request.
 /// </summary>
-public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider clock) : Microsoft.AspNetCore.Authentication.IClaimsTransformation
+public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider clock, IHttpContextAccessor? http = null)
+    : Microsoft.AspNetCore.Authentication.IClaimsTransformation
 {
     /// <summary>How stale AppUser.LastActiveAt must be before it's worth a write. This method runs
     /// on every authenticated request (stateless bearer tokens, no session), so writing on every
@@ -73,6 +74,35 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
                 s => s.SetProperty(u => u.LastActiveAt, now));
         }
 
+        var (identity, granted, isPlatform) = await StaffIdentityAsync(user);
+
+        // "View as": an administrator asked to see the portal as someone else. Honoured only when the
+        // REAL caller may (checked here, on every request - the header alone grants nothing), and only
+        // for someone they may see. Then the request runs as that person, read-only, with markers
+        // saying who is really looking; otherwise it runs as the caller, as if nothing was asked.
+        var asked = http?.HttpContext?.Request.Headers[ViewAs.Header].ToString();
+        if (!string.IsNullOrEmpty(asked) && ViewAs.MayViewAs(granted))
+        {
+            var callerName = principal.FindFirstValue("name") ?? user.DisplayName;
+            var (target, _) = await ViewAs.ResolveAsync(db, asked, user.Id, user.MspOrganizationId, isPlatform);
+            if (target is not null)
+            {
+                var viewed = target.Kind == "staff"
+                    ? (await StaffIdentityAsync(await db.AppUsers.AsNoTracking().Include(u => u.Roles).SingleAsync(u => u.Id == target.Id))).Identity
+                    : ClientIdentity(target.OrganizationId!.Value);
+                viewed.AddClaims(ViewAs.MarkerClaims(target, user.Id, callerName));
+                principal.AddIdentity(viewed);
+                return principal;
+            }
+        }
+
+        principal.AddIdentity(identity);
+        return principal;
+    }
+
+    /// <summary>A staff member's portal identity: who they are, their organization, and what they may do.</summary>
+    private async Task<(ClaimsIdentity Identity, HashSet<string> Granted, bool IsPlatform)> StaffIdentityAsync(Desk.Domain.Identity.AppUser user)
+    {
         var roleIds = user.Roles.Select(r => r.RoleId).ToList();
         var roles = await db.Roles
             .AsNoTracking()
@@ -115,9 +145,19 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
 
         foreach (var perm in granted)
             identity.AddClaim(new Claim(CurrentUser.PermissionClaim, perm));
+        return (identity, granted, isPlatform);
+    }
 
-        principal.AddIdentity(identity);
-        return principal;
+    /// <summary>A client portal user's identity: their organization and the fixed client permissions.</summary>
+    private static ClaimsIdentity ClientIdentity(Guid organizationId)
+    {
+        var identity = new ClaimsIdentity();
+        // Org only — no UserIdClaim: that is the AppUser id space, and the staff fallbacks that
+        // read it must keep seeing "no staff identity" for a client caller.
+        identity.AddClaim(new Claim(CurrentUser.OrgClaim, organizationId.ToString()));
+        foreach (var perm in ClientClaims)
+            identity.AddClaim(new Claim(CurrentUser.PermissionClaim, perm));
+        return identity;
     }
 
     /// <summary>
@@ -163,14 +203,7 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
         if (client is null)
             return principal;
 
-        var identity = new ClaimsIdentity();
-        // Org only — no UserIdClaim: that is the AppUser id space, and the staff fallbacks that
-        // read it must keep seeing "no staff identity" for a client caller.
-        identity.AddClaim(new Claim(CurrentUser.OrgClaim, client.MspOrganizationId.ToString()));
-        foreach (var perm in ClientClaims)
-            identity.AddClaim(new Claim(CurrentUser.PermissionClaim, perm));
-
-        principal.AddIdentity(identity);
+        principal.AddIdentity(ClientIdentity(client.MspOrganizationId));
         return principal;
     }
 }

@@ -216,6 +216,7 @@ app.UseRateLimiter();
 app.UseCors("web");
 app.UseAuthentication();
 app.UseMiddleware<TenantResolutionMiddleware>(); // after auth, before controllers
+app.UseMiddleware<Desk.Api.Middleware.ViewAsReadOnlyMiddleware>(); // viewing as someone never changes anything
 app.UseAuthorization();
 
 app.MapControllers();

@@ -15,9 +15,17 @@ public sealed class CurrentUser(IHttpContextAccessor accessor) : ICurrentUser
     private ClaimsPrincipal? Principal => accessor.HttpContext?.User;
 
     public bool IsAuthenticated => Principal?.Identity?.IsAuthenticated ?? false;
-    public string? Subject => Principal?.FindFirstValue(ClaimTypes.NameIdentifier) ?? Principal?.FindFirstValue("sub");
-    public string? Email => Principal?.FindFirstValue(ClaimTypes.Email) ?? Principal?.FindFirstValue("email");
-    public string? DisplayName => Principal?.FindFirstValue("name") ?? Email;
+    // While viewing as someone, the token still names the administrator; the person viewed wins.
+    public string? Subject => Principal?.FindFirstValue(ViewAs.SubjectClaim)
+        ?? Principal?.FindFirstValue(ClaimTypes.NameIdentifier) ?? Principal?.FindFirstValue("sub");
+    public string? Email => Principal?.FindFirstValue(ViewAs.EmailClaim)
+        ?? Principal?.FindFirstValue(ClaimTypes.Email) ?? Principal?.FindFirstValue("email");
+    public string? DisplayName => Principal?.FindFirstValue(ViewAs.NameClaim) ?? Principal?.FindFirstValue("name") ?? Email;
+
+    public Guid? ViewedByUserId => Guid.TryParse(Principal?.FindFirstValue(ViewAs.ByClaim), out var by) ? by : null;
+    public string? ViewedByName => Principal?.FindFirstValue(ViewAs.ByNameClaim);
+    /// <summary>"staff" or "client" while viewing as someone.</summary>
+    public string? ViewKind => Principal?.FindFirstValue(ViewAs.KindClaim);
 
     public Guid? OrganizationId =>
         Guid.TryParse(Principal?.FindFirstValue(OrgClaim), out var id) ? id : null;
