@@ -49,8 +49,18 @@ export function TasksPanel({ ticketId, canUpdate, people, onNeedPeople }: {
     // click that missed, and gets clicked again — which would untick it.
     // The optimistic change itself is made in the click handler (tick below), synchronously: made
     // here it lands a tick later, after React has already put the controlled checkbox back.
+    //
+    // Each answer is the whole list as of THAT save. Tick a second step while the first is still
+    // saving (a slow connection to the live site) and the first answer can arrive last, carrying a
+    // list from before the second tick: applied, it unticked the second step on screen while the
+    // server held it done. So no answer is applied while another save is running (the screen keeps
+    // the ticks as clicked), and once the last save finishes the list is reloaded from the server.
+    mutationKey: ['ticket-task-change', ticketId],
     onError: () => qc.invalidateQueries({ queryKey: ['ticket-tasks', ticketId] }),
-    onSuccess: settle,
+    onSuccess: () => {
+      if (qc.isMutating({ mutationKey: ['ticket-task-change', ticketId] }) > 1) return;
+      for (const key of [['ticket-tasks', ticketId], ['tickets'], ['board-tickets']]) qc.invalidateQueries({ queryKey: key });
+    },
   });
 
   const rows = tasks ?? [];
