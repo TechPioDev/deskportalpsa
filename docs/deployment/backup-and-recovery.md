@@ -68,6 +68,40 @@ infrastructure/scripts/backup.sh          # see script below
 `SECRET_ENCRYPTION_KEY` is not part of this script — it changes essentially never, so back it up
 manually to wherever the rest of the host's root secrets live, the moment it is generated.
 
+## Second copy on our own backup server (pull)
+
+The VPS keeps 14 days of nightly sets in `/var/backups/deskportal`. A backup server we own **pulls**
+them: the VPS holds no login for it, so whoever takes over the VPS cannot reach, overwrite or delete
+the copies there.
+
+1. **On the backup server** (Linux, with `rsync`), as the user that will own the copies:
+   ```bash
+   ssh-keygen -t ed25519 -N "" -f ~/.ssh/deskportal_pull
+   cat ~/.ssh/deskportal_pull.pub          # one line: send it to the VPS admin (a public key is not a secret)
+   ```
+2. **On the VPS**, as root, with that public key and the backup server's fixed IP:
+   ```bash
+   bash /opt/deskportal/infrastructure/scripts/backup-pull-vps-setup.sh "ssh-ed25519 AAAA... backup@server" 203.0.113.10
+   ```
+   This creates `deskpull`: no password, no shell, no port forwarding. Its one key is pinned to
+   `rrsync -ro` on the backup folder, and only from that IP. It gets read access through ACLs that
+   also cover future backups. The folder stays root's, and its group and everyone else still get nothing.
+3. **On the backup server**, install the pull script and its schedule:
+   ```bash
+   cp backup-pull.sh ~/bin/ && chmod +x ~/bin/backup-pull.sh
+   ~/bin/backup-pull.sh                     # first run: copies everything, then prints one line per file
+   ( crontab -l 2>/dev/null; echo '30 5 * * * ~/bin/backup-pull.sh >> ~/deskportal-pull.log 2>&1' ) | crontab -
+   ```
+   Each run copies only what is new and never deletes on either side. It checks every new file is a
+   whole gzip archive and sets aside any that isn't. If `pg_restore` is installed, it also confirms
+   the newest dump opens as a Postgres archive. It warns when no database backup from today or
+   yesterday has arrived. It keeps `KEEP_DAYS` (default 90) itself, and exits non-zero on any problem
+   so cron or a monitor can report it.
+
+Tested end to end on two throwaway containers (`infrastructure/scripts/tests/backup-pull-test.sh`, 14 checks; needs Docker). The checks cover the pull
+itself and these refusals: a shell, a command, a write, a delete, a read outside the folder, and the
+same key used from another IP.
+
 ## Restore procedure (drill quarterly)
 
 1. **Provision** a clean stack: `docker compose -f infrastructure/docker/docker-compose.yml up -d`.
