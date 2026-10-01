@@ -36,5 +36,13 @@ public sealed class MeController(
         // What this installation has switched on, so the interface offers only what the API will
         // answer rather than showing a page that returns "not found".
         features = new { internalBoards = features.InternalBoards },
+        // While an administrator views the portal as this person: who is really looking, so the
+        // page can say so and offer the way out. Null otherwise.
+        viewAs = user.ViewedByUserId is null ? null : new
+        {
+            name = user.DisplayName,
+            kind = (user as Desk.Api.Auth.CurrentUser)?.ViewKind,
+            by = user.ViewedByName,
+        },
     });
 }

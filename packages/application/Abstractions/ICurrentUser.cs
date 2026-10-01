@@ -21,4 +21,12 @@ public interface ICurrentUser
     IReadOnlySet<string> Permissions { get; }
 
     bool HasPermission(string permissionKey);
+
+    /// <summary>
+    /// While an administrator views the portal as this person: who is really looking. Everything
+    /// above then describes the person viewed; these say who is behind it, so a record written
+    /// during the view names the administrator. Null in every other case.
+    /// </summary>
+    Guid? ViewedByUserId => null;
+    string? ViewedByName => null;
 }

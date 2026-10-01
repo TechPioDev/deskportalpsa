@@ -143,8 +143,16 @@ export const MeSchema = z.object({
   permissions: z.array(z.string()),
   // What this installation has switched on. Defaulted so an older API still parses.
   features: z.object({ internalBoards: z.boolean().default(true) }).default({ internalBoards: true }),
+  // Set while an administrator views the portal as this person: whom, and who is really looking.
+  viewAs: z.object({ name: z.string(), kind: z.string().nullable(), by: z.string().nullable() }).nullable().default(null),
 });
 
+
+export const ViewAsPersonSchema = z.object({
+  key: z.string(), kind: z.string(), name: z.string(), email: z.string(),
+  detail: z.string().nullable(), available: z.boolean(), reason: z.string().nullable(),
+});
+export type ViewAsPerson = z.infer<typeof ViewAsPersonSchema>;
 
 export const ConnectionSettingsSchema = z.object({
   twoWaySync: z.boolean(),
@@ -366,6 +374,14 @@ export const api = {
       at: z.string(),
     }))),
   me: () => request('/api/me', MeSchema),
+  /** People an administrator may view the portal as: staff and client portal users. */
+  viewAsPeople: (q: string) =>
+    request(`/api/view-as/people?${new URLSearchParams({ q })}`, z.array(ViewAsPersonSchema)) as Promise<ViewAsPerson[]>,
+  /** Starts viewing as someone. The proxy keeps the choice in an httpOnly cookie once the API agrees. */
+  viewAsStart: (key: string) =>
+    request('/api/view-as/start', z.object({ key: z.string(), name: z.string(), kind: z.string() }),
+      { method: 'POST', body: JSON.stringify({ key }) }),
+  viewAsStop: () => request('/api/view-as/stop', z.unknown(), { method: 'POST', body: JSON.stringify({}) }),
   storageUsage: () =>
     request('/api/admin/storage', z.object({ usedBytes: z.number(), fileCount: z.number(), ticketCount: z.number() })),
   profile: () => request('/api/profile', ProfileSchema) as Promise<Profile>,

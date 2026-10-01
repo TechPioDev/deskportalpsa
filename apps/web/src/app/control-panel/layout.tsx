@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { QueryProvider } from '@/components/QueryProvider';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { UserMenu } from '@/components/UserMenu';
+import { ViewAsBanner } from '@/components/ViewAs';
 import { api, ApiError } from '@/lib/api';
 import {
   Rocket, FileText, Users, Server, UserCheck, ArrowUpCircle, Clock, CalendarDays,
@@ -129,6 +130,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
         {/* Pages wait for capabilities: mounted earlier, a staff account's pages each fired a request
             that was refused before the shell knew to replace them. */}
+        <ViewAsBanner />
         <main className="flex-1 bg-[var(--bg)] p-4 sm:p-6">
           {notClientUser ? <NotForThisAccount /> : caps || capsError ? children : null}
         </main>

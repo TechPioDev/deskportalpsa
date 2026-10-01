@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImportStaffDrawer } from '@/components/ImportStaffDrawer';
+import { ViewAsPicker } from '@/components/ViewAs';
 import {
   UserPlus, Search, X, MailQuestion, Power, MoreVertical,
   Users, UserCheck, Crown, Trash2, Copy, Pencil,
@@ -469,6 +470,7 @@ export default function UsersPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ViewAsPicker />
           <button onClick={() => setShowImport(true)}
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3.5 py-2 text-sm font-medium hover:bg-[var(--bg)]">
             <Users size={16} /> Import from PSA

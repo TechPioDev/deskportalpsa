@@ -15,5 +15,6 @@ export async function GET(req: NextRequest) {
   res.cookies.delete(ck.access);
   res.cookies.delete(ck.refresh);
   res.cookies.delete(ck.idToken);
+  res.cookies.delete(ck.viewAs);
   return res;
 }

@@ -22,7 +22,10 @@ async function refresh(refreshToken: string) {
   return (await r.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
 }
 
-function upstreamHeaders(req: NextRequest, token: string | undefined): Headers {
+/** The view-as routes always run as the administrator themselves, never as the person viewed. */
+const isViewAsControl = (path: string[]) => path[0] === 'api' && path[1] === 'view-as';
+
+function upstreamHeaders(req: NextRequest, token: string | undefined, viewAs?: string): Headers {
   const h = new Headers();
   // x-desk-alert-key: a monitoring tool's key. Only the web app is reachable from outside, so an
   // alert from NinjaOne or Datto arrives here; dropping the header would make every delivery
@@ -32,6 +35,8 @@ function upstreamHeaders(req: NextRequest, token: string | undefined): Headers {
     if (v) h.set(key, v);
   }
   if (token) h.set('authorization', `Bearer ${token}`);
+  // Only ever from our own httpOnly cookie: the allow-list above drops any such header the browser sends.
+  if (viewAs) h.set('x-desk-view-as', viewAs);
   return h;
 }
 
@@ -74,10 +79,11 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
   const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
   const bodyBuf = hasBody ? Buffer.from(await req.arrayBuffer()) : undefined;
   let access = req.cookies.get(ck.access)?.value;
+  const viewAs = isViewAsControl(path) ? undefined : req.cookies.get(ck.viewAs)?.value;
 
   const call = (token?: string) =>
     fetchWithRetry(
-      () => fetch(target, { method: req.method, headers: upstreamHeaders(req, token), body: bodyBuf, cache: 'no-store', redirect: 'manual' }),
+      () => fetch(target, { method: req.method, headers: upstreamHeaders(req, token, viewAs), body: bodyBuf, cache: 'no-store', redirect: 'manual' }),
       req.method);
 
   let upstream = await call(access);
@@ -103,12 +109,19 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
   // team/board assignment, …), and passing an empty Buffer through here throws "Invalid response
   // status code 204" instead of proxying it, turning every one of those actions into a 500.
   const nullBodyStatus = upstream.status === 204 || upstream.status === 304;
-  const out = new NextResponse(nullBodyStatus ? null : Buffer.from(await upstream.arrayBuffer()), {
+  const payload = nullBodyStatus ? null : Buffer.from(await upstream.arrayBuffer());
+  const out = new NextResponse(payload, {
     status: upstream.status,
     headers: passthroughHeaders(upstream),
   });
+  // Starting a view sets the cookie only once the API has agreed to it; ending one always clears it.
+  if (isViewAsControl(path) && path[2] === 'start' && upstream.ok && payload) {
+    const key = (JSON.parse(payload.toString('utf8')) as { key?: string }).key;
+    if (key) out.cookies.set(ck.viewAs, key, { httpOnly: true, secure: isProd, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 8 });
+  }
+  if (isViewAsControl(path) && path[2] === 'stop') out.cookies.delete(ck.viewAs);
   if (sessionDead) {
-    for (const name of [ck.access, ck.refresh, ck.idToken]) out.cookies.delete(name);
+    for (const name of [ck.access, ck.refresh, ck.idToken, ck.viewAs]) out.cookies.delete(name);
   } else if (refreshed) {
     out.cookies.set(ck.access, refreshed.access, {
       httpOnly: true, secure: isProd, sameSite: 'lax', path: '/', maxAge: refreshed.maxAge ?? 300,

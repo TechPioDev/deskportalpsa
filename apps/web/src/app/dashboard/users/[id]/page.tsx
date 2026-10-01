@@ -4,6 +4,7 @@ import { use, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ViewAsButton } from '@/components/ViewAs';
 import {
   ArrowLeft, Camera, Check, Copy, MailQuestion, Power, ShieldCheck, Trash2, X,
 } from 'lucide-react';
@@ -167,6 +168,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
 
       <UserHeader user={user} onChanged={refresh} onDeleted={() => router.push('/dashboard/users')} onDeleteError={setDeleteError} />
       {deleteError && <p className="text-xs text-red-600 dark:text-red-400">{deleteError}</p>}
+      {user.isActive && <ViewAsButton personKey={`u:${user.id}`} name={user.displayName} />}
 
       <div className="flex flex-wrap gap-1 border-b border-[var(--border)]">
         {TABS.map((t) => (

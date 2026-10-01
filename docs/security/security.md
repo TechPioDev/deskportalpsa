@@ -24,6 +24,31 @@
   client. The tests for each are in `InternalWorkIsolationTests` (Phase 0 of the Internal Service
   Desk, 30 Sep 2026).
 
+### View as (administrators)
+
+An administrator can see the portal as any staff member or client portal user. They see that
+person's menu, tickets and figures, without their password and without acting as them.
+
+- **Who:** holders of both `users.manage` and `roles.manage`, which is the Administrator role and not
+  a Manager. A platform administrator can only be viewed by another platform administrator.
+- **Whom:** active people in the same organization, never yourself. A client can only be viewed once
+  they have signed in, because client access is found by sign-in identity.
+- **How:**
+  - The web proxy keeps the choice in an httpOnly cookie (`desk_view_as`) and forwards it as
+    `X-Desk-View-As`. The browser cannot send that header itself, because the proxy's header
+    allow-list drops it.
+  - The header grants nothing on its own. On every request, `DeskClaimsTransformation` re-checks that
+    the real caller may view as someone, and that this person may be viewed (`ViewAs.ResolveAsync`).
+    Only then does the request run with that person's claims, plus markers naming the administrator.
+  - Otherwise the request runs as the caller, as if nothing had been asked.
+- **Read-only:** `ViewAsReadOnlyMiddleware` refuses every POST, PUT, PATCH and DELETE while viewing,
+  before any controller runs. One rule covers every endpoint.
+- **Recorded:** the start and end of each view (`user.view_as.started` / `user.view_as.ended`) are
+  audited under the administrator. Anything audited during a view names the administrator too, as
+  "Harpal (viewing as Sarabjit)", never the person viewed.
+- **Leaving:** **Exit view** in the banner. Signing out also clears the view, and the cookie expires
+  after 8 hours.
+
 ## Secret handling
 - PSA credentials are encrypted at rest with **AES-256-GCM** (`EncryptedDbSecretStore`), keyed by a
   master key held only in the host's `.env.prod` (`Secrets:EncryptionKey`), never in the database.

@@ -22,8 +22,9 @@ public sealed class AuditWriter(DeskDbContext db, ICurrentUser user, ITenantCont
             Action = action,
             EntityType = entityType,
             EntityId = entityId,
-            ActorUserId = user.Subject,
-            ActorDisplayName = user.DisplayName,
+            // Viewing as someone is read-only, but anything recorded meanwhile was the administrator's.
+            ActorUserId = user.ViewedByUserId is { } by ? by.ToString() : user.Subject,
+            ActorDisplayName = user.ViewedByUserId is null ? user.DisplayName : $"{user.ViewedByName} (viewing as {user.DisplayName})",
             CreatedAt = clock.GetUtcNow(),
             DetailJson = detail is null ? null : JsonSerializer.Serialize(detail),
         });
