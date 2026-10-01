@@ -22,6 +22,9 @@ export const cookies = {
   access: 'desk_at',
   refresh: 'desk_rt',
   idToken: 'desk_it',
+  // Who an administrator is viewing the portal as ("u:<id>" / "c:<id>"). httpOnly: page scripts can
+  // neither read nor set it. It grants nothing: the API re-checks the administrator on every request.
+  viewAs: 'desk_view_as',
   verifier: 'desk_pkce',
   state: 'desk_state',
 } as const;

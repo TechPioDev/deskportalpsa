@@ -8,6 +8,7 @@ import { HeaderSearch } from '@/components/HeaderSearch';
 import { MobileNav } from '@/components/SidebarNav';
 import { SidebarShell, SidebarProvider, SidebarToggle } from '@/components/SidebarShell';
 import { UpdateWatchdog } from '@/components/UpdateWatchdog';
+import { ViewAsBanner } from '@/components/ViewAs';
 
 
 
@@ -23,6 +24,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* min-w-0: a flex item otherwise grows to its widest child's content, and the scrolling
           phone tab bar below made every dashboard page about 2,200px wide on a phone. */}
       <div className="flex min-w-0 flex-1 flex-col">
+        <ViewAsBanner />
         <header className="flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 sm:px-6">
           <SidebarToggle />
           <HeaderSearch />
