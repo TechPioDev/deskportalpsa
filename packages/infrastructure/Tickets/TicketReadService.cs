@@ -150,8 +150,13 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     private async Task<List<TicketPersonRef>> PeopleAsync(IQueryable<Ticket> scope, CancellationToken ct)
     {
         var holders = await scope
-            .Where(t => t.AssignedAppUserId != null || (t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId != ""))
-            .Select(t => new { t.AssignedAppUserId, Ext = t.AssignedTechnicianExternalId, Name = t.AssignedTechnicianName, t.PsaConnectionId })
+            .Where(t => t.ResolvedByAppUserId != null || t.AssignedAppUserId != null
+                || (t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId != ""))
+            .Select(t => new
+            {
+                AssignedAppUserId = t.ResolvedByAppUserId ?? t.AssignedAppUserId,
+                Ext = t.AssignedTechnicianExternalId, Name = t.AssignedTechnicianName, t.PsaConnectionId,
+            })
             .Distinct().ToListAsync(ct);
         var loggers = await db.TicketTimeEntries.AsNoTracking()
             .Where(e => scope.Any(t => t.Id == e.TicketId))
@@ -354,14 +359,16 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             "monitoring" => scope.Where(t => t.Origin == TicketOrigin.Rmm),
             _ => scope,
         };
-        // Holds it OR logged time on it - the rule the People figures count by, so a name there opens
-        // exactly the tickets it was counted from. Staff only: a client list carries no people.
+        // Its person OR logged time on it - the rule the People figures count by, so a name there opens
+        // exactly the tickets it was counted from. Its person is the one productivity credits: who
+        // resolved it here, else who is working it here, else the PSA login (as its linked user).
+        // Staff only: a client list carries no people.
         if (staff && q.PersonKey is { Length: > 2 } key)
         {
             if (key.StartsWith("u:", StringComparison.Ordinal) && Guid.TryParse(key[2..], out var person))
-                scope = scope.Where(t => t.AssignedAppUserId == person
+                scope = scope.Where(t => (t.ResolvedByAppUserId ?? t.AssignedAppUserId) == person
                     // Held in the PSA by a login linked to them, with nobody here on it.
-                    || (t.AssignedAppUserId == null && db.UserPsaIdentities.Any(i => i.AppUserId == person
+                    || ((t.ResolvedByAppUserId ?? t.AssignedAppUserId) == null && db.UserPsaIdentities.Any(i => i.AppUserId == person
                         && i.PsaConnectionId == t.PsaConnectionId && i.ExternalTechnicianId == t.AssignedTechnicianExternalId)
                         && !db.PsaConnections.Any(c => c.Id == t.PsaConnectionId && c.DefaultTimeEntryResourceId == t.AssignedTechnicianExternalId))
                     || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == person));
@@ -369,7 +376,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             {
                 var ext = key[2..];
                 scope = scope.Where(t =>
-                    (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId.Trim().ToLower() == ext)
+                    (t.AssignedAppUserId == null && t.ResolvedByAppUserId == null
+                        && t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId.Trim().ToLower() == ext)
                     || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == null
                         && e.TechnicianExternalId != null && e.TechnicianExternalId.Trim().ToLower() == ext));
             }

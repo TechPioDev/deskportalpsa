@@ -1,4 +1,5 @@
 using Desk.Application.Analytics;
+using Desk.Application.Tickets;
 using Desk.Domain.Enums;
 using Desk.Domain.Identity;
 using Desk.Domain.Tenancy;
@@ -119,6 +120,21 @@ public class PortalWorkCreditTests
         var managerView = await f.Svc.DailyAsync(new MetricsFilter { AppUserId = f.Ravi });
         managerView.Sum(d => d.Hours).Should().Be(2m);
         (await f.Svc.DailyAsync(new MetricsFilter())).Select(d => d.Name).Should().OnlyContain(n => n == "Arjun" || n == "Ravi");
+    }
+
+    [Fact]
+    public async Task A_name_in_the_ticket_list_opens_the_tickets_credited_to_them()
+    {
+        // The list's people filter must agree with Productivity: the ticket Arjun resolved is his,
+        // even though Autotask still shows it under the login linked to Ravi.
+        var f = await SetupAsync(linkSupportToRavi: true);
+        f.Db.Tickets.AddRange(ClientTicket(resolvedDay: 2, resolvedBy: f.Arjun), ClientTicket(resolvedDay: 3));
+        await f.Db.SaveChangesAsync();
+        var reads = new TicketReadService(f.Db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: f.Ravi));
+
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(f.Ravi, null)))).Total.Should().Be(1);
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(f.Arjun, null)))).Total.Should().Be(1);
+        (await reads.FacetsAsync()).People.Select(p => p.Name).Should().BeEquivalentTo(["Arjun", "Ravi"]);
     }
 
     [Fact]
