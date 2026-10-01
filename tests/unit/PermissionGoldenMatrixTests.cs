@@ -32,6 +32,8 @@ public class PermissionGoldenMatrixTests
             "integration.health.view", "jobs.manage", "audit.view", "security.config.view", "enquiries.view",
             // Added with internal boards (Sep 2026): deciding what boards exist is a lead's call.
             "boards.manage",
+            // Added with the workforce module (Oct 2026): schedules and skills.
+            "schedule.view", "workforce.manage",
         ],
         [RoleType.MspAdministrator] =
         [
@@ -40,12 +42,16 @@ public class PermissionGoldenMatrixTests
             "tickets.note.public.add", "tickets.time.log", "tickets.update", "reports.view",
             "productivity.team.view", "integration.health.view", "jobs.manage", "audit.view",
             "security.config.view", "enquiries.view", "boards.manage",
+            // Workforce module (Oct 2026): administrators see and set up schedules and skills.
+            "schedule.view", "workforce.manage",
         ],
         [RoleType.Manager] =
         [
             "connections.view", "mappings.view", "tickets.view.all", "tickets.time.log",
             "tickets.update", "reports.view", "productivity.team.view", "integration.health.view",
             "enquiries.view", "boards.manage",
+            // Workforce module (Oct 2026): managers see everyone's schedule and skills; they don't set them up.
+            "schedule.view",
         ],
         [RoleType.Technician] =
         [
@@ -53,6 +59,8 @@ public class PermissionGoldenMatrixTests
             // tickets on the team's own boards.
             "tickets.view.assigned", "tickets.create", "tickets.note.public.add", "tickets.time.log",
             "tickets.update", "productivity.own.view",
+            // Workforce module (Oct 2026): their own schedule and skills only (scope Own, below).
+            "schedule.view",
         ],
         [RoleType.ClientAdministrator] =
         [
@@ -73,6 +81,7 @@ public class PermissionGoldenMatrixTests
     {
         [(RoleType.Technician, "tickets.view.assigned")] = PermissionScope.Assigned,
         [(RoleType.Technician, "productivity.own.view")] = PermissionScope.Own,
+        [(RoleType.Technician, "schedule.view")] = PermissionScope.Own,
         [(RoleType.ClientUser, "tickets.view.own")] = PermissionScope.Own,
         [(RoleType.ClientAdministrator, "tickets.view.company")] = PermissionScope.Selected,
         [(RoleType.PlatformSuperAdministrator, "tickets.view.assigned")] = PermissionScope.Assigned,

@@ -106,7 +106,36 @@ public class EndpointAuthorizationTests
         { nameof(DashboardController), nameof(DashboardController.Team), [Permissions.ProductivityViewTeam] },
         { nameof(DashboardController), nameof(DashboardController.Clients), [Permissions.ProductivityViewTeam] },
         { nameof(DashboardController), nameof(DashboardController.ExportTeam), [Permissions.ProductivityViewTeam] },
+        // Workforce: reading needs schedule.view (scoped per person in the services); every change
+        // also needs workforce.manage. Action-level attributes add to the controller's, never replace it.
+        { nameof(WorkforceController), nameof(WorkforceController.People), [Permissions.ScheduleView] },
+        { nameof(WorkforceController), nameof(WorkforceController.Schedule), [Permissions.ScheduleView] },
+        { nameof(WorkforceController), nameof(WorkforceController.Skills), [Permissions.ScheduleView] },
+        { nameof(WorkforceController), nameof(WorkforceController.PersonSkills), [Permissions.ScheduleView] },
+        { nameof(WorkforceController), nameof(WorkforceController.SaveSchedule), [Permissions.WorkforceManage] },
+        { nameof(WorkforceController), nameof(WorkforceController.RemoveUpcoming), [Permissions.WorkforceManage] },
+        { nameof(WorkforceController), nameof(WorkforceController.CopySchedule), [Permissions.WorkforceManage] },
+        { nameof(WorkforceController), nameof(WorkforceController.SetSchedulable), [Permissions.WorkforceManage] },
+        { nameof(WorkforceController), nameof(WorkforceController.CreateSkill), [Permissions.WorkforceManage] },
+        { nameof(WorkforceController), nameof(WorkforceController.UpdateSkill), [Permissions.WorkforceManage] },
+        { nameof(WorkforceController), nameof(WorkforceController.AssignSkill), [Permissions.WorkforceManage] },
+        { nameof(WorkforceController), nameof(WorkforceController.RemoveSkill), [Permissions.WorkforceManage] },
     };
+
+    [Fact]
+    public void No_client_account_can_reach_any_workforce_endpoint()
+    {
+        // What a client login can ever hold: its role's grants, or the fixed claims a pure client
+        // portal login receives. None of it may open a single workforce action.
+        var clientHeld = Permissions.ForRole(Desk.Domain.Enums.RoleType.ClientAdministrator)
+            .Concat(Permissions.ForRole(Desk.Domain.Enums.RoleType.ClientUser))
+            .Select(p => p.Key).Concat([Permissions.TicketsCreate, Permissions.TicketsAddPublicNote]).ToHashSet();
+        var classPolicy = typeof(WorkforceController).GetCustomAttribute<RequirePermissionAttribute>()!.Policy!;
+        classPolicy[PermissionPolicyProvider.Prefix.Length..].Split(PermissionPolicyProvider.Any)
+            .Should().NotIntersectWith(clientHeld, "every workforce action sits behind the controller's own requirement");
+        foreach (var action in Actions().Where(a => a.Controller == typeof(WorkforceController)))
+            (Required(action) ?? new HashSet<string>()).Should().NotIntersectWith(clientHeld, Name(action));
+    }
 
     [Theory]
     [MemberData(nameof(Golden))]
