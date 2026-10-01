@@ -62,6 +62,8 @@ export default defineConfig({
         // small for a whole suite. Honoured in local mode only; production keeps its limits.
         RateLimiting__PerUserPermitLimit: '20000',
         RateLimiting__PerOrganizationPermitLimit: '200000',
+        // The workforce module is off by default; the browser tests exercise it.
+        Features__Workforce: 'true',
       },
     },
     {

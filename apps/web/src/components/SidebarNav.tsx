@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Ticket, Plug, Bell, User, BarChart3, Activity, ListChecks, ShieldCheck,
   SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile, BookOpen, LifeBuoy, Briefcase, Scale,
+  CalendarClock,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { isStaffPermissions } from '@/lib/staff';
@@ -13,7 +14,7 @@ import { isStaffPermissions } from '@/lib/staff';
 // `permissions` is ANY-OF: "Productivity" is rightly visible to a technician who may only see
 // their own numbers AND to a manager who holds only the team-wide permission.
 type NavItem = {
-  href: string; label: string; icon: LucideIcon; permissions?: string[]; feature?: 'internalBoards';
+  href: string; label: string; icon: LucideIcon; permissions?: string[]; feature?: 'internalBoards' | 'workforce';
   /** Staff-only or client-only, for a page that means nothing to the other side - a technician has
    *  no use for the client's Help page, and a client has none for the team's article editor. */
   audience?: 'staff' | 'client';
@@ -74,6 +75,7 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
       // Everything that is mine to do, from every source. Staff only: a client's list is already theirs.
       { href: '/dashboard/my-work', label: 'My work', icon: Briefcase, permissions: ['tickets.view.all', 'tickets.view.assigned'], audience: 'staff' },
       { href: '/dashboard/workload', label: 'Team workload', icon: Scale, permissions: ['productivity.team.view'], audience: 'staff' },
+      { href: '/dashboard/workforce', label: 'Workforce', icon: CalendarClock, permissions: ['schedule.view'], feature: 'workforce', audience: 'staff' },
       // The team's own work, kept apart from the provider queues above so the two never blur.
       { href: '/dashboard/boards', label: 'Internal boards', icon: ClipboardList, permissions: ['tickets.create'], feature: 'internalBoards' },
       { href: '/dashboard/knowledge', label: 'Knowledge base', icon: BookOpen, permissions: ['tickets.view.all', 'tickets.view.assigned'], audience: 'staff' },
@@ -133,7 +135,8 @@ function useVisibleNav() {
   const isStaff = isStaffPermissions(held);
   return (item: NavItem) =>
     (!item.permissions || item.permissions.some((p) => held.has(p)))
-    && (!item.feature || features?.[item.feature] !== false)
+    // Internal boards are on unless switched off; the workforce module is off unless switched on.
+    && (!item.feature || (item.feature === 'workforce' ? features?.workforce === true : features?.[item.feature] !== false))
     && (!item.audience || (!!me && (item.audience === 'staff') === isStaff));
 }
 

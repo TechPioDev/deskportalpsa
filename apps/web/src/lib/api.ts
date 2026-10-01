@@ -142,11 +142,53 @@ export const MeSchema = z.object({
   isPlatformScope: z.boolean(),
   permissions: z.array(z.string()),
   // What this installation has switched on. Defaulted so an older API still parses.
-  features: z.object({ internalBoards: z.boolean().default(true) }).default({ internalBoards: true }),
+  features: z.object({
+    internalBoards: z.boolean().default(true),
+    // The workforce module (schedules, skills) is off unless an installation turns it on.
+    workforce: z.boolean().default(false),
+  }).default({ internalBoards: true, workforce: false }),
   // Set while an administrator views the portal as this person: whom, and who is really looking.
   viewAs: z.object({ name: z.string(), kind: z.string().nullable(), by: z.string().nullable() }).nullable().default(null),
 });
 
+
+// ---- Workforce: working schedules and skills -------------------------------------------------
+const WorkBreakSchema = z.object({ start: z.string(), end: z.string() });
+export type WorkBreak = z.infer<typeof WorkBreakSchema>;
+// Day of week as .NET sends it: 0 = Sunday ... 6 = Saturday.
+const WorkDaySchema = z.object({
+  day: z.number(), start: z.string(), end: z.string(), breaks: z.array(WorkBreakSchema),
+  crossesMidnight: z.boolean(), grossMinutes: z.number(), breakMinutes: z.number(), usableMinutes: z.number(),
+});
+export type WorkDay = z.infer<typeof WorkDaySchema>;
+const WorkScheduleVersionSchema = z.object({
+  effectiveFrom: z.string(), timeZone: z.string(), days: z.array(WorkDaySchema), weeklyUsableMinutes: z.number(),
+  updatedAt: z.string(), updatedBy: z.string().nullable(),
+});
+export type WorkScheduleVersion = z.infer<typeof WorkScheduleVersionSchema>;
+export const PersonScheduleSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), isActive: z.boolean(), isSchedulable: z.boolean(),
+  organizationTimeZone: z.string(), current: WorkScheduleVersionSchema.nullable(), upcoming: WorkScheduleVersionSchema.nullable(),
+  versions: z.array(z.string()), canManage: z.boolean(),
+});
+export type PersonSchedule = z.infer<typeof PersonScheduleSchema>;
+export type WorkScheduleInput = {
+  effectiveFrom?: string | null; timeZone: string;
+  days: { day: number; start: string; end: string; breaks: WorkBreak[] }[];
+};
+const SkillLevelSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+export const SkillSchema = z.object({
+  id: z.string(), name: z.string(), description: z.string().nullable(), isActive: z.boolean(), holderCount: z.number(),
+});
+export type Skill = z.infer<typeof SkillSchema>;
+export const StaffSkillSchema = z.object({ skillId: z.string(), name: z.string(), level: SkillLevelSchema, skillIsActive: z.boolean() });
+export type StaffSkill = z.infer<typeof StaffSkillSchema>;
+export const WorkforcePersonSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), email: z.string(), isActive: z.boolean(), isSchedulable: z.boolean(),
+  teams: z.array(z.string()), departments: z.array(z.string()), timeZone: z.string().nullable(),
+  weeklyUsableMinutes: z.number().nullable(), scheduleSummary: z.string().nullable(), skills: z.array(StaffSkillSchema),
+});
+export type WorkforcePerson = z.infer<typeof WorkforcePersonSchema>;
 
 export const ViewAsPersonSchema = z.object({
   key: z.string(), kind: z.string(), name: z.string(), email: z.string(),
@@ -374,6 +416,35 @@ export const api = {
       at: z.string(),
     }))),
   me: () => request('/api/me', MeSchema),
+  workforcePeople: (q: { teamId?: string; departmentId?: string; skills?: string[]; matchAll?: boolean; includeInactive?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (q.teamId) qs.set('teamId', q.teamId);
+    if (q.departmentId) qs.set('departmentId', q.departmentId);
+    if (q.skills?.length) qs.set('skills', q.skills.join(','));
+    if (q.matchAll) qs.set('matchAll', 'true');
+    if (q.includeInactive) qs.set('includeInactive', 'true');
+    return request(`/api/workforce/people?${qs}`, z.array(WorkforcePersonSchema)) as Promise<WorkforcePerson[]>;
+  },
+  workSchedule: (userId: string) => request(`/api/workforce/people/${userId}/schedule`, PersonScheduleSchema) as Promise<PersonSchedule>,
+  saveWorkSchedule: (userId: string, body: WorkScheduleInput) =>
+    request(`/api/workforce/people/${userId}/schedule`, PersonScheduleSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<PersonSchedule>,
+  removeUpcomingSchedule: (userId: string, effectiveFrom: string) =>
+    request(`/api/workforce/people/${userId}/schedule/${effectiveFrom}`, PersonScheduleSchema, { method: 'DELETE' }) as Promise<PersonSchedule>,
+  copyWorkSchedule: (userId: string, toUserIds: string[], effectiveFrom?: string | null) =>
+    request(`/api/workforce/people/${userId}/schedule/copy`, z.object({ copied: z.number() }),
+      { method: 'POST', body: JSON.stringify({ toUserIds, effectiveFrom: effectiveFrom || null }) }),
+  setSchedulable: (userId: string, schedulable: boolean) =>
+    request(`/api/workforce/people/${userId}/schedulable`, PersonScheduleSchema, { method: 'PUT', body: JSON.stringify({ schedulable }) }) as Promise<PersonSchedule>,
+  skills: (includeInactive = false) => request(`/api/workforce/skills?includeInactive=${includeInactive}`, z.array(SkillSchema)) as Promise<Skill[]>,
+  createSkill: (name: string, description?: string | null) =>
+    request('/api/workforce/skills', SkillSchema, { method: 'POST', body: JSON.stringify({ name, description: description || null }) }) as Promise<Skill>,
+  updateSkill: (id: string, body: { name: string; description: string | null; isActive: boolean }) =>
+    request(`/api/workforce/skills/${id}`, SkillSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<Skill>,
+  personSkills: (userId: string) => request(`/api/workforce/people/${userId}/skills`, z.array(StaffSkillSchema)) as Promise<StaffSkill[]>,
+  assignSkill: (userId: string, skillId: string, level: 1 | 2 | 3) =>
+    request(`/api/workforce/people/${userId}/skills`, z.array(StaffSkillSchema), { method: 'POST', body: JSON.stringify({ skillId, level }) }) as Promise<StaffSkill[]>,
+  removeSkill: (userId: string, skillId: string) =>
+    request(`/api/workforce/people/${userId}/skills/${skillId}`, z.array(StaffSkillSchema), { method: 'DELETE' }) as Promise<StaffSkill[]>,
   /** People an administrator may view the portal as: staff and client portal users. */
   viewAsPeople: (q: string) =>
     request(`/api/view-as/people?${new URLSearchParams({ q })}`, z.array(ViewAsPersonSchema)) as Promise<ViewAsPerson[]>,
