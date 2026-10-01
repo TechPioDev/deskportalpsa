@@ -49,5 +49,13 @@ public class AppUser : BaseEntity
     /// </summary>
     public DateTimeOffset? LastActiveAt { get; set; }
 
+    /// <summary>
+    /// Whether this person is offered for planned work. Off for someone who is active in the portal
+    /// but is not given work (a manager who does not take tickets, someone on long leave): they keep
+    /// their schedule and skills, and are simply left out when work is planned. An inactive account is
+    /// never offered, whatever this says.
+    /// </summary>
+    public bool IsSchedulable { get; set; } = true;
+
     public ICollection<UserRole> Roles { get; set; } = new List<UserRole>();
 }

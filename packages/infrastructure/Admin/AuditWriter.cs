@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Desk.Application.Abstractions;
 using Desk.Application.Admin;
+using Desk.Application.Common;
 using Desk.Domain.Audit;
 using Desk.Infrastructure.Persistence;
 
@@ -11,7 +12,8 @@ namespace Desk.Infrastructure.Admin;
 /// detail is serialized as-is, so callers must pass only non-secret data (connection creation logs
 /// name/provider/endpoint, never credentials).
 /// </summary>
-public sealed class AuditWriter(DeskDbContext db, ICurrentUser user, ITenantContext tenant, TimeProvider clock)
+public sealed class AuditWriter(DeskDbContext db, ICurrentUser user, ITenantContext tenant, TimeProvider clock,
+    ICorrelationContext? correlation = null)
     : IAuditWriter
 {
     public async Task WriteAsync(string action, string entityType, string? entityId, object? detail = null, CancellationToken ct = default)
@@ -27,6 +29,8 @@ public sealed class AuditWriter(DeskDbContext db, ICurrentUser user, ITenantCont
             ActorDisplayName = user.ViewedByUserId is null ? user.DisplayName : $"{user.ViewedByName} (viewing as {user.DisplayName})",
             CreatedAt = clock.GetUtcNow(),
             DetailJson = detail is null ? null : JsonSerializer.Serialize(detail),
+            // The request's own id, so the entry can be found again in that request's logs.
+            CorrelationId = correlation?.CorrelationId,
         });
         await db.SaveChangesAsync(ct);
     }

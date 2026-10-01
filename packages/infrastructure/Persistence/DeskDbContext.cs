@@ -48,6 +48,11 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<SlaPlan> SlaPlans => Set<SlaPlan>();
     public DbSet<TicketTask> TicketTasks => Set<TicketTask>();
     public DbSet<TicketLink> TicketLinks => Set<TicketLink>();
+    public DbSet<Desk.Domain.Workforce.WorkSchedule> WorkSchedules => Set<Desk.Domain.Workforce.WorkSchedule>();
+    public DbSet<Desk.Domain.Workforce.WorkScheduleDay> WorkScheduleDays => Set<Desk.Domain.Workforce.WorkScheduleDay>();
+    public DbSet<Desk.Domain.Workforce.WorkScheduleBreak> WorkScheduleBreaks => Set<Desk.Domain.Workforce.WorkScheduleBreak>();
+    public DbSet<Desk.Domain.Workforce.Skill> Skills => Set<Desk.Domain.Workforce.Skill>();
+    public DbSet<Desk.Domain.Workforce.StaffSkill> StaffSkills => Set<Desk.Domain.Workforce.StaffSkill>();
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
     public DbSet<DeskHoliday> DeskHolidays => Set<DeskHoliday>();
     public DbSet<TicketSatisfaction> TicketSatisfactions => Set<TicketSatisfaction>();

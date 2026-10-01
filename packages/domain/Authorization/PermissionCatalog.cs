@@ -88,6 +88,12 @@ public static class PermissionCatalog
         Admin(Permissions.SecurityConfigView, "Audit Log", "View security configuration"),
         Admin(Permissions.EnquiriesView, "Enquiries", "View enquiries"),
         Admin(Permissions.BoardsManage, "Tickets", "Create and configure internal boards"),
+
+        // Workforce: working schedules and skills (capacity planning, not attendance)
+        new(Permissions.ScheduleView, "Workforce", "View working schedules and skills",
+            [PermissionScope.All, PermissionScope.Department, PermissionScope.Team, PermissionScope.Own, PermissionScope.None],
+            PermissionScope.All, IsBoardAware: false),
+        Admin(Permissions.WorkforceManage, "Workforce", "Manage working schedules and skills"),
     ];
 
     private static readonly Dictionary<string, PermissionDefinition> ByKey =

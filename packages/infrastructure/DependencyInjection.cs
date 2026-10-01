@@ -127,6 +127,14 @@ public static class DependencyInjection
         services.AddScoped<ITicketHistoryService, TicketHistoryService>();
         services.AddScoped<ITicketReviewService, TicketReviewService>();
         services.AddScoped<ITicketLinkService, TicketLinkService>();
+        // Workforce: working schedules and skills. Behind its own switch, off unless configured.
+        services.AddScoped<Workforce.WorkforceAccess>();
+        services.AddScoped<Desk.Application.Workforce.IWorkScheduleService, Workforce.WorkScheduleService>();
+        services.AddScoped<Desk.Application.Workforce.ISkillService, Workforce.SkillService>();
+        services.AddSingleton(new Desk.Application.Workforce.WorkforceFeatureOptions
+        {
+            Enabled = config.GetValue("Features:Workforce", false),
+        });
 
         // Client control panel (CP-1 → CP-4 + reports)
         services.AddScoped<Desk.Application.ControlPanel.IControlPanelService, Desk.Infrastructure.ControlPanel.ControlPanelService>();

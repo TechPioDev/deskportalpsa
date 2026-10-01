@@ -66,6 +66,19 @@ public static class Permissions
     /// </summary>
     public const string BoardsManage = "boards.manage";
 
+    /// <summary>
+    /// See people's working schedules and skills, as far as the scope reaches: your own (Own), the
+    /// people you share a team or department with, or everyone. Schedules are a capacity boundary for
+    /// planning work, never attendance. Staff only - no client role ever holds it.
+    /// </summary>
+    public const string ScheduleView = "schedule.view";
+
+    /// <summary>
+    /// Set up the workforce: people's working schedules and breaks, whether they are offered for
+    /// planned work, and the skill catalogue and who holds which skill.
+    /// </summary>
+    public const string WorkforceManage = "workforce.manage";
+
     /// <summary>Every claim, used to grant the full set to super-administrators.</summary>
     public static readonly IReadOnlyList<string> All = new[]
     {
@@ -77,6 +90,7 @@ public static class Permissions
         ReportsView, ProductivityViewTeam, ProductivityViewOwn,
         IntegrationHealthView, JobsManage, AuditView, SecurityConfigView, EnquiriesView,
         BoardsManage,
+        ScheduleView, WorkforceManage,
     };
 
     /// <summary>
@@ -108,6 +122,7 @@ public static class Permissions
             (JobsManage, PermissionScope.All), (AuditView, PermissionScope.All),
             (SecurityConfigView, PermissionScope.All), (EnquiriesView, PermissionScope.All),
             (BoardsManage, PermissionScope.All),
+            (ScheduleView, PermissionScope.All), (WorkforceManage, PermissionScope.All),
         ],
 
         RoleType.Manager =>
@@ -117,6 +132,7 @@ public static class Permissions
             (TicketsUpdate, PermissionScope.All), (ReportsView, PermissionScope.All),
             (ProductivityViewTeam, PermissionScope.All), (IntegrationHealthView, PermissionScope.All),
             (EnquiriesView, PermissionScope.All), (BoardsManage, PermissionScope.All),
+            (ScheduleView, PermissionScope.All),
         ],
 
         RoleType.Technician =>
@@ -130,6 +146,8 @@ public static class Permissions
             (TicketsLogTime, PermissionScope.All),
             (TicketsUpdate, PermissionScope.All),
             (ProductivityViewOwn, PermissionScope.Own),
+            // Their own working schedule and skills.
+            (ScheduleView, PermissionScope.Own),
         ],
 
         RoleType.ClientAdministrator =>
