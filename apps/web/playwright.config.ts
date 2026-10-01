@@ -58,6 +58,10 @@ export default defineConfig({
         LocalMode__SqlitePath: join(dataDir, 'e2e.db'),
         LocalMode__AttachmentsPath: join(dataDir, 'files'),
         LocalMode__SecretsPath: join(dataDir, 'secrets.json'),
+        // Every test is the same signed-in user: one person's 300-a-minute allowance is far too
+        // small for a whole suite. Honoured in local mode only; production keeps its limits.
+        RateLimiting__PerUserPermitLimit: '20000',
+        RateLimiting__PerOrganizationPermitLimit: '200000',
       },
     },
     {

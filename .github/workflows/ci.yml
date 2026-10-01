@@ -84,13 +84,14 @@ jobs:
           path: apps/web/playwright-report
           retention-days: 7
 
-  # The same suite in Firefox and WebKit as well. Only on main, because it costs three times the
-  # time and browser differences are a release question rather than a per-commit one. This closes
+  # The same suite in Firefox and WebKit as well, on pull requests and on main. It used to run on
+  # main only, to save time; a browser-specific failure then surfaced only after the merge it came
+  # from, and main sat red unnoticed through six merges (Sep-Oct 2026). This closes
   # the cross-browser gap the QA report has carried since the start: until now nothing but Chromium
   # had ever run the app.
   e2e-cross-browser:
     name: Browser tests (Firefox and Safari)
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
