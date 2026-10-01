@@ -14,7 +14,8 @@ public sealed class MeController(
     ICurrentUser user,
     ITenantContext tenant,
     DeskDbContext db,
-    Desk.Application.Boards.BoardFeatureOptions features) : ControllerBase
+    Desk.Application.Boards.BoardFeatureOptions features,
+    Desk.Application.Workforce.WorkforceFeatureOptions workforce) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct) => Ok(new
@@ -35,7 +36,7 @@ public sealed class MeController(
         permissions = user.Permissions.OrderBy(p => p),
         // What this installation has switched on, so the interface offers only what the API will
         // answer rather than showing a page that returns "not found".
-        features = new { internalBoards = features.InternalBoards },
+        features = new { internalBoards = features.InternalBoards, workforce = workforce.Enabled },
         // While an administrator views the portal as this person: who is really looking, so the
         // page can say so and offer the way out. Null otherwise.
         viewAs = user.ViewedByUserId is null ? null : new

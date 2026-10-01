@@ -33,6 +33,7 @@ builder.Services.AddDeskInfrastructure(config);
 // ---- Identity plumbing ----
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+builder.Services.AddScoped<Desk.Application.Common.ICorrelationContext, Desk.Api.Auth.HttpCorrelationContext>();
 builder.Services.AddScoped<IClaimsTransformation, DeskClaimsTransformation>();
 
 // Local mode: run without external dependencies (in-memory DB/secrets + dev auto-login). Only

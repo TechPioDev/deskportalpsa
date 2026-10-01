@@ -347,6 +347,73 @@ public sealed class TicketLinkConfig : IEntityTypeConfiguration<TicketLink>
     }
 }
 
+// ---- Workforce: working schedules and skills ----------------------------------------------------
+
+public sealed class WorkScheduleConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.WorkSchedule>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.WorkSchedule> b)
+    {
+        b.ToTable("work_schedules");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.TimeZone).HasMaxLength(64).IsRequired();
+        // One version per person per starting day; "the version in force on a date" reads this index.
+        b.HasIndex(x => new { x.AppUserId, x.EffectiveFrom }).IsUnique();
+        b.HasIndex(x => x.MspOrganizationId);
+        // The schedule is the person's own configuration: it goes when they do.
+        b.HasOne(x => x.AppUser).WithMany().HasForeignKey(x => x.AppUserId).OnDelete(DeleteBehavior.Cascade);
+        b.HasMany(x => x.Days).WithOne(d => d.WorkSchedule!).HasForeignKey(d => d.WorkScheduleId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class WorkScheduleDayConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.WorkScheduleDay>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.WorkScheduleDay> b)
+    {
+        b.ToTable("work_schedule_days");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => new { x.WorkScheduleId, x.Day }).IsUnique();
+        b.HasMany(x => x.Breaks).WithOne(k => k.WorkScheduleDay!).HasForeignKey(k => k.WorkScheduleDayId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class WorkScheduleBreakConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.WorkScheduleBreak>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.WorkScheduleBreak> b)
+    {
+        b.ToTable("work_schedule_breaks");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => x.WorkScheduleDayId);
+    }
+}
+
+public sealed class SkillConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.Skill>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.Skill> b)
+    {
+        b.ToTable("skills");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).HasMaxLength(80).IsRequired();
+        b.Property(x => x.NormalizedName).HasMaxLength(80).IsRequired();
+        b.Property(x => x.Description).HasMaxLength(300);
+        // "SonicWall" and "sonicwall " are one skill within an organization.
+        b.HasIndex(x => new { x.MspOrganizationId, x.NormalizedName }).IsUnique();
+    }
+}
+
+public sealed class StaffSkillConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.StaffSkill>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.StaffSkill> b)
+    {
+        b.ToTable("staff_skills");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => new { x.AppUserId, x.SkillId }).IsUnique();
+        b.HasIndex(x => x.SkillId);
+        b.HasOne(x => x.AppUser).WithMany().HasForeignKey(x => x.AppUserId).OnDelete(DeleteBehavior.Cascade);
+        // A skill is retired, never deleted, while anyone holds it.
+        b.HasOne(x => x.Skill).WithMany().HasForeignKey(x => x.SkillId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
 public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedResponse>
 {
     public void Configure(EntityTypeBuilder<CannedResponse> b)

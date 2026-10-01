@@ -165,6 +165,40 @@ public sealed class RelationalQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task Workforce_schedules_and_skills_translate()
+    {
+        // Every workforce query through a real SQL translator: the scope subqueries (team,
+        // department), the all-skills count, holder counts, and time/date columns.
+        var role = new Desk.Domain.Identity.Role { MspOrganizationId = Org, Name = "Admin", BuiltInType = Desk.Domain.Enums.RoleType.MspAdministrator };
+        role.Permissions.Add(new Desk.Domain.Identity.RolePermission { PermissionKey = Desk.Domain.Authorization.Permissions.ScheduleView, Scope = Desk.Domain.Authorization.PermissionScope.Team });
+        role.Permissions.Add(new Desk.Domain.Identity.RolePermission { PermissionKey = Desk.Domain.Authorization.Permissions.WorkforceManage });
+        _db.Roles.Add(role);
+        _db.UserRoles.Add(new Desk.Domain.Identity.UserRole { AppUserId = _me, RoleId = role.Id });
+        await _db.SaveChangesAsync();
+
+        var access = new Desk.Infrastructure.Workforce.WorkforceAccess(_db, _tenant, new Desk.Infrastructure.Authorization.EffectivePermissionService(_db));
+        var audit = new Desk.Infrastructure.Admin.AuditWriter(_db, User, _tenant, _clock);
+        var schedules = new Desk.Infrastructure.Workforce.WorkScheduleService(_db, access, audit, _clock);
+        var skills = new Desk.Infrastructure.Workforce.SkillService(_db, access, _tenant, User, audit);
+
+        var saved = await schedules.SaveAsync(_me, _me, new Desk.Application.Workforce.WorkScheduleInput(null, "UTC",
+            [new Desk.Application.Workforce.WorkDayInput(DayOfWeek.Monday, "18:00", "03:00", [new Desk.Application.Workforce.WorkBreakDto("00:00", "00:30")])]));
+        saved.Current!.Days.Single().UsableMinutes.Should().Be(510);
+        (await schedules.GetAsync(_me, _me)).Current!.Days.Single().Breaks.Single().Start.Should().Be("00:00");
+
+        var skill = await skills.CreateAsync("SonicWall", null);
+        await skills.AssignAsync(_me, _me, skill.Id, Desk.Domain.Workforce.SkillLevel.Expert);
+        (await skills.ListAsync(includeInactive: true)).Single().HolderCount.Should().Be(1);
+        var all = await schedules.PeopleAsync(_me, new Desk.Application.Workforce.WorkforceQuery(SkillIds: [skill.Id], MatchAllSkills: true));
+        all.Single().Skills.Single().Name.Should().Be("SonicWall");
+        (await schedules.PeopleAsync(_me, new Desk.Application.Workforce.WorkforceQuery(DepartmentId: Guid.NewGuid()))).Should().BeEmpty();
+
+        role.Permissions.Single(p => p.PermissionKey == Desk.Domain.Authorization.Permissions.ScheduleView).Scope = Desk.Domain.Authorization.PermissionScope.Department;
+        await _db.SaveChangesAsync();
+        (await schedules.PeopleAsync(_me, new Desk.Application.Workforce.WorkforceQuery())).Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task Ticket_history_translates()
     {
         var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);

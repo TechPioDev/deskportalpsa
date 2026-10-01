@@ -49,6 +49,13 @@ person's menu, tickets and figures, without their password and without acting as
 - **Leaving:** **Exit view** in the banner. Signing out also clears the view, and the cookie expires
   after 8 hours.
 
+### Workforce schedules and skills
+
+Staff only. Reading needs `schedule.view` (scoped Own/Team/Department/All) and changing needs
+`workforce.manage`. No client role or client login holds either. Scope is checked per person on the
+server, and another organization's people and skills are "not found". See
+`docs/workforce-scheduling/permissions-and-security.md`.
+
 ## Secret handling
 - PSA credentials are encrypted at rest with **AES-256-GCM** (`EncryptedDbSecretStore`), keyed by a
   master key held only in the host's `.env.prod` (`Secrets:EncryptionKey`), never in the database.
