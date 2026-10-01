@@ -540,10 +540,18 @@ function PsaIdentityTab({ userId }: { userId: string }) {
             className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
             <span className="w-28 shrink-0 text-sm font-medium">{row.connectionName}</span>
             {row.technicians.length === 0 ? (
-              <span className="text-xs text-[var(--faint)]">
+              <span className="flex flex-wrap items-center gap-2 text-xs text-[var(--faint)]">
                 {row.externalTechnicianId
-                  ? `Mapped to ${row.externalTechnicianName ?? row.externalTechnicianId} — technician list unavailable, so it cannot be changed here right now.`
+                  ? `Mapped to ${row.externalTechnicianName ?? row.externalTechnicianId} — the PSA's technician list is unavailable, so it can be removed but not changed right now.`
                   : 'Technician list unavailable from this PSA right now.'}
+                {/* Removing a link asks nothing of the PSA, so it works while the PSA is unreachable. */}
+                {row.externalTechnicianId && (
+                  <button type="button" disabled={save.isPending}
+                    onClick={() => save.mutate({ connectionId: row.psaConnectionId, techId: null })}
+                    className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--fg)] hover:bg-[var(--bg)] disabled:opacity-50">
+                    {save.isPending ? 'Removing…' : 'Remove link'}
+                  </button>
+                )}
               </span>
             ) : (
               <select
