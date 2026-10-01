@@ -2,7 +2,7 @@
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| No "Workforce" menu; routes answer 404 | Module switched off | Set `Features__Workforce=true` for the API and redeploy |
+| No "Workforce" menu; routes answer 404 | Module switched off | Set `FEATURES_WORKFORCE=true` in `.env.prod` (it becomes `Features__Workforce` for the API) and redeploy |
 | A technician sees only themselves | `schedule.view` scope is Own (default for technicians) | Expected. Widen the scope in Roles & Permissions if a role should see a team. |
 | "...is not a time zone this system knows" | Not an IANA id on a Linux server | Pick from the list (it comes from the browser) |
 | Times look shifted on a Windows dev machine | Invariant globalization: IANA zones resolve to UTC on Windows | Development only; the servers are Linux |

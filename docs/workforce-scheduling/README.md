@@ -22,7 +22,8 @@ accrual, HR compliance, recruitment, appraisal, or room/vehicle/equipment schedu
 | 10 | Security, performance and final QA | Planned |
 
 The module is behind a switch, `Features:Workforce`, which is **off by default**. When it is off, the
-menu entry, the tabs and every `api/workforce` route are hidden (the routes answer 404).
+menu entry, the tabs and every `api/workforce` route are hidden (the routes answer 404). In production
+set `FEATURES_WORKFORCE=true` in `.env.prod` and redeploy; `false` hides it again and keeps the data.
 
 - [architecture.md](architecture.md): data model, API, where it sits in PIO
 - [schedules.md](schedules.md): working windows, overnight, breaks, time zones and DST, versions

@@ -1,4 +1,14 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+/**
+ * The browsers share one desk, so a mail account another run left behind would make "Not set up"
+ * false for everyone after it. Removing a missing account is a no-op, so this is safe to call first.
+ */
+async function clearMailAccount(page: Page) {
+  const res = await page.request.delete('/api/bff/api/admin/email/settings');
+  expect(res.ok()).toBeTruthy();
+  expect(await res.json()).toMatchObject({ hasOwnAccount: false });
+}
 
 /**
  * Scheduled reports, end to end through the browser: a schedule is created, run on demand, and the
@@ -52,6 +62,7 @@ test.describe('scheduled reports', () => {
   });
 
   test('the page says email is not set up and points at where to set it up', async ({ page }) => {
+    await clearMailAccount(page);
     await page.goto('/dashboard/reports');
 
     const notice = page.locator('p').filter({ hasText: 'Email is not set up yet' });
@@ -63,6 +74,7 @@ test.describe('scheduled reports', () => {
 
 test.describe('email settings', () => {
   test('an administrator can add a mail account, and the password never comes back', async ({ page, request }) => {
+    await clearMailAccount(page);
     await page.goto('/dashboard/health');
     const card = page.getByRole('region', { name: 'Email delivery' });
     await expect(card).toContainText('Not set up');
@@ -110,6 +122,10 @@ test.describe('email settings', () => {
     await page.getByRole('button', { name: 'Edit mail settings' }).click();
     page.once('dialog', (d) => d.accept());
     await page.getByRole('button', { name: 'Remove account' }).click();
-    await expect(page.getByText('Not set up')).toBeVisible();
+    // On the card itself: a page-wide "Not set up" also matches the attention list's stale line, which
+    // passed before the removal had reached the server and left the account behind for the next browser.
+    await expect(card).toContainText('Not set up');
+    const after = await (await request.get('/api/bff/api/admin/email/settings')).json();
+    expect(after).toMatchObject({ hasOwnAccount: false });
   });
 });
