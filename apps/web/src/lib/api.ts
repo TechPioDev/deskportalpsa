@@ -190,6 +190,77 @@ export const WorkforcePersonSchema = z.object({
 });
 export type WorkforcePerson = z.infer<typeof WorkforcePersonSchema>;
 
+// ---- Workforce: capacity, availability and free time (internal only) -----------------------------
+// Instants are ISO strings in UTC; each carries the zone to show it in. Never format one with the
+// browser's own zone by accident - a planner in London is looking at a technician's day in Kolkata.
+const SlotSchema = z.object({ start: z.string(), end: z.string(), minutes: z.number() });
+export type Slot = z.infer<typeof SlotSchema>;
+/**
+ * kind: 1 unavailable, 2 extra availability. reason: 0 other, 1 meeting, 2 training, 3 appointment,
+ * 4 time off, 5 sick, 6 internal event. The reason, the note and who recorded it are null unless the
+ * viewer is that person or manages their availability: others learn when, not why.
+ */
+export const CapacityExceptionSchema = z.object({
+  id: z.string(), appUserId: z.string(), kind: z.number(), allDay: z.boolean(),
+  fromDate: z.string(), toDate: z.string(), startTime: z.string().nullable(), endTime: z.string().nullable(),
+  startsAt: z.string().nullable(), endsAt: z.string().nullable(), timeZone: z.string(),
+  reason: z.number().nullable(), note: z.string().nullable(), updatedBy: z.string().nullable(), updatedAt: z.string(),
+});
+export type CapacityException = z.infer<typeof CapacityExceptionSchema>;
+export type CapacityExceptionInput = {
+  kind: number; allDay: boolean; fromDate: string; toDate?: string | null;
+  startTime?: string | null; endTime?: string | null; reason: number; note?: string | null;
+};
+export const DayCapacitySchema = z.object({
+  date: z.string(), timeZone: z.string(), isWorkingDay: z.boolean(),
+  windowStart: z.string().nullable(), windowEnd: z.string().nullable(),
+  grossMinutes: z.number(), breakMinutes: z.number(), unavailableMinutes: z.number(), additionalMinutes: z.number(), usableMinutes: z.number(),
+  confirmedMinutes: z.number(), tentativeMinutes: z.number(), remainingConfirmedMinutes: z.number(), projectedRemainingMinutes: z.number(),
+  unavailableAllDay: z.boolean(),
+  breaks: z.array(SlotSchema), freeSlots: z.array(SlotSchema), projectedFreeSlots: z.array(SlotSchema),
+  exceptions: z.array(CapacityExceptionSchema), holiday: z.string().nullable(),
+});
+export type DayCapacity = z.infer<typeof DayCapacitySchema>;
+export const PersonCapacitySchema = z.object({
+  appUserId: z.string(), displayName: z.string(), isActive: z.boolean(), isSchedulable: z.boolean(), hasSchedule: z.boolean(),
+  timeZone: z.string(), today: z.string(), days: z.array(DayCapacitySchema), canManageExceptions: z.boolean(),
+});
+export type PersonCapacity = z.infer<typeof PersonCapacitySchema>;
+export const TeamCapacitySchema = z.object({
+  date: z.string(),
+  people: z.array(z.object({
+    appUserId: z.string(), displayName: z.string(), isSchedulable: z.boolean(), hasSchedule: z.boolean(),
+    teams: z.array(z.string()), skills: z.array(StaffSkillSchema), day: DayCapacitySchema,
+  })),
+  usableMinutes: z.number(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), remainingConfirmedMinutes: z.number(),
+});
+export type TeamCapacity = z.infer<typeof TeamCapacitySchema>;
+const WorkforceGroupSchema = z.object({ id: z.string(), name: z.string() });
+export const WorkforceGroupsSchema = z.object({ teams: z.array(WorkforceGroupSchema), departments: z.array(WorkforceGroupSchema) });
+export type WorkforceGroups = z.infer<typeof WorkforceGroupsSchema>;
+export const AvailabilityResultSchema = z.object({
+  timeZone: z.string(), durationMinutes: z.number(), matchAllSkills: z.boolean(),
+  matches: z.array(z.object({
+    appUserId: z.string(), displayName: z.string(), timeZone: z.string(), teams: z.array(z.string()),
+    matchingSkills: z.array(StaffSkillSchema), date: z.string(), recommended: SlotSchema, windows: z.array(SlotSchema), freeMinutes: z.number(),
+  })),
+  peopleConsidered: z.number(), withoutRequiredSkills: z.number(), notOfferedForWork: z.number(),
+  withoutASchedule: z.number(), withNoFittingSlot: z.number(),
+});
+export type AvailabilityResult = z.infer<typeof AvailabilityResultSchema>;
+export type AvailabilitySearch = {
+  from: string; to?: string | null; duration: number; earliest?: string | null; latest?: string | null;
+  teamId?: string | null; departmentId?: string | null; skills?: string[]; matchAll?: boolean;
+};
+/** type: 1 hard, 2 tentative, 3 break, 4 unavailable, 5 outside hours, 6 over capacity, 7 skill, 8 not schedulable. severity: 1 warning, 2 overridable, 3 block. */
+export const ConflictResultSchema = z.object({
+  canSchedule: z.boolean(), canOverride: z.boolean(),
+  conflicts: z.array(z.object({
+    type: z.number(), severity: z.number(), start: z.string(), end: z.string(), message: z.string(), blockingWorkId: z.string().nullable(),
+  })),
+});
+export type ConflictResult = z.infer<typeof ConflictResultSchema>;
+
 export const ViewAsPersonSchema = z.object({
   key: z.string(), kind: z.string(), name: z.string(), email: z.string(),
   detail: z.string().nullable(), available: z.boolean(), reason: z.string().nullable(),
@@ -445,6 +516,56 @@ export const api = {
     request(`/api/workforce/people/${userId}/skills`, z.array(StaffSkillSchema), { method: 'POST', body: JSON.stringify({ skillId, level }) }) as Promise<StaffSkill[]>,
   removeSkill: (userId: string, skillId: string) =>
     request(`/api/workforce/people/${userId}/skills/${skillId}`, z.array(StaffSkillSchema), { method: 'DELETE' }) as Promise<StaffSkill[]>,
+  /** One person's capacity and free slots per date (their today when no dates are given; 31 days at most). */
+  personCapacity: (userId: string, from?: string | null, to?: string | null) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    return request(`/api/workforce/people/${userId}/capacity?${qs}`, PersonCapacitySchema) as Promise<PersonCapacity>;
+  },
+  /** Everyone the caller may see, for one date. Several skills mean ALL of them unless matchAll is false. */
+  teamCapacity: (q: { date?: string | null; teamId?: string | null; departmentId?: string | null; skills?: string[]; matchAll?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (q.date) qs.set('date', q.date);
+    if (q.teamId) qs.set('teamId', q.teamId);
+    if (q.departmentId) qs.set('departmentId', q.departmentId);
+    if (q.skills?.length) qs.set('skills', q.skills.join(','));
+    if (q.matchAll === false) qs.set('matchAll', 'false');
+    return request(`/api/workforce/capacity?${qs}`, TeamCapacitySchema) as Promise<TeamCapacity>;
+  },
+  /** Teams and departments the caller can filter capacity by. */
+  workforceGroups: () => request('/api/workforce/groups', WorkforceGroupsSchema) as Promise<WorkforceGroups>,
+  /** Who has one continuous free slot long enough for the work. A read - nothing is reserved. */
+  findAvailable: (q: AvailabilitySearch) => {
+    const qs = new URLSearchParams({ from: q.from, duration: String(q.duration) });
+    if (q.to) qs.set('to', q.to);
+    if (q.earliest) qs.set('earliest', q.earliest);
+    if (q.latest) qs.set('latest', q.latest);
+    if (q.teamId) qs.set('teamId', q.teamId);
+    if (q.departmentId) qs.set('departmentId', q.departmentId);
+    if (q.skills?.length) qs.set('skills', q.skills.join(','));
+    if (q.matchAll === false) qs.set('matchAll', 'false');
+    return request(`/api/workforce/availability?${qs}`, AvailabilityResultSchema) as Promise<AvailabilityResult>;
+  },
+  /** Whether a piece of work would fit in someone's time, and what is in the way if not. */
+  evaluateConflicts: (userId: string, q: { start: string; end: string; tentative?: boolean; skills?: string[] }) => {
+    const qs = new URLSearchParams({ start: q.start, end: q.end });
+    if (q.tentative) qs.set('tentative', 'true');
+    if (q.skills?.length) qs.set('skills', q.skills.join(','));
+    return request(`/api/workforce/people/${userId}/conflicts?${qs}`, ConflictResultSchema) as Promise<ConflictResult>;
+  },
+  capacityExceptions: (userId: string, from?: string | null, to?: string | null) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    return request(`/api/workforce/people/${userId}/exceptions?${qs}`, z.array(CapacityExceptionSchema)) as Promise<CapacityException[]>;
+  },
+  addCapacityException: (userId: string, body: CapacityExceptionInput) =>
+    request(`/api/workforce/people/${userId}/exceptions`, CapacityExceptionSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<CapacityException>,
+  updateCapacityException: (userId: string, id: string, body: CapacityExceptionInput) =>
+    request(`/api/workforce/people/${userId}/exceptions/${id}`, CapacityExceptionSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<CapacityException>,
+  removeCapacityException: (userId: string, id: string) =>
+    request(`/api/workforce/people/${userId}/exceptions/${id}`, z.void(), { method: 'DELETE' }),
   /** People an administrator may view the portal as: staff and client portal users. */
   viewAsPeople: (q: string) =>
     request(`/api/view-as/people?${new URLSearchParams({ q })}`, z.array(ViewAsPersonSchema)) as Promise<ViewAsPerson[]>,

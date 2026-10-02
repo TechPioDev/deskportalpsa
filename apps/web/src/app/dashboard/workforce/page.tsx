@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, Tags } from 'lucide-react';
 import { api } from '@/lib/api';
 import { hours } from '@/components/Workforce';
+import { WorkforceNav } from '@/components/WorkforceCapacity';
 
 /**
  * Who works when, and what they know: the people the viewer may see, with their working schedule
@@ -50,6 +51,8 @@ export default function WorkforcePage() {
           </Link>
         )}
       </div>
+
+      <WorkforceNav />
 
       <section aria-label="Filters" className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email…" aria-label="Search people"

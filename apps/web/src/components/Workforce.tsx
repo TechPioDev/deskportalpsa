@@ -48,7 +48,8 @@ export function usable(d: DayEdit): number {
   return gross(d.start, d.end) - d.breaks.reduce((s, b) => s + offset(d.start, b.end) - offset(d.start, b.start), 0);
 }
 
-export const hours = (m: number) => `${Math.floor(m / 60)}h${m % 60 ? ` ${String(m % 60).padStart(2, '0')}m` : ''}`;
+/** 480 -> "8h", 510 -> "8h 30m", 30 -> "30m", 0 -> "0h". */
+export const hours = (m: number) => (m > 0 && m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? ` ${String(m % 60).padStart(2, '0')}m` : ''}`);
 
 /** Today's date in a time zone, as YYYY-MM-DD. */
 const todayIn = (tz: string) => { try { return new Date().toLocaleDateString('en-CA', { timeZone: tz }); } catch { return new Date().toISOString().slice(0, 10); } };

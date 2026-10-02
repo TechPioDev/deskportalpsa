@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ViewAsButton } from '@/components/ViewAs';
 import { StaffSkillsEditor, WorkScheduleEditor } from '@/components/Workforce';
+import { CapacityPanel } from '@/components/WorkforceCapacity';
 import {
   ArrowLeft, Camera, Check, Copy, MailQuestion, Power, ShieldCheck, Trash2, X,
 } from 'lucide-react';
@@ -57,6 +58,7 @@ const TABS = [
   { key: 'boards', label: 'Boards' },
   { key: 'psa', label: 'PSA identity' },
   { key: 'schedule', label: 'Work schedule' },
+  { key: 'availability', label: 'Availability' },
   { key: 'skills', label: 'Skills' },
   { key: 'activity', label: 'Activity' },
   { key: 'security', label: 'Security' },
@@ -140,7 +142,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   const { data: departments } = useQuery({ queryKey: ['staff-departments'], queryFn: api.staffDepartments, staleTime: 5 * 60_000 });
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
   // The workforce tabs only where the module is switched on.
-  const tabs = TABS.filter((t) => (t.key !== 'schedule' && t.key !== 'skills') || me?.features?.workforce === true);
+  const tabs = TABS.filter((t) => (t.key !== 'schedule' && t.key !== 'availability' && t.key !== 'skills') || me?.features?.workforce === true);
   const { data: boards } = useQuery({ queryKey: ['staff-boards'], queryFn: api.staffBoards, staleTime: 60_000 });
   const { data: templates } = useQuery({ queryKey: ['permission-templates'], queryFn: api.permissionTemplates, staleTime: 5 * 60_000 });
   const { data: permissions, isLoading: permsLoading } = useQuery({
@@ -199,6 +201,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         {tab === 'boards' && <BoardsTab userId={id} user={user} boards={boards ?? []} onChanged={refresh} />}
         {tab === 'psa' && <PsaIdentityTab userId={id} />}
         {tab === 'schedule' && <WorkScheduleEditor userId={id} />}
+        {tab === 'availability' && <CapacityPanel userId={id} />}
         {tab === 'skills' && <StaffSkillsEditor userId={id} canManage={!!me?.permissions.includes('workforce.manage')} />}
         {tab === 'activity' && <ActivityTab entries={activity} loading={activityLoading} error={activityError} />}
         {tab === 'security' && <SecurityTab user={user} />}
