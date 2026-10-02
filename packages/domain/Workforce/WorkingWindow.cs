@@ -95,6 +95,11 @@ public static class WorkingWindow
     /// one. Clock changes are handled by <see cref="TimeZones.WallToUtc"/>: a start that falls in a
     /// skipped hour moves forward by the gap; in a repeated hour a start takes the first occurrence and
     /// an end the second, so the window keeps its true elapsed length.
+    ///
+    /// A BREAK keeps its own length whatever the clocks do: it starts at its wall-clock time and
+    /// lasts as long as it is set to. Reading its end off the clock instead would turn a 01:15-01:45
+    /// break on a fall-back night into ninety minutes (01:45 comes round twice) and quietly take an
+    /// hour of capacity with it.
     /// </summary>
     public static WorkingDayInstants Instants(DateOnly shiftDate, DayWindow day, TimeZoneInfo zone)
     {
@@ -103,9 +108,12 @@ public static class WorkingWindow
         var end = TimeZones.WallToUtc(windowStartLocal.AddMinutes(GrossMinutes(day.Start, day.End)), zone, earlierIfAmbiguous: false);
 
         var breaks = day.Breaks
-            .Select(b => (
-                StartUtc: TimeZones.WallToUtc(windowStartLocal.AddMinutes(Offset(day.Start, b.Start)), zone, earlierIfAmbiguous: true),
-                EndUtc: TimeZones.WallToUtc(windowStartLocal.AddMinutes(Offset(day.Start, b.End)), zone, earlierIfAmbiguous: false)))
+            .Select(b =>
+            {
+                var breakStart = TimeZones.WallToUtc(windowStartLocal.AddMinutes(Offset(day.Start, b.Start)), zone, earlierIfAmbiguous: true);
+                var breakEnd = breakStart.AddMinutes(Offset(day.Start, b.End) - Offset(day.Start, b.Start));
+                return (StartUtc: breakStart, EndUtc: breakEnd > end ? end : breakEnd);
+            })
             .OrderBy(b => b.StartUtc)
             .ToList();
 

@@ -414,6 +414,23 @@ public sealed class StaffSkillConfig : IEntityTypeConfiguration<Desk.Domain.Work
     }
 }
 
+public sealed class CapacityExceptionConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.CapacityException>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.CapacityException> b)
+    {
+        b.ToTable("capacity_exceptions");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.TimeZone).HasMaxLength(64).IsRequired();
+        b.Property(x => x.Note).HasMaxLength(200);
+        // "This person's exceptions around these dates" - the only way capacity ever reads them. Both
+        // shapes carry dates (a part-day one, the dates it starts and ends on), so one index serves both.
+        b.HasIndex(x => new { x.AppUserId, x.FromDate, x.ToDate });
+        b.HasIndex(x => x.MspOrganizationId);
+        // The person's own availability: it goes when they do.
+        b.HasOne(x => x.AppUser).WithMany().HasForeignKey(x => x.AppUserId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedResponse>
 {
     public void Configure(EntityTypeBuilder<CannedResponse> b)

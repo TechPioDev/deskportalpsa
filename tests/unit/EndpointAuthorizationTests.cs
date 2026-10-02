@@ -120,6 +120,17 @@ public class EndpointAuthorizationTests
         { nameof(WorkforceController), nameof(WorkforceController.UpdateSkill), [Permissions.WorkforceManage] },
         { nameof(WorkforceController), nameof(WorkforceController.AssignSkill), [Permissions.WorkforceManage] },
         { nameof(WorkforceController), nameof(WorkforceController.RemoveSkill), [Permissions.WorkforceManage] },
+        // Capacity and availability: internal only. Reading needs schedule.view (scoped per person in
+        // the services); recording an exception also needs availability.manage.
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.PersonCapacity), [Permissions.ScheduleView] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.TeamCapacity), [Permissions.ScheduleView] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.Groups), [Permissions.ScheduleView] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.FindAvailable), [Permissions.ScheduleView] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.EvaluateConflicts), [Permissions.ScheduleView] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.Exceptions), [Permissions.ScheduleView] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.AddException), [Permissions.AvailabilityManage] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.UpdateException), [Permissions.AvailabilityManage] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.RemoveException), [Permissions.AvailabilityManage] },
     };
 
     [Fact]
@@ -130,11 +141,62 @@ public class EndpointAuthorizationTests
         var clientHeld = Permissions.ForRole(Desk.Domain.Enums.RoleType.ClientAdministrator)
             .Concat(Permissions.ForRole(Desk.Domain.Enums.RoleType.ClientUser))
             .Select(p => p.Key).Concat([Permissions.TicketsCreate, Permissions.TicketsAddPublicNote]).ToHashSet();
-        var classPolicy = typeof(WorkforceController).GetCustomAttribute<RequirePermissionAttribute>()!.Policy!;
-        classPolicy[PermissionPolicyProvider.Prefix.Length..].Split(PermissionPolicyProvider.Any)
-            .Should().NotIntersectWith(clientHeld, "every workforce action sits behind the controller's own requirement");
-        foreach (var action in Actions().Where(a => a.Controller == typeof(WorkforceController)))
-            (Required(action) ?? new HashSet<string>()).Should().NotIntersectWith(clientHeld, Name(action));
+        // Every controller under api/workforce - found by route, so one added later is covered too.
+        var workforce = Controllers.Where(c => (c.GetCustomAttribute<RouteAttribute>()?.Template ?? "").StartsWith("api/workforce", StringComparison.Ordinal)).ToList();
+        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController)]);
+        foreach (var controller in workforce)
+        {
+            controller.GetCustomAttributes<AuthorizeAttribute>().Should().NotBeEmpty($"{controller.Name} is never anonymous");
+            var classPolicy = controller.GetCustomAttribute<RequirePermissionAttribute>()?.Policy;
+            classPolicy.Should().NotBeNull($"every action of {controller.Name} sits behind the controller's own requirement");
+            classPolicy![PermissionPolicyProvider.Prefix.Length..].Split(PermissionPolicyProvider.Any)
+                .Should().NotIntersectWith(clientHeld, controller.Name);
+            foreach (var action in Actions().Where(a => a.Controller == controller))
+            {
+                IsAnonymous(action).Should().BeFalse(Name(action));
+                (Required(action) ?? new HashSet<string>()).Should().NotIntersectWith(clientHeld, Name(action));
+            }
+        }
+    }
+
+    [Fact]
+    public void No_client_role_or_client_login_holds_a_workforce_permission()
+    {
+        string[] workforce = [Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage];
+        foreach (var role in new[] { Desk.Domain.Enums.RoleType.ClientAdministrator, Desk.Domain.Enums.RoleType.ClientUser })
+            Permissions.ForRole(role).Select(p => p.Key).Should().NotIntersectWith(workforce, role.ToString());
+    }
+
+    [Fact]
+    public void Reading_capacity_never_needs_a_request_that_changes_anything()
+    {
+        // Searching and conflict checks are reads, so they are GETs: they stay usable while an
+        // administrator views the portal as someone (read-only), and nothing caches or replays a write.
+        foreach (var name in new[] { nameof(WorkforceCapacityController.PersonCapacity), nameof(WorkforceCapacityController.TeamCapacity), nameof(WorkforceCapacityController.Groups),
+                     nameof(WorkforceCapacityController.FindAvailable), nameof(WorkforceCapacityController.EvaluateConflicts), nameof(WorkforceCapacityController.Exceptions) })
+            typeof(WorkforceCapacityController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
+    }
+
+    [Fact]
+    public void Nothing_a_client_can_receive_carries_workforce_planning()
+    {
+        // A ticket a client can see does not make its planning visible. The shapes the ticket API and
+        // the client portal return must not grow a field about schedules, capacity or who is planned
+        // when - whatever a later phase adds to the internal side.
+        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "PlannedWork", "Tentative"];
+        var clientFacing = typeof(Desk.Application.Tickets.TicketDetailDto).Assembly.GetTypes().Where(t =>
+            t.Namespace is "Desk.Application.Tickets" or "Desk.Application.ControlPanel" or "Desk.Application.Knowledge" or "Desk.Application.Attachments"
+            && !t.IsInterface && !t.IsEnum && !t.Name.StartsWith('<')).ToList();
+        clientFacing.Should().Contain(typeof(Desk.Application.Tickets.TicketDetailDto));
+
+        var leaks = clientFacing.SelectMany(t => t.GetProperties().Select(p => (Type: t.Name, Property: p.Name)))
+            .Where(x => forbidden.Any(f => x.Property.Contains(f, StringComparison.OrdinalIgnoreCase)))
+            // "Schedule" of a different kind: when a recurring ticket or a report is raised, and a
+            // client company's own opening hours - none of them when a member of staff works.
+            .Where(x => !x.Type.Contains("Recurring", StringComparison.Ordinal) && !x.Type.Contains("Report", StringComparison.Ordinal)
+                        && !x.Type.StartsWith("BusinessHours", StringComparison.Ordinal))
+            .Select(x => $"{x.Type}.{x.Property}").ToList();
+        leaks.Should().BeEmpty("ticket and client-portal shapes must stay free of internal workforce planning");
     }
 
     [Theory]
