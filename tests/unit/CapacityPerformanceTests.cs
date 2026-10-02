@@ -15,6 +15,7 @@ using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -28,12 +29,19 @@ namespace Desk.Tests.Unit;
 ///
 /// The timings are printed for the phase report; the time limits asserted are deliberately loose
 /// (a shared CI runner is slow) and exist only to catch something going quadratic.
+///
+/// SQLite by default, so it runs everywhere. Set DESK_TEST_POSTGRES to a server (for example
+/// "Host=localhost;Port=15439;Username=desk;Password=...") and the same tests run on PostgreSQL
+/// instead, each in a database of its own that is created by the real migrations and dropped
+/// afterwards - which is how the figures in docs/workforce-scheduling/capacity.md were measured.
 /// </summary>
 public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDisposable
 {
     private static readonly Guid Org = Guid.NewGuid();
     private static readonly DateOnly Monday = new(2026, 1, 5);
     private const string Zone = "Asia/Kolkata";
+    private static readonly string? Postgres = Environment.GetEnvironmentVariable("DESK_TEST_POSTGRES");
+    private readonly string _database = $"desk_p2_{Guid.NewGuid():N}";
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
     private readonly TenantContext _tenant = new();
     private readonly TestClock _clock = new();
@@ -81,20 +89,31 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         }
     }
 
-    private DeskDbContext NewContext() => new(new DbContextOptionsBuilder<DeskDbContext>().UseSqlite(_connection)
-        .AddInterceptors(_counter)
-        .ConfigureWarnings(w => w.Throw(
-            RelationalEventId.MultipleCollectionIncludeWarning,
-            CoreEventId.RowLimitingOperationWithoutOrderByWarning,
-            CoreEventId.FirstWithoutOrderByAndFilterWarning)).Options, _tenant, _clock);
+    private DeskDbContext NewContext()
+    {
+        var builder = new DbContextOptionsBuilder<DeskDbContext>();
+        if (Postgres is null) builder.UseSqlite(_connection);
+        else builder.UseNpgsql($"{Postgres};Database={_database}");
+        return new DeskDbContext(builder
+            .AddInterceptors(_counter)
+            .ConfigureWarnings(w => w.Throw(
+                RelationalEventId.MultipleCollectionIncludeWarning,
+                CoreEventId.RowLimitingOperationWithoutOrderByWarning,
+                CoreEventId.FirstWithoutOrderByAndFilterWarning)).Options, _tenant, _clock);
+    }
 
     /// <summary>An organization of <paramref name="people"/> technicians: schedules, teams, skills and some time away.</summary>
     private async Task<(DeskDbContext Db, Guid Admin, Guid TeamId, Guid SkillId, List<Guid> People)> SeedAsync(int people)
     {
-        _connection.Open();
         _tenant.SetTenant(Org);
         var db = NewContext();
-        await db.Database.EnsureCreatedAsync();
+        if (Postgres is null)
+        {
+            _connection.Open();
+            await db.Database.EnsureCreatedAsync();
+        }
+        // On PostgreSQL the schema comes from the migrations themselves, as it does in production.
+        else await db.Database.MigrateAsync();
 
         var role = new Role { MspOrganizationId = Org, Name = "Administrator", BuiltInType = RoleType.MspAdministrator };
         foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage })
@@ -185,10 +204,10 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         output.WriteLine($"{people} people | one person, 30 days: {month.Commands} queries, {month.Ms} ms | engine, everyone x 30 days: {everyone.Commands} queries, {everyone.Ms} ms");
 
         // The same small number whatever the size: no query per person, no query per day.
-        // Measured: 9 for a team day, 10 with a skill filter, 9 for a search, 10 for one person's month,
+        // Measured: 12 for a team day, 13 with a skill filter, 9 for a search, 10 for one person's month,
         // 3 for the calendar itself - at 50, 100 and 500 people alike.
-        team.Commands.Should().BeLessThanOrEqualTo(9);
-        filtered.Commands.Should().BeLessThanOrEqualTo(10);
+        team.Commands.Should().BeLessThanOrEqualTo(12);
+        filtered.Commands.Should().BeLessThanOrEqualTo(13);
         oneDay.Commands.Should().BeLessThanOrEqualTo(9);
         sevenDays.Commands.Should().Be(oneDay.Commands + 1, "seven days cost what one does, plus the one skill-catalogue check this search asked for");
         fourteenDays.Commands.Should().Be(oneDay.Commands);
@@ -234,6 +253,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         week.Days[0].Exceptions.Should().HaveCount(2);
 
         (await capacity.ForTeamAsync(admin, new TeamCapacityQuery(Monday, TeamId: teamId, SkillIds: [skillId], MatchAllSkills: false))).People.Should().NotBeEmpty();
+        (await capacity.GroupsAsync(admin)).Teams.Should().HaveCount(5);
         (await capacity.FindAsync(admin, new AvailabilitySearch(Monday, Monday.AddDays(2), 60, TeamId: teamId, SkillIds: [skillId], AppUserIds: ids))).PeopleConsidered.Should().BeGreaterThan(0);
         var check = await capacity.EvaluateAsync(admin, person, new ProposedWork(
             new DateTimeOffset(Monday.ToDateTime(new TimeOnly(9, 30)), TimeSpan.Zero), new DateTimeOffset(Monday.ToDateTime(new TimeOnly(10, 30)), TimeSpan.Zero), SkillIds: [skillId]));
@@ -243,5 +263,49 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         (await db.CapacityExceptions.CountAsync(e => e.AppUserId == person)).Should().Be(2);
     }
 
-    public void Dispose() => _connection.Dispose();
+    [Fact]
+    public async Task The_capacity_migration_adds_one_table_to_a_database_that_has_staff_and_its_down_removes_only_that()
+    {
+        // Needs a real PostgreSQL server: the migration is written for it. Without one, nothing to check.
+        if (Postgres is null) return;
+        const string previous = "20261001125607_WorkforceSchedulesAndSkills";
+        _tenant.SetTenant(Org);
+        var db = NewContext();
+        var migrator = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+
+        // The database as it is in production today: everything up to Phase 1, with people in it.
+        await migrator.MigrateAsync(previous);
+        var person = new AppUser { MspOrganizationId = Org, DisplayName = "Existing Tech", Email = "existing@techpio.test", IsActive = true };
+        var schedule = new WorkSchedule { MspOrganizationId = Org, AppUserId = person.Id, EffectiveFrom = new DateOnly(2025, 12, 1), TimeZone = Zone };
+        schedule.Days.Add(new WorkScheduleDay { MspOrganizationId = Org, Day = DayOfWeek.Monday, Start = new TimeOnly(8, 30), End = new TimeOnly(17, 30) });
+        db.AddRange(new MspOrganization { Id = Org, Name = "TechPio", Slug = "techpio", TimeZone = Zone }, person, schedule);
+        await db.SaveChangesAsync();
+        async Task<bool> TableExistsAsync() => await db.Database
+            .SqlQuery<int>($"select count(*)::int as \"Value\" from information_schema.tables where table_name = 'capacity_exceptions'").SingleAsync() == 1;
+        (await TableExistsAsync()).Should().BeFalse();
+
+        await migrator.MigrateAsync();
+        (await TableExistsAsync()).Should().BeTrue();
+        (await db.AppUsers.CountAsync()).Should().Be(1, "existing staff are untouched");
+        (await db.AppUsers.SingleAsync()).IsSchedulable.Should().BeTrue();
+        (await db.WorkScheduleDays.CountAsync()).Should().Be(1, "and so are their schedules");
+        db.Add(new CapacityException { MspOrganizationId = Org, AppUserId = person.Id, TimeZone = Zone, AllDay = true, FromDate = Monday, ToDate = Monday, Reason = CapacityExceptionReason.TimeOff });
+        await db.SaveChangesAsync();
+
+        // Applying it again changes nothing; taking it back removes the one table and nothing else.
+        await migrator.MigrateAsync();
+        (await db.CapacityExceptions.CountAsync()).Should().Be(1);
+        await migrator.MigrateAsync(previous);
+        (await TableExistsAsync()).Should().BeFalse();
+        (await db.AppUsers.CountAsync()).Should().Be(1);
+        (await db.WorkScheduleDays.CountAsync()).Should().Be(1);
+    }
+
+    public void Dispose()
+    {
+        _connection.Dispose();
+        if (Postgres is null) return;
+        using var db = NewContext();
+        db.Database.EnsureDeleted();
+    }
 }

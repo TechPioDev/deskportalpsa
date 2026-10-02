@@ -384,8 +384,23 @@ public class WorkforceCapacityTests
         (await jason.Capacity.ForPersonAsync(w.Jason.Id, w.Jason.Id, Monday, Monday)).CanManageExceptions.Should().BeTrue();
 
         // Abbie is in his team, so he can see her capacity - but not change her availability.
+        await w.As(w.Admin).Exceptions.AddAsync(w.Admin.Id, w.Abbie.Id, Away(Monday, "14:00", "15:00", CapacityExceptionReason.Sick, "Doctor at 14:00"));
         var colleague = await jason.Capacity.ForPersonAsync(w.Jason.Id, w.Abbie.Id, Monday, Monday);
         colleague.CanManageExceptions.Should().BeFalse();
+
+        // He learns WHEN she is unavailable - planning needs that - and not WHY: the reason, the note
+        // and who recorded it are hers and her managers' alone, on every route that returns them.
+        colleague.Days.Single().UnavailableMinutes.Should().Be(60);
+        colleague.Days.Single().Exceptions.Should().ContainSingle().Which.Should().Match<CapacityExceptionDto>(e =>
+            e.StartTime == "14:00" && e.EndTime == "15:00" && e.Reason == null && e.Note == null && e.UpdatedBy == null);
+        (await jason.Exceptions.ListAsync(w.Jason.Id, w.Abbie.Id, Monday, Monday)).Should().ContainSingle()
+            .Which.Should().Match<CapacityExceptionDto>(e => e.Reason == null && e.Note == null && e.UpdatedBy == null);
+        var team = await jason.Capacity.ForTeamAsync(w.Jason.Id, new TeamCapacityQuery(Monday));
+        team.People.Single(p => p.AppUserId == w.Abbie.Id).Day.Exceptions.Single().Should().Match<CapacityExceptionDto>(e => e.Reason == null && e.Note == null);
+        // His own he reads in full, and so does whoever manages her availability.
+        team.People.Single(p => p.AppUserId == w.Jason.Id).Day.Exceptions.Single().Reason.Should().Be(CapacityExceptionReason.Appointment);
+        (await w.As(w.Admin).Capacity.ForPersonAsync(w.Admin.Id, w.Abbie.Id, Monday, Monday)).Days.Single().Exceptions.Single()
+            .Should().Match<CapacityExceptionDto>(e => e.Reason == CapacityExceptionReason.Sick && e.Note == "Doctor at 14:00" && e.UpdatedBy == "Harpal Admin");
         var theirs = () => jason.Exceptions.AddAsync(w.Jason.Id, w.Abbie.Id, Away(Monday, "10:00", "11:00"));
         (await theirs.Should().ThrowAsync<ForbiddenException>()).WithMessage("You can't change this person's availability.");
     }
@@ -520,6 +535,17 @@ public class WorkforceCapacityTests
 
         var both = await admin.Capacity.ForTeamAsync(w.Admin.Id, new TeamCapacityQuery(Monday, TeamId: w.Noc.Id, SkillIds: [sonicwall.Id]));
         both.People.Select(p => p.DisplayName).Should().Equal("Jason Carter");
+    }
+
+    [Fact]
+    public async Task The_groups_offered_as_filters_are_those_with_someone_the_caller_may_see()
+    {
+        var w = await WorldWithDayShiftsAsync();
+        (await w.As(w.Admin).Capacity.GroupsAsync(w.Admin.Id)).Teams.Select(t => t.Name).Should().Equal("NOC", "Security");
+        (await w.As(w.Lead).Capacity.GroupsAsync(w.Lead.Id)).Teams.Select(t => t.Name).Should().Equal("NOC");
+        var own = await w.As(w.Sam).Capacity.GroupsAsync(w.Sam.Id);
+        own.Teams.Select(t => t.Name).Should().Equal("Security");
+        own.Departments.Should().BeEmpty("nobody in this test is a member of a department directly");
     }
 
     [Fact]
@@ -672,7 +698,7 @@ public class WorkforceCapacityTests
         found.Matches.Single().FreeMinutes.Should().Be(139);
 
         var yesterday = () => w.As(w.Admin).Capacity.FindAsync(w.Admin.Id, new AvailabilitySearch(Monday.AddDays(-1), null, 60));
-        (await yesterday.Should().ThrowAsync<ValidationFailedException>()).WithMessage("Those dates have passed. Search from today.");
+        (await yesterday.Should().ThrowAsync<ValidationFailedException>()).WithMessage($"Those dates have passed in {Zone}. Search from 5 Jan 2026.");
     }
 
     [Fact]
@@ -787,6 +813,39 @@ public class WorkforceCapacityTests
         var act = () => w.As(w.Admin).Capacity.EvaluateAsync(w.Admin.Id, w.Jason.Id, new ProposedWork(start, end));
         (await act.Should().ThrowAsync<ValidationFailedException>()).WithMessage(message);
         w.Work.Calls.Should().Be(0);
+    }
+
+    // ---- FLOW 7: an account that is not staff --------------------------------------------------
+
+    [Fact]
+    public async Task A_sign_in_that_is_not_a_staff_account_is_refused_by_every_capacity_action_whatever_it_holds()
+    {
+        // A client login has no staff user id. Even if such a principal were somehow handed every
+        // workforce claim, each action stops before any service is touched (they are null here).
+        var everyClaim = new HashSet<string> { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage };
+        var notStaff = new Desk.Api.Controllers.WorkforceCapacityController(null!, null!,
+            new TestCurrentUser(OrgA, permissions: everyClaim, userId: null), new WorkforceFeatureOptions { Enabled = true });
+        var id = Guid.NewGuid();
+        Func<Task>[] calls =
+        [
+            () => notStaff.PersonCapacity(id, null, null, default),
+            () => notStaff.TeamCapacity(new(), default),
+            () => notStaff.Groups(default),
+            () => notStaff.FindAvailable(new(From: Monday, Duration: 60), default),
+            () => notStaff.EvaluateConflicts(id, new(At(Monday, "09:00"), At(Monday, "10:00")), default),
+            () => notStaff.Exceptions(id, null, null, default),
+            () => notStaff.AddException(id, Away(Monday, "09:00", "10:00"), default),
+            () => notStaff.UpdateException(id, id, Away(Monday, "09:00", "10:00"), default),
+            () => notStaff.RemoveException(id, id, default),
+        ];
+        foreach (var call in calls)
+            (await call.Should().ThrowAsync<ForbiddenException>()).WithMessage("Only staff accounts can use the workforce module.");
+
+        // And with the module switched off, nothing answers at all - even for staff.
+        var off = new Desk.Api.Controllers.WorkforceCapacityController(null!, null!,
+            new TestCurrentUser(OrgA, permissions: everyClaim, userId: Guid.NewGuid()), new WorkforceFeatureOptions { Enabled = false });
+        var hidden = () => off.TeamCapacity(new(), default);
+        (await hidden.Should().ThrowAsync<NotFoundException>()).WithMessage("Workforce was not found.");
     }
 
     // ---- FLOW 8: another organization ----------------------------------------------------------

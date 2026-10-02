@@ -74,6 +74,19 @@ public sealed class WorkforceAccess(DeskDbContext db, ITenantContext tenant, IEf
         => await (await StaffInScopeAsync(callerId, Permissions.AvailabilityManage, ct)).AnyAsync(u => u.Id == appUserId, ct);
 
     /// <summary>
+    /// Of these people, those whose exceptions the caller may read in full (reason and note): the
+    /// caller themselves, and anyone their availability.manage scope reaches.
+    /// </summary>
+    public async Task<HashSet<Guid>> ExceptionDetailsVisibleAsync(Guid callerId, IReadOnlyCollection<Guid> appUserIds, CancellationToken ct)
+    {
+        var managed = await (await StaffInScopeAsync(callerId, Permissions.AvailabilityManage, ct))
+            .Where(u => appUserIds.Contains(u.Id)).Select(u => u.Id).ToListAsync(ct);
+        var visible = managed.ToHashSet();
+        if (appUserIds.Contains(callerId)) visible.Add(callerId);
+        return visible;
+    }
+
+    /// <summary>
     /// A person whose time away the caller may record. Someone the caller cannot even see is "not
     /// found"; someone they can see but not manage is refused - saying so tells them nothing new.
     /// </summary>

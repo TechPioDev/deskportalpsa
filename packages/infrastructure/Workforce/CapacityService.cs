@@ -43,12 +43,14 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
 
         var calendar = await WorkforceCalendar.LoadAsync(db, allocations, callerId, orgZone, [person.Id], start, end, versions, ct);
         var days = Days(calendar, person.Id).Where(d => d.Date >= start && d.Date <= end).ToList();
-        var names = await NamesAsync(calendar.ExceptionsOf(person.Id), ct);
+        // Why someone is unavailable is theirs and their managers' to know; everyone else gets when.
+        var canManage = await access.CanManageAvailabilityAsync(callerId, person.Id, ct);
+        var details = canManage || callerId == person.Id;
+        var names = details ? await NamesAsync(calendar.ExceptionsOf(person.Id), ct) : new Dictionary<Guid, string>();
 
         return new PersonCapacityDto(person.Id, person.DisplayName, person.IsActive, person.IsSchedulable,
             calendar.HasSchedule(person.Id), calendar.ZoneId(person.Id, today), today,
-            days.Select(d => DayDto(calendar, person.Id, d, names)).ToList(),
-            await access.CanManageAvailabilityAsync(callerId, person.Id, ct));
+            days.Select(d => DayDto(calendar, person.Id, d, names, details)).ToList(), canManage);
     }
 
     public async Task<TeamCapacityDto> ForTeamAsync(Guid callerId, TeamCapacityQuery query, CancellationToken ct = default)
@@ -63,13 +65,14 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
         var calendar = await WorkforceCalendar.LoadAsync(db, allocations, callerId, orgZone, ids, date, date, null, ct);
         var teams = await TeamsOfAsync(ids, ct);
         var skills = await SkillsOfAsync(ids, ct);
-        var names = await NamesAsync(ids.SelectMany(calendar.ExceptionsOf), ct);
+        var details = await access.ExceptionDetailsVisibleAsync(callerId, ids, ct);
+        var names = await NamesAsync(details.SelectMany(calendar.ExceptionsOf), ct);
 
         var rows = people.Select(p =>
         {
             var day = Days(calendar, p.Id).Single(d => d.Date == date);
             return new TeamCapacityRowDto(p.Id, p.DisplayName, p.IsSchedulable, calendar.HasSchedule(p.Id),
-                teams.GetValueOrDefault(p.Id) ?? [], skills.GetValueOrDefault(p.Id) ?? [], DayDto(calendar, p.Id, day, names));
+                teams.GetValueOrDefault(p.Id) ?? [], skills.GetValueOrDefault(p.Id) ?? [], DayDto(calendar, p.Id, day, names, details.Contains(p.Id)));
         }).ToList();
 
         // Totals are the capacity actually on offer: someone not offered for planned work is listed,
@@ -77,6 +80,20 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
         var offered = rows.Where(r => r.IsSchedulable).Select(r => r.Day).ToList();
         return new TeamCapacityDto(date, rows, offered.Sum(d => d.UsableMinutes), offered.Sum(d => d.ConfirmedMinutes),
             offered.Sum(d => d.TentativeMinutes), offered.Sum(d => d.RemainingConfirmedMinutes));
+    }
+
+    public async Task<WorkforceGroupsDto> GroupsAsync(Guid callerId, CancellationToken ct = default)
+    {
+        // Only groups with somebody in them the caller may see: a technician who sees only themselves
+        // is offered their own team, not a list of every team in the organization.
+        var visible = (await access.VisibleStaffAsync(callerId, ct)).Where(u => u.IsActive).Select(u => u.Id);
+        var teams = await db.Teams.AsNoTracking()
+            .Where(t => t.IsActive && db.UserTeams.Any(m => m.TeamId == t.Id && visible.Contains(m.AppUserId)))
+            .OrderBy(t => t.Name).ThenBy(t => t.Id).Select(t => new WorkforceGroupDto(t.Id, t.Name)).ToListAsync(ct);
+        var departments = await db.Departments.AsNoTracking()
+            .Where(d => d.IsActive && db.UserDepartments.Any(m => m.DepartmentId == d.Id && visible.Contains(m.AppUserId)))
+            .OrderBy(d => d.Name).ThenBy(d => d.Id).Select(d => new WorkforceGroupDto(d.Id, d.Name)).ToListAsync(ct);
+        return new WorkforceGroupsDto(teams, departments);
     }
 
     public async Task<AvailabilitySearchResultDto> FindAsync(Guid callerId, AvailabilitySearch search, CancellationToken ct = default)
@@ -95,7 +112,7 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
         var to = search.To ?? from;
         if (to < from) problems.Add("The last date is before the first.");
         else if (to.DayNumber - from.DayNumber >= MaxSearchDays) problems.Add($"Search at most {MaxSearchDays} days at a time.");
-        if (to < today) problems.Add("Those dates have passed. Search from today.");
+        if (to < today) problems.Add($"Those dates have passed in {zoneId ?? orgZone}. Search from {today:d MMM yyyy}.");
         if (from > today.AddYears(1)) problems.Add("Search at most a year ahead.");
         var earliest = ParseTime(search.EarliestTime, "The earliest time", TimeOnly.MinValue, problems);
         var latest = ParseTime(search.LatestTime, "The latest time", TimeOnly.MinValue, problems);
@@ -206,7 +223,7 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
     private static IReadOnlyList<DayCapacity> Days(WorkforceCalendar calendar, Guid appUserId)
         => calendar.InputsFor(appUserId).Select(CapacityCalculator.ForDay).ToList();
 
-    private DayCapacityDto DayDto(WorkforceCalendar calendar, Guid appUserId, DayCapacity day, IReadOnlyDictionary<Guid, string> names)
+    private DayCapacityDto DayDto(WorkforceCalendar calendar, Guid appUserId, DayCapacity day, IReadOnlyDictionary<Guid, string> names, bool exceptionDetails)
     {
         var zoneId = calendar.ZoneId(appUserId, day.Date);
         // The exceptions that touch this day: those covering its date, and any that reach into its
@@ -220,7 +237,7 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
             day.ConfirmedMinutes, day.TentativeMinutes, day.RemainingConfirmedMinutes, day.ProjectedRemainingMinutes,
             day.UnavailableAllDay,
             day.Breaks.Select(Slot).ToList(), day.FreeSlots.Select(Slot).ToList(), day.ProjectedFreeSlots.Select(Slot).ToList(),
-            touching.Select(e => CapacityExceptionService.Dto(e, calendar.Zone(e.TimeZone), names)).ToList(),
+            touching.Select(e => CapacityExceptionService.Dto(e, calendar.Zone(e.TimeZone), names, exceptionDetails)).ToList(),
             calendar.Holidays.GetValueOrDefault(day.Date));
     }
 

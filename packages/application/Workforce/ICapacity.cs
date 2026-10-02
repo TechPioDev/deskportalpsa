@@ -9,13 +9,18 @@ namespace Desk.Application.Workforce;
 /// <summary>A stretch of real time and its length.</summary>
 public sealed record SlotDto(DateTimeOffset Start, DateTimeOffset End, int Minutes);
 
-/// <summary>A capacity exception as the screen and the API carry it.</summary>
+/// <summary>
+/// A capacity exception as the screen and the API carry it. WHEN someone is unavailable is what
+/// planning needs, and everyone who may see their capacity gets it. WHY (the reason, the note, who
+/// recorded it) is personal - "Sick", "Dentist" - so it is given only to the person themselves and to
+/// whoever may manage their availability; for anyone else those three are null.
+/// </summary>
 /// <param name="StartTime">Wall-clock start in <paramref name="TimeZone"/> ("15:00"); null when all-day.</param>
 public sealed record CapacityExceptionDto(
     Guid Id, Guid AppUserId, CapacityExceptionKind Kind, bool AllDay,
     DateOnly FromDate, DateOnly ToDate, string? StartTime, string? EndTime,
     DateTimeOffset? StartsAt, DateTimeOffset? EndsAt, string TimeZone,
-    CapacityExceptionReason Reason, string? Note, string? UpdatedBy, DateTimeOffset UpdatedAt);
+    CapacityExceptionReason? Reason, string? Note, string? UpdatedBy, DateTimeOffset UpdatedAt);
 
 /// <summary>
 /// A capacity exception as submitted. All-day: <see cref="FromDate"/> to <see cref="ToDate"/> (both
@@ -56,6 +61,11 @@ public sealed record TeamCapacityRowDto(
 public sealed record TeamCapacityDto(
     DateOnly Date, IReadOnlyList<TeamCapacityRowDto> People,
     int UsableMinutes, int ConfirmedMinutes, int TentativeMinutes, int RemainingConfirmedMinutes);
+
+/// <summary>The teams and departments the caller can filter capacity by: those with someone in them the caller may see.</summary>
+public sealed record WorkforceGroupsDto(IReadOnlyList<WorkforceGroupDto> Teams, IReadOnlyList<WorkforceGroupDto> Departments);
+
+public sealed record WorkforceGroupDto(Guid Id, string Name);
 
 public sealed record TeamCapacityQuery(DateOnly? Date = null, Guid? TeamId = null, Guid? DepartmentId = null,
     IReadOnlyList<Guid>? SkillIds = null, bool MatchAllSkills = true);
@@ -111,6 +121,7 @@ public interface ICapacityService
     /// <summary>One person's capacity for each date from <paramref name="from"/> to <paramref name="to"/> (today when omitted).</summary>
     Task<PersonCapacityDto> ForPersonAsync(Guid callerId, Guid appUserId, DateOnly? from, DateOnly? to, CancellationToken ct = default);
     Task<TeamCapacityDto> ForTeamAsync(Guid callerId, TeamCapacityQuery query, CancellationToken ct = default);
+    Task<WorkforceGroupsDto> GroupsAsync(Guid callerId, CancellationToken ct = default);
     Task<AvailabilitySearchResultDto> FindAsync(Guid callerId, AvailabilitySearch search, CancellationToken ct = default);
     /// <summary>
     /// Whether the proposed work fits. Reads everything fresh each time it is called: a free slot shown

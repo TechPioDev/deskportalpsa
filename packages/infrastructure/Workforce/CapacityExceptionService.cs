@@ -39,8 +39,9 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
         var rows = await db.CapacityExceptions.AsNoTracking()
             .Where(e => e.AppUserId == person.Id && e.FromDate <= end && e.ToDate >= start)
             .OrderBy(e => e.FromDate).ThenBy(e => e.StartsAt).ThenBy(e => e.Id).ToListAsync(ct);
-        var names = await NamesAsync(rows, ct);
-        return rows.Select(e => Dto(e, TimeZones.Resolve(e.TimeZone), names)).ToList();
+        var details = callerId == person.Id || await access.CanManageAvailabilityAsync(callerId, person.Id, ct);
+        var names = details ? await NamesAsync(rows, ct) : new Dictionary<Guid, string>();
+        return rows.Select(e => Dto(e, TimeZones.Resolve(e.TimeZone), names, details)).ToList();
     }
 
     public async Task<CapacityExceptionDto> AddAsync(Guid callerId, Guid appUserId, CapacityExceptionInput input, CancellationToken ct = default)
@@ -60,7 +61,7 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("workforce.exception.added", "AppUser", person.Id.ToString(),
             new { person = person.DisplayName, exceptionId = row.Id, exception = Describe(row, zone), note = row.Note }, ct);
-        return Dto(row, zone, await NamesAsync([row], ct));
+        return Dto(row, zone, await NamesAsync([row], ct), details: true);
     }
 
     public async Task<CapacityExceptionDto> UpdateAsync(Guid callerId, Guid appUserId, Guid exceptionId, CapacityExceptionInput input, CancellationToken ct = default)
@@ -80,7 +81,7 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("workforce.exception.updated", "AppUser", person.Id.ToString(),
             new { person = person.DisplayName, exceptionId = row.Id, before, after = Describe(row, zone), note = row.Note }, ct);
-        return Dto(row, zone, await NamesAsync([row], ct));
+        return Dto(row, zone, await NamesAsync([row], ct), details: true);
     }
 
     public async Task RemoveAsync(Guid callerId, Guid appUserId, Guid exceptionId, CancellationToken ct = default)
@@ -194,14 +195,15 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
             : await db.AppUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
     }
 
-    internal static CapacityExceptionDto Dto(CapacityException e, TimeZoneInfo zone, IReadOnlyDictionary<Guid, string> names)
+    /// <param name="details">Whether the asker may know why: the reason, the note and who recorded it.</param>
+    internal static CapacityExceptionDto Dto(CapacityException e, TimeZoneInfo zone, IReadOnlyDictionary<Guid, string> names, bool details)
     {
         string? Wall(DateTimeOffset? at) => at is null ? null
             : TimeZoneInfo.ConvertTime(at.Value, zone).ToString("HH:mm", CultureInfo.InvariantCulture);
         var by = e.UpdatedByUserId ?? e.CreatedByUserId;
         return new CapacityExceptionDto(e.Id, e.AppUserId, e.Kind, e.AllDay, e.FromDate, e.ToDate,
             e.AllDay ? null : Wall(e.StartsAt), e.AllDay ? null : Wall(e.EndsAt), e.StartsAt, e.EndsAt, e.TimeZone,
-            e.Reason, e.Note, by is { } id ? names.GetValueOrDefault(id) : null, e.UpdatedAt);
+            details ? e.Reason : null, details ? e.Note : null, details && by is { } id ? names.GetValueOrDefault(id) : null, e.UpdatedAt);
     }
 
     /// <summary>"Unavailable · 12 Oct 2026, all day · Time off" - for the audit trail.</summary>

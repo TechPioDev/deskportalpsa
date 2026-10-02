@@ -124,6 +124,7 @@ public class EndpointAuthorizationTests
         // the services); recording an exception also needs availability.manage.
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.PersonCapacity), [Permissions.ScheduleView] },
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.TeamCapacity), [Permissions.ScheduleView] },
+        { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.Groups), [Permissions.ScheduleView] },
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.FindAvailable), [Permissions.ScheduleView] },
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.EvaluateConflicts), [Permissions.ScheduleView] },
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.Exceptions), [Permissions.ScheduleView] },
@@ -171,7 +172,7 @@ public class EndpointAuthorizationTests
     {
         // Searching and conflict checks are reads, so they are GETs: they stay usable while an
         // administrator views the portal as someone (read-only), and nothing caches or replays a write.
-        foreach (var name in new[] { nameof(WorkforceCapacityController.PersonCapacity), nameof(WorkforceCapacityController.TeamCapacity),
+        foreach (var name in new[] { nameof(WorkforceCapacityController.PersonCapacity), nameof(WorkforceCapacityController.TeamCapacity), nameof(WorkforceCapacityController.Groups),
                      nameof(WorkforceCapacityController.FindAvailable), nameof(WorkforceCapacityController.EvaluateConflicts), nameof(WorkforceCapacityController.Exceptions) })
             typeof(WorkforceCapacityController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
     }

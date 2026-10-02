@@ -34,6 +34,11 @@ public sealed class WorkforceCapacityController(
     public async Task<IActionResult> TeamCapacity([FromQuery] TeamQuery q, CancellationToken ct)
         => Ok(await capacity.ForTeamAsync(Caller(), new TeamCapacityQuery(q.Date, q.TeamId, q.DepartmentId, Ids(q.Skills), q.MatchAll ?? true), ct));
 
+    /// <summary>The teams and departments the caller can filter by: those with someone in them the caller may see.</summary>
+    [HttpGet("groups")]
+    public async Task<IActionResult> Groups(CancellationToken ct)
+        => Ok(await capacity.GroupsAsync(Caller(), ct));
+
     /// <summary>
     /// Who has a continuous free slot long enough for a piece of work. A read, so a GET: it changes
     /// nothing, and stays usable while an administrator is viewing the portal as someone (read-only).
