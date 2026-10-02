@@ -616,10 +616,13 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     private async Task<TicketDetailDto?> DetailAsync(
         Func<object?, IQueryable<Ticket>> scope, Guid ticketId, bool includeInternal, CancellationToken ct)
     {
+        // Split: notes and attachments are siblings, so one joined query returns every note once per
+        // attachment (100 notes x 20 files = 2,000 rows for one page). Three small queries instead.
         var ticket = await scope(null)
             .AsNoTracking()
             .Include(t => t.Notes)
             .Include(t => t.Attachments)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(t => t.Id == ticketId, ct);
         if (ticket is null) return null; // not found OR not permitted — indistinguishable to the client
 
