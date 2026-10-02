@@ -32,8 +32,9 @@ public class PermissionGoldenMatrixTests
             "integration.health.view", "jobs.manage", "audit.view", "security.config.view", "enquiries.view",
             // Added with internal boards (Sep 2026): deciding what boards exist is a lead's call.
             "boards.manage",
-            // Added with the workforce module (Oct 2026): schedules and skills.
-            "schedule.view", "workforce.manage",
+            // Added with the workforce module (Oct 2026): schedules and skills; then capacity
+            // exceptions (time away, extra availability).
+            "schedule.view", "workforce.manage", "availability.manage",
         ],
         [RoleType.MspAdministrator] =
         [
@@ -42,16 +43,18 @@ public class PermissionGoldenMatrixTests
             "tickets.note.public.add", "tickets.time.log", "tickets.update", "reports.view",
             "productivity.team.view", "integration.health.view", "jobs.manage", "audit.view",
             "security.config.view", "enquiries.view", "boards.manage",
-            // Workforce module (Oct 2026): administrators see and set up schedules and skills.
-            "schedule.view", "workforce.manage",
+            // Workforce module (Oct 2026): administrators see and set up schedules and skills, and
+            // record anyone's time away.
+            "schedule.view", "workforce.manage", "availability.manage",
         ],
         [RoleType.Manager] =
         [
             "connections.view", "mappings.view", "tickets.view.all", "tickets.time.log",
             "tickets.update", "reports.view", "productivity.team.view", "integration.health.view",
             "enquiries.view", "boards.manage",
-            // Workforce module (Oct 2026): managers see everyone's schedule and skills; they don't set them up.
-            "schedule.view",
+            // Workforce module (Oct 2026): managers see everyone's schedule, skills and capacity and
+            // record their people's time away; they don't set schedules or skills up.
+            "schedule.view", "availability.manage",
         ],
         [RoleType.Technician] =
         [
@@ -59,7 +62,9 @@ public class PermissionGoldenMatrixTests
             // tickets on the team's own boards.
             "tickets.view.assigned", "tickets.create", "tickets.note.public.add", "tickets.time.log",
             "tickets.update", "productivity.own.view",
-            // Workforce module (Oct 2026): their own schedule and skills only (scope Own, below).
+            // Workforce module (Oct 2026): their own schedule, skills and capacity only (scope Own,
+            // below). Deliberately NOT availability.manage: recording time away is a manager's job
+            // unless an administrator gives the role that claim.
             "schedule.view",
         ],
         [RoleType.ClientAdministrator] =

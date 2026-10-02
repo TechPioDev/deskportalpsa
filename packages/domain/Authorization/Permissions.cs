@@ -67,9 +67,9 @@ public static class Permissions
     public const string BoardsManage = "boards.manage";
 
     /// <summary>
-    /// See people's working schedules and skills, as far as the scope reaches: your own (Own), the
-    /// people you share a team or department with, or everyone. Schedules are a capacity boundary for
-    /// planning work, never attendance. Staff only - no client role ever holds it.
+    /// See people's working schedules, skills, capacity and free time, as far as the scope reaches:
+    /// your own (Own), the people you share a team or department with, or everyone. Schedules are a
+    /// capacity boundary for planning work, never attendance. Staff only - no client role ever holds it.
     /// </summary>
     public const string ScheduleView = "schedule.view";
 
@@ -78,6 +78,13 @@ public static class Permissions
     /// planned work, and the skill catalogue and who holds which skill.
     /// </summary>
     public const string WorkforceManage = "workforce.manage";
+
+    /// <summary>
+    /// Record when someone is unavailable for planned work, or available outside their usual hours
+    /// (capacity exceptions). Scoped: Own lets people record their own, Team and Department reach the
+    /// people they share one with, All reaches everyone. Staff only.
+    /// </summary>
+    public const string AvailabilityManage = "availability.manage";
 
     /// <summary>Every claim, used to grant the full set to super-administrators.</summary>
     public static readonly IReadOnlyList<string> All = new[]
@@ -90,7 +97,7 @@ public static class Permissions
         ReportsView, ProductivityViewTeam, ProductivityViewOwn,
         IntegrationHealthView, JobsManage, AuditView, SecurityConfigView, EnquiriesView,
         BoardsManage,
-        ScheduleView, WorkforceManage,
+        ScheduleView, WorkforceManage, AvailabilityManage,
     };
 
     /// <summary>
@@ -123,6 +130,7 @@ public static class Permissions
             (SecurityConfigView, PermissionScope.All), (EnquiriesView, PermissionScope.All),
             (BoardsManage, PermissionScope.All),
             (ScheduleView, PermissionScope.All), (WorkforceManage, PermissionScope.All),
+            (AvailabilityManage, PermissionScope.All),
         ],
 
         RoleType.Manager =>
@@ -133,6 +141,9 @@ public static class Permissions
             (ProductivityViewTeam, PermissionScope.All), (IntegrationHealthView, PermissionScope.All),
             (EnquiriesView, PermissionScope.All), (BoardsManage, PermissionScope.All),
             (ScheduleView, PermissionScope.All),
+            // Managers record their people's time away; technicians do not by default (an
+            // administrator can give the Technician role this claim at scope Own).
+            (AvailabilityManage, PermissionScope.All),
         ],
 
         RoleType.Technician =>

@@ -21,11 +21,18 @@ namespace Desk.Infrastructure.Workforce;
 public sealed class WorkforceAccess(DeskDbContext db, ITenantContext tenant, IEffectivePermissionService permissions)
 {
     /// <summary>The staff accounts the caller may see, as a query to filter further.</summary>
-    public async Task<IQueryable<AppUser>> VisibleStaffAsync(Guid callerId, CancellationToken ct)
+    public Task<IQueryable<AppUser>> VisibleStaffAsync(Guid callerId, CancellationToken ct)
+        => StaffInScopeAsync(callerId, Permissions.ScheduleView, ct);
+
+    /// <summary>
+    /// The staff accounts a scoped workforce permission reaches for the caller: themselves (Own), the
+    /// people they share a team or department with, or everyone in the organization.
+    /// </summary>
+    private async Task<IQueryable<AppUser>> StaffInScopeAsync(Guid callerId, string permission, CancellationToken ct)
     {
         var org = tenant.OrganizationId;
         var staff = tenant.IsPlatformScope ? db.AppUsers.AsQueryable() : db.AppUsers.Where(u => u.MspOrganizationId == org);
-        var eff = await permissions.ResolveAsync(callerId, Permissions.ScheduleView, ct);
+        var eff = await permissions.ResolveAsync(callerId, permission, ct);
         switch (eff.Scope)
         {
             case PermissionScope.All:
@@ -60,6 +67,37 @@ public sealed class WorkforceAccess(DeskDbContext db, ITenantContext tenant, IEf
         var org = tenant.OrganizationId;
         return await db.AppUsers.FirstOrDefaultAsync(u => u.Id == appUserId && (tenant.IsPlatformScope || u.MspOrganizationId == org), ct)
                ?? throw new NotFoundException("Person");
+    }
+
+    /// <summary>Whether the caller's availability.manage scope reaches this person.</summary>
+    public async Task<bool> CanManageAvailabilityAsync(Guid callerId, Guid appUserId, CancellationToken ct)
+        => await (await StaffInScopeAsync(callerId, Permissions.AvailabilityManage, ct)).AnyAsync(u => u.Id == appUserId, ct);
+
+    /// <summary>
+    /// A person whose time away the caller may record. Someone the caller cannot even see is "not
+    /// found"; someone they can see but not manage is refused - saying so tells them nothing new.
+    /// </summary>
+    public async Task<AppUser> AvailabilityManagedPersonAsync(Guid callerId, Guid appUserId, CancellationToken ct)
+    {
+        var person = await VisiblePersonAsync(callerId, appUserId, ct);
+        if (!await CanManageAvailabilityAsync(callerId, appUserId, ct))
+            throw new ForbiddenException("You can't change this person's availability.");
+        return person;
+    }
+
+    /// <summary>Narrows a set of staff to a team, a department, and people holding some skills (every one, or any one).</summary>
+    public IQueryable<AppUser> Narrow(IQueryable<AppUser> staff, Guid? teamId, Guid? departmentId, IReadOnlyList<Guid>? skillIds, bool matchAllSkills)
+    {
+        if (teamId is { } team) staff = staff.Where(u => db.UserTeams.Any(m => m.AppUserId == u.Id && m.TeamId == team));
+        if (departmentId is { } dept) staff = staff.Where(u => db.UserDepartments.Any(m => m.AppUserId == u.Id && m.DepartmentId == dept));
+        if (skillIds is { Count: > 0 })
+        {
+            var wanted = skillIds.Distinct().ToList();
+            staff = matchAllSkills
+                ? staff.Where(u => db.StaffSkills.Count(s => s.AppUserId == u.Id && wanted.Contains(s.SkillId)) == wanted.Count)
+                : staff.Where(u => db.StaffSkills.Any(s => s.AppUserId == u.Id && wanted.Contains(s.SkillId)));
+        }
+        return staff;
     }
 
     public string OrganizationTimeZone()

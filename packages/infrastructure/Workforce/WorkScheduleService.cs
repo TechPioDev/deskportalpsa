@@ -136,15 +136,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
     {
         var staff = await access.VisibleStaffAsync(callerId, ct);
         if (!query.IncludeInactive) staff = staff.Where(u => u.IsActive);
-        if (query.TeamId is { } team) staff = staff.Where(u => db.UserTeams.Any(m => m.AppUserId == u.Id && m.TeamId == team));
-        if (query.DepartmentId is { } dept) staff = staff.Where(u => db.UserDepartments.Any(m => m.AppUserId == u.Id && m.DepartmentId == dept));
-        if (query.SkillIds is { Count: > 0 } skillIds)
-        {
-            var wanted = skillIds.Distinct().ToList();
-            staff = query.MatchAllSkills
-                ? staff.Where(u => db.StaffSkills.Count(s => s.AppUserId == u.Id && wanted.Contains(s.SkillId)) == wanted.Count)
-                : staff.Where(u => db.StaffSkills.Any(s => s.AppUserId == u.Id && wanted.Contains(s.SkillId)));
-        }
+        staff = access.Narrow(staff, query.TeamId, query.DepartmentId, query.SkillIds, query.MatchAllSkills);
         var people = await staff.AsNoTracking().OrderBy(u => u.DisplayName)
             .Select(u => new { u.Id, u.DisplayName, u.Email, u.IsActive, u.IsSchedulable }).ToListAsync(ct);
         var ids = people.Select(p => p.Id).ToList();

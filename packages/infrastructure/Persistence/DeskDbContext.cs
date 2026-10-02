@@ -53,6 +53,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<Desk.Domain.Workforce.WorkScheduleBreak> WorkScheduleBreaks => Set<Desk.Domain.Workforce.WorkScheduleBreak>();
     public DbSet<Desk.Domain.Workforce.Skill> Skills => Set<Desk.Domain.Workforce.Skill>();
     public DbSet<Desk.Domain.Workforce.StaffSkill> StaffSkills => Set<Desk.Domain.Workforce.StaffSkill>();
+    public DbSet<Desk.Domain.Workforce.CapacityException> CapacityExceptions => Set<Desk.Domain.Workforce.CapacityException>();
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
     public DbSet<DeskHoliday> DeskHolidays => Set<DeskHoliday>();
     public DbSet<TicketSatisfaction> TicketSatisfactions => Set<TicketSatisfaction>();

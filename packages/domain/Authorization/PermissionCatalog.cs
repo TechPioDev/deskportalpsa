@@ -90,10 +90,13 @@ public static class PermissionCatalog
         Admin(Permissions.BoardsManage, "Tickets", "Create and configure internal boards"),
 
         // Workforce: working schedules and skills (capacity planning, not attendance)
-        new(Permissions.ScheduleView, "Workforce", "View working schedules and skills",
+        new(Permissions.ScheduleView, "Workforce", "View working schedules, skills and capacity",
             [PermissionScope.All, PermissionScope.Department, PermissionScope.Team, PermissionScope.Own, PermissionScope.None],
             PermissionScope.All, IsBoardAware: false),
         Admin(Permissions.WorkforceManage, "Workforce", "Manage working schedules and skills"),
+        new(Permissions.AvailabilityManage, "Workforce", "Record time away and extra availability",
+            [PermissionScope.All, PermissionScope.Department, PermissionScope.Team, PermissionScope.Own, PermissionScope.None],
+            PermissionScope.All, IsBoardAware: false),
     ];
 
     private static readonly Dictionary<string, PermissionDefinition> ByKey =

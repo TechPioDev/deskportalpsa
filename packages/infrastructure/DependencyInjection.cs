@@ -131,6 +131,11 @@ public static class DependencyInjection
         services.AddScoped<Workforce.WorkforceAccess>();
         services.AddScoped<Desk.Application.Workforce.IWorkScheduleService, Workforce.WorkScheduleService>();
         services.AddScoped<Desk.Application.Workforce.ISkillService, Workforce.SkillService>();
+        services.AddScoped<Desk.Application.Workforce.ICapacityService, Workforce.CapacityService>();
+        services.AddScoped<Desk.Application.Workforce.ICapacityExceptionService, Workforce.CapacityExceptionService>();
+        // Planned work comes from here. Nothing can be booked into people's time yet, so nothing is
+        // allocated; work allocation replaces this one registration.
+        services.AddScoped<Desk.Application.Workforce.IWorkAllocationReader, Workforce.NoWorkAllocations>();
         services.AddSingleton(new Desk.Application.Workforce.WorkforceFeatureOptions
         {
             Enabled = config.GetValue("Features:Workforce", false),
