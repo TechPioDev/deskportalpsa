@@ -48,7 +48,7 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
     {
         var person = await access.AvailabilityManagedPersonAsync(callerId, appUserId, ct);
         var (zoneId, zone) = await ZoneAsync(person.Id, input.FromDate, ct);
-        var v = Validate(input, zone);
+        var v = Validate(input, zone, unchangedFrom: null);
         await RefuseDuplicateAsync(person.Id, null, input.Kind, v, ct);
 
         var row = new CapacityException
@@ -60,7 +60,7 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
         db.CapacityExceptions.Add(row);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("workforce.exception.added", "AppUser", person.Id.ToString(),
-            new { person = person.DisplayName, exceptionId = row.Id, exception = Describe(row, zone), note = row.Note }, ct);
+            new { person = person.DisplayName, exceptionId = row.Id, exception = Describe(row, zone) }, ct);
         return Dto(row, zone, await NamesAsync([row], ct), details: true);
     }
 
@@ -71,7 +71,9 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
         var row = await db.CapacityExceptions.FirstOrDefaultAsync(e => e.Id == exceptionId && e.AppUserId == person.Id, ct)
                   ?? throw new NotFoundException("Exception");
         var (zoneId, zone) = await ZoneAsync(person.Id, input.FromDate, ct);
-        var v = Validate(input, zone);
+        // A period that began long ago can still have its end changed: only a NEW start is held to
+        // the "not too far back" rule.
+        var v = Validate(input, zone, unchangedFrom: row.FromDate);
         await RefuseDuplicateAsync(person.Id, row.Id, input.Kind, v, ct);
 
         var before = Describe(row, TimeZones.Resolve(row.TimeZone));
@@ -80,7 +82,7 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
         Apply(row, input, v);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("workforce.exception.updated", "AppUser", person.Id.ToString(),
-            new { person = person.DisplayName, exceptionId = row.Id, before, after = Describe(row, zone), note = row.Note }, ct);
+            new { person = person.DisplayName, exceptionId = row.Id, before, after = Describe(row, zone) }, ct);
         return Dto(row, zone, await NamesAsync([row], ct), details: true);
     }
 
@@ -100,14 +102,15 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
     private sealed record Checked(bool AllDay, DateOnly From, DateOnly To, DateTimeOffset? StartsAt, DateTimeOffset? EndsAt, string? Note);
 
     /// <summary>Checks a submitted exception completely and reports every problem at once.</summary>
-    private Checked Validate(CapacityExceptionInput input, TimeZoneInfo zone)
+    /// <param name="unchangedFrom">The start date the exception already has, when one is being changed.</param>
+    private Checked Validate(CapacityExceptionInput input, TimeZoneInfo zone, DateOnly? unchangedFrom)
     {
         var problems = new List<string>();
         if (!Enum.IsDefined(input.Kind)) problems.Add("Choose whether this is time unavailable or extra availability.");
         if (!Enum.IsDefined(input.Reason)) problems.Add("Choose a reason from the list.");
 
         var today = WorkforceCalendar.LocalDate(clock.GetUtcNow(), zone);
-        if (input.FromDate < today.AddDays(-MaxDaysBack))
+        if (input.FromDate < today.AddDays(-MaxDaysBack) && input.FromDate != unchangedFrom)
             problems.Add($"The date can be at most {MaxDaysBack} days in the past.");
         if (input.FromDate > today.AddDays(MaxDaysAhead))
             problems.Add("The date can be at most a year ahead.");
@@ -206,7 +209,11 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
             details ? e.Reason : null, details ? e.Note : null, details && by is { } id ? names.GetValueOrDefault(id) : null, e.UpdatedAt);
     }
 
-    /// <summary>"Unavailable · 12 Oct 2026, all day · Time off" - for the audit trail.</summary>
+    /// <summary>
+    /// "Unavailable · 12 Oct 2026, all day" - for the audit trail. WHEN, and deliberately not why:
+    /// the reason and the note ("Sick", "Dentist") are the person's and their managers' to read, and
+    /// the audit log is open to anyone who may view audit entries.
+    /// </summary>
     public static string Describe(CapacityException e, TimeZoneInfo zone)
     {
         static string Day(DateOnly d) => d.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
@@ -219,15 +226,8 @@ public sealed class CapacityExceptionService(DeskDbContext db, WorkforceAccess a
             var end = TimeZoneInfo.ConvertTime(e.EndsAt!.Value, zone);
             when = $"{Day(e.FromDate)} {start:HH\\:mm}–{end:HH\\:mm} ({e.TimeZone})";
         }
-        return $"{kind} · {when} · {ReasonLabel(e.Reason)}";
+        return $"{kind} · {when}";
     }
-
-    public static string ReasonLabel(CapacityExceptionReason reason) => reason switch
-    {
-        CapacityExceptionReason.TimeOff => "Time off",
-        CapacityExceptionReason.InternalEvent => "Internal event",
-        _ => reason.ToString(),
-    };
 
     private static TimeOnly? ParseTime(string? value, string what, List<string> problems)
     {

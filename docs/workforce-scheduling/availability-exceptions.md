@@ -47,7 +47,8 @@ It belongs to the shift date it starts on. Next to a night shift it never offers
 extra availability 02:00–05:00 after a shift ending 03:00 adds only 03:00–05:00.
 
 Where someone is both unavailable and additionally available, unavailable wins; a full day
-unavailable cancels additional availability on that date.
+unavailable cancels additional availability on that date, and additional availability from a
+neighbouring date never reaches into the working window of a day taken off.
 
 ## Rules
 
@@ -56,7 +57,7 @@ unavailable cancels additional availability on that date.
 | Start and end differ | "The start and end times are the same. For a whole day, choose "All day"." |
 | All day is for unavailable only | "Extra availability needs a start and an end time." |
 | Last day not before the first | "The last day is before the first." |
-| At most 31 days back, a year ahead | "The date can be at most 31 days in the past." / "...at most a year ahead." |
+| A new start at most 31 days back, a year ahead (an existing period keeps its start, however old, when only its end changes) | "The date can be at most 31 days in the past." / "...at most a year ahead." |
 | Note at most 200 characters, no control characters | "Keep the note to 200 characters." |
 | Times that the clocks skip | "Those times do not exist on that date: the clocks go forward then." |
 | The same exception twice | "That is already recorded for this person." |
@@ -74,8 +75,10 @@ scope **Own** in Roles & Permissions. No code change is needed.
 ## Audit
 
 `workforce.exception.added`, `workforce.exception.updated` (before and after) and
-`workforce.exception.removed`, each naming the person and describing the exception, for example
-`Unavailable · 5 Oct 2026 15:00–16:00 (Asia/Kolkata) · Appointment`.
+`workforce.exception.removed`, each naming the person and saying **when**, for example
+`Unavailable · 5 Oct 2026 15:00–16:00 (Asia/Kolkata)`. The reason and the note are deliberately not
+written to the audit log: it is open to anyone who may view audit entries, and why someone is away
+is theirs and their managers' to know.
 
 ## Storage
 

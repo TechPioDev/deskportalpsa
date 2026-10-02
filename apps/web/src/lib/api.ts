@@ -244,7 +244,7 @@ export const AvailabilityResultSchema = z.object({
     appUserId: z.string(), displayName: z.string(), timeZone: z.string(), teams: z.array(z.string()),
     matchingSkills: z.array(StaffSkillSchema), date: z.string(), recommended: SlotSchema, windows: z.array(SlotSchema), freeMinutes: z.number(),
   })),
-  peopleConsidered: z.number(), withoutRequiredSkills: z.number(), notOfferedForWork: z.number(),
+  totalMatches: z.number(), peopleConsidered: z.number(), withoutRequiredSkills: z.number(), notOfferedForWork: z.number(),
   withoutASchedule: z.number(), withNoFittingSlot: z.number(),
 });
 export type AvailabilityResult = z.infer<typeof AvailabilityResultSchema>;

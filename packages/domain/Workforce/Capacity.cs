@@ -100,11 +100,16 @@ public static class CapacityCalculator
         var tentative = Intervals.Intersect(free, input.Allocations.Where(a => !a.Confirmed).Select(a => a.When));
         var projected = Intervals.Subtract(free, tentative);
 
+        // Each "taken" figure is the difference between what was there before and after the step,
+        // not its own rounded total - so the three sums hold exactly even when a piece of work starts
+        // or ends between whole minutes.
+        var remaining = Intervals.Minutes(free);
+        var projectedRemaining = Intervals.Minutes(projected);
         return new DayCapacity(
             input.Date, input.Window, input.UnavailableAllDay,
             gross, breakMinutes, unavailableMinutes, additionalMinutes, usable,
-            Intervals.Minutes(confirmed), Intervals.Minutes(tentative),
-            Intervals.Minutes(free), Intervals.Minutes(projected),
+            usable - remaining, remaining - projectedRemaining,
+            remaining, projectedRemaining,
             breaks, available, free, projected);
     }
 

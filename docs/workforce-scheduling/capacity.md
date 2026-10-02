@@ -115,14 +115,15 @@ two-hour slot, so 151 minutes fits nowhere even though 270 are free.
 |---|---|
 | `from`, `to` | Dates to search (at most 14). Each person is returned for the **first** date they fit. |
 | `duration` | Minutes of continuous work (5 minutes to 12 hours). |
-| `earliest`, `latest` | Time of day, in `timeZone` (the organization's by default). A latest time at or before the earliest runs into the next day. |
+| `earliest`, `latest` | Time of day, in `timeZone` (the organization's by default). With a time of day given, the work must lie **wholly inside** it. With none, the work must **start** on the date and may run past midnight, so a night shift's free 22:30–03:00 is one slot and is found. A band that crosses midnight (22:00–06:00) covers, on each date, its early hours (00:00–06:00) and the night that starts on it. |
 | `teamId`, `departmentId`, `people` | Narrow who is looked at. Existing teams and departments; nothing is duplicated. |
 | `skills`, `matchAll` | Phase 1 skills. **`matchAll=true` (the default) means the person must hold every skill; `false` means any one.** The answer repeats which rule was used. Levels are returned as facts; they do not filter. |
 
 The answer lists, per person: the date, the recommended slot (the earliest stretch of exactly the
 length asked for), every window that day long enough, the free minutes inside the searched window,
 and the matching skills. It also says how many people were looked at and why the rest were left out
-(without the skills, not offered for planned work, no working schedule, no slot long enough).
+(without the skills, not offered for planned work, no working schedule, no slot long enough), and
+how many fit in all when the list was cut at 200.
 
 There is no scoring and no AI recommendation. Nothing is offered in the past: a search for today
 starts from the next whole minute. Nothing is booked or reserved by a search.

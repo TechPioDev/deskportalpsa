@@ -219,6 +219,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         team.Result.People.Count(p => p.Day.UsableMinutes == 480).Should().Be(people - (people + 4) / 5);
         team.Result.People.Count(p => p.Day.UnavailableMinutes == 60).Should().Be((people + 4) / 5, "09:30-10:30 UTC is working time wherever this host puts the zone");
         oneDay.Result.Matches.Should().HaveCount(Math.Min(people, 200), "everyone is free 15:00-17:30, and the answer is capped at 200");
+        oneDay.Result.TotalMatches.Should().Be(people, "and it says how many fit in all, so a list cut short is never mistaken for everyone");
         oneDay.Result.PeopleConsidered.Should().Be(people + 1);
         month.Result.Days.Should().HaveCount(30);
 

@@ -289,7 +289,8 @@ function ExceptionForm({ userId, timeZone, defaultDate, editing, onDone }: {
 
 function ExceptionList({ userId, timeZone, today, defaultDate, canManage }: { userId: string; timeZone: string; today: string; defaultDate: string; canManage: boolean }) {
   const qc = useQueryClient();
-  const { data: rows, error } = useQuery({ queryKey: ['capacity-exceptions', userId], queryFn: () => api.capacityExceptions(userId, addDays(today, -7)), retry: false });
+  // From as far back as one can be recorded (31 days), so nothing that was just saved is missing from the list.
+  const { data: rows, error } = useQuery({ queryKey: ['capacity-exceptions', userId], queryFn: () => api.capacityExceptions(userId, addDays(today, -31)), retry: false });
   const [form, setForm] = useState<{ editing: CapacityException | null } | null>(null);
   const remove = useMutation({
     mutationFn: (id: string) => api.removeCapacityException(userId, id),
@@ -308,7 +309,7 @@ function ExceptionList({ userId, timeZone, today, defaultDate, canManage }: { us
       {form && <ExceptionForm key={form.editing?.id ?? 'new'} userId={userId} timeZone={timeZone} defaultDate={defaultDate} editing={form.editing} onDone={() => setForm(null)} />}
       {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{(error as Error).message}</p>}
       {remove.isError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{(remove.error as Error).message}</p>}
-      {rows && rows.length === 0 && <p className="text-sm text-[var(--muted)]">Nothing recorded from the last week onwards.</p>}
+      {rows && rows.length === 0 && <p className="text-sm text-[var(--muted)]">Nothing recorded from the last month onwards.</p>}
       {rows && rows.length > 0 && (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--surface)]">
           {rows.map((e) => (

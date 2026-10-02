@@ -237,7 +237,11 @@ public class WorkforceCapacityTests
         (await w.Db.AuditLog.Where(a => a.Action.StartsWith("workforce.exception.")).Select(a => a.Action).ToListAsync())
             .Should().BeEquivalentTo(["workforce.exception.added", "workforce.exception.removed"]);
         var detail = System.Text.Json.JsonDocument.Parse((await w.Db.AuditLog.SingleAsync(a => a.Action == "workforce.exception.added")).DetailJson!).RootElement;
-        detail.GetProperty("exception").GetString().Should().Be($"Unavailable · 5 Jan 2026 15:00–16:00 ({Zone}) · Appointment");
+        detail.GetProperty("exception").GetString().Should().Be($"Unavailable · 5 Jan 2026 15:00–16:00 ({Zone})");
+        // The audit trail says when, never why: anyone who may read audit entries would otherwise
+        // read "Dentist" too.
+        (await w.Db.AuditLog.Where(a => a.Action.StartsWith("workforce.exception.")).Select(a => a.DetailJson).ToListAsync())
+            .Should().OnlyContain(json => !json!.Contains("Dentist") && !json.Contains("Appointment"));
     }
 
     [Fact]
@@ -331,8 +335,26 @@ public class WorkforceCapacityTests
         (await DayAsync(w, w.Admin, w.Jason, Monday)).UnavailableMinutes.Should().Be(120);
 
         var detail = System.Text.Json.JsonDocument.Parse((await w.Db.AuditLog.SingleAsync(a => a.Action == "workforce.exception.updated")).DetailJson!).RootElement;
-        detail.GetProperty("before").GetString().Should().Contain("10:00–11:00").And.Contain("Appointment");
-        detail.GetProperty("after").GetString().Should().Contain("14:00–16:00").And.Contain("Training");
+        detail.GetProperty("before").GetString().Should().Contain("10:00–11:00");
+        detail.GetProperty("after").GetString().Should().Contain("14:00–16:00");
+    }
+
+    [Fact]
+    public async Task A_long_absence_that_began_weeks_ago_can_still_be_shortened()
+    {
+        var w = await WorldWithDayShiftsAsync();
+        var admin = w.As(w.Admin);
+        var leave = await admin.Exceptions.AddAsync(w.Admin.Id, w.Jason.Id, AwayAllDay(Today, Today.AddDays(60)));
+
+        // Forty days on, they are coming back a week early. The start is long past the 31-day limit
+        // for NEW dates, but it has not changed - only the end has.
+        w.Clock.Advance(TimeSpan.FromDays(40));
+        var shortened = await admin.Exceptions.UpdateAsync(w.Admin.Id, w.Jason.Id, leave.Id, AwayAllDay(Today, Today.AddDays(53)));
+        (shortened.FromDate, shortened.ToDate).Should().Be((Today, Today.AddDays(53)));
+
+        // Moving the start to another long-past date is still refused.
+        var moved = () => admin.Exceptions.UpdateAsync(w.Admin.Id, w.Jason.Id, leave.Id, AwayAllDay(Today.AddDays(2), Today.AddDays(53)));
+        (await moved.Should().ThrowAsync<ValidationFailedException>()).WithMessage("The date can be at most 31 days in the past.");
     }
 
     [Fact]
@@ -453,6 +475,26 @@ public class WorkforceCapacityTests
         var days = (await admin.Capacity.ForPersonAsync(w.Admin.Id, w.Abbie.Id, Monday, Tuesday)).Days;
         (days[0].UsableMinutes, days[0].FreeSlots.Count).Should().Be((0, 0), "including its hours after midnight");
         days[1].UsableMinutes.Should().Be(510, "Tuesday night is a different shift");
+    }
+
+    [Fact]
+    public async Task Extra_availability_never_offers_time_inside_a_day_taken_off()
+    {
+        var w = await WorldWithDayShiftsAsync();
+        var admin = w.As(w.Admin);
+        // Tuesday is off in full. Extra availability from Monday 20:00 runs on to Tuesday 10:00.
+        await admin.Exceptions.AddAsync(w.Admin.Id, w.Jason.Id, AwayAllDay(Tuesday));
+        await admin.Exceptions.AddAsync(w.Admin.Id, w.Jason.Id, Extra(Monday, "20:00", "10:00"));
+
+        var days = (await admin.Capacity.ForPersonAsync(w.Admin.Id, w.Jason.Id, Monday, Tuesday)).Days;
+        // Monday gains 20:00 to 08:30 - and stops where Tuesday's (cancelled) working window begins.
+        days[0].FreeSlots.Last().Should().Match<SlotDto>(s => s.Start == At(Monday, "20:00") && s.End == At(Tuesday, "08:30"));
+        days[1].UsableMinutes.Should().Be(0);
+        // The search and the conflict check agree: 09:00 on the day off is not on offer, and is blocked.
+        var found = await admin.Capacity.FindAsync(w.Admin.Id, new AvailabilitySearch(Tuesday, null, 30, EarliestTime: "08:30", LatestTime: "10:00", AppUserIds: [w.Jason.Id]));
+        found.Matches.Should().BeEmpty();
+        (await admin.Capacity.EvaluateAsync(w.Admin.Id, w.Jason.Id, new ProposedWork(At(Tuesday, "09:00"), At(Tuesday, "09:30"))))
+            .Conflicts.Select(c => c.Type).Should().Equal(ConflictType.UnavailableConflict);
     }
 
     [Fact]
@@ -713,6 +755,46 @@ public class WorkforceCapacityTests
         var match = found.Matches.Single();
         (match.Date, match.Recommended.Start, match.Recommended.End).Should().Be((Tuesday, At(Tuesday, "01:00"), At(Tuesday, "02:30")));
         match.FreeMinutes.Should().Be(120);
+    }
+
+    [Fact]
+    public async Task A_free_slot_that_crosses_midnight_is_one_slot_when_no_time_of_day_is_asked_for()
+    {
+        var w = await WorldAsync();
+        var admin = w.As(w.Admin);
+        await admin.Schedules.SaveAsync(w.Admin.Id, w.Abbie.Id, NightShift());
+        // 18:00-03:00 with a break 22:00-22:30: free 18:00-22:00 (4h) and 22:30-03:00 (4h 30m).
+
+        // 4h 30m only fits in the stretch that runs past midnight. Cut at midnight it would be 1h 30m
+        // on Monday and 3h on Tuesday, and she would never be found.
+        var monday = await admin.Capacity.FindAsync(w.Admin.Id, new AvailabilitySearch(Monday, null, 270, AppUserIds: [w.Abbie.Id]));
+        var match = monday.Matches.Should().ContainSingle().Subject;
+        (match.Date, match.Recommended.Start, match.Recommended.End).Should().Be((Monday, At(Monday, "22:30"), At(Tuesday, "03:00")));
+        monday.WithNoFittingSlot.Should().Be(0);
+
+        // A search for Tuesday alone starts on Tuesday: Monday night's last three hours, then Tuesday's own night.
+        var tuesday = await admin.Capacity.FindAsync(w.Admin.Id, new AvailabilitySearch(Tuesday, null, 270, AppUserIds: [w.Abbie.Id]));
+        (tuesday.Matches.Single().Recommended.Start, tuesday.Matches.Single().Date).Should().Be((At(Tuesday, "22:30"), Tuesday));
+        // With a time of day given, the work must lie inside it: 22:00-24:00 holds no 4h 30m.
+        var banded = await admin.Capacity.FindAsync(w.Admin.Id, new AvailabilitySearch(Monday, null, 270, EarliestTime: "22:00", LatestTime: "23:59", AppUserIds: [w.Abbie.Id]));
+        banded.Matches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task At_one_in_the_morning_a_search_for_tonight_finds_the_night_that_is_still_running()
+    {
+        var w = await WorldAsync();
+        var admin = w.As(w.Admin);
+        await admin.Schedules.SaveAsync(w.Admin.Id, w.Abbie.Id, NightShift());
+        // It is 01:00 on Tuesday; Monday's night shift runs until 03:00.
+        w.Clock.Advance(At(Tuesday, "01:00") - w.Clock.GetUtcNow());
+
+        var band = await admin.Capacity.FindAsync(w.Admin.Id, new AvailabilitySearch(Tuesday, null, 60, EarliestTime: "22:00", LatestTime: "06:00", AppUserIds: [w.Abbie.Id]));
+        var now = band.Matches.Should().ContainSingle().Subject;
+        (now.Date, now.Recommended.Start, now.Recommended.End, now.FreeMinutes).Should().Be((Tuesday, At(Tuesday, "01:00"), At(Tuesday, "02:00"), 120));
+
+        var anyTime = await admin.Capacity.FindAsync(w.Admin.Id, new AvailabilitySearch(Tuesday, null, 60, AppUserIds: [w.Abbie.Id]));
+        anyTime.Matches.Single().Recommended.Start.Should().Be(At(Tuesday, "01:00"));
     }
 
     [Theory]

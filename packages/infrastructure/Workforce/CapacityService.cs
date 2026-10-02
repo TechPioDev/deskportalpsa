@@ -143,16 +143,7 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
 
         // Nothing is offered in the past: a search for today starts from the next whole minute.
         var notBefore = new DateTimeOffset(now.Ticks - now.Ticks % TimeSpan.TicksPerMinute, TimeSpan.Zero).AddMinutes(now.Ticks % TimeSpan.TicksPerMinute == 0 ? 0 : 1);
-        var windows = new List<(DateOnly Date, Interval Window)>();
-        for (var d = from < today ? today : from; d <= to; d = d.AddDays(1))
-        {
-            var start = TimeZones.WallToUtc(d.ToDateTime(earliest), zone, earlierIfAmbiguous: true);
-            // A latest time at or before the earliest (or none at all) runs to that time the next day.
-            var endDate = latest > earliest ? d : d.AddDays(1);
-            var end = TimeZones.WallToUtc(endDate.ToDateTime(latest), zone, earlierIfAmbiguous: false);
-            if (start < notBefore) start = notBefore;
-            if (end > start) windows.Add((d, new Interval(start, end)));
-        }
+        var windows = SearchWindows(from < today ? today : from, to, search.EarliestTime, search.LatestTime, earliest, latest, zone, notBefore);
 
         var matches = new List<AvailabilityMatchDto>();
         var withoutSchedule = 0;
@@ -163,14 +154,14 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
             // belong to the day before, but they are still free at 01:00 on the date being searched.
             var free = Intervals.Normalize(Days(calendar, c.Id).SelectMany(d => d.FreeSlots));
             AvailabilityMatchDto? match = null;
-            foreach (var (date, window) in windows)
+            foreach (var w in windows)
             {
-                var fitting = CapacityCalculator.Fitting(free, search.DurationMinutes, window);
+                var fitting = w.Fitting(free, search.DurationMinutes);
                 if (fitting.Count == 0) continue;
                 var recommended = new Interval(fitting[0].Start, fitting[0].Start.AddMinutes(search.DurationMinutes));
-                match = new AvailabilityMatchDto(c.Id, c.DisplayName, calendar.ZoneId(c.Id, date), teams.GetValueOrDefault(c.Id) ?? [],
+                match = new AvailabilityMatchDto(c.Id, c.DisplayName, calendar.ZoneId(c.Id, w.Date), teams.GetValueOrDefault(c.Id) ?? [],
                     (skills.GetValueOrDefault(c.Id) ?? []).Where(s => wanted.Contains(s.SkillId)).ToList(),
-                    date, Slot(recommended), fitting.Select(Slot).ToList(), Intervals.Minutes(Intervals.Clip(free, window)));
+                    w.Date, Slot(recommended), fitting.Select(Slot).ToList(), Intervals.Minutes(Intervals.Clip(free, w.When)));
                 break;
             }
             if (match is not null) matches.Add(match);
@@ -182,8 +173,62 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
         // no score and no judgement about people.
         var ordered = matches.OrderBy(m => m.Recommended.Start).ThenByDescending(m => m.FreeMinutes)
             .ThenBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase).Take(MaxMatches).ToList();
-        return new AvailabilitySearchResultDto(zoneId!, search.DurationMinutes, search.MatchAllSkills, ordered,
+        return new AvailabilitySearchResultDto(zoneId!, search.DurationMinutes, search.MatchAllSkills, ordered, matches.Count,
             people.Count, withoutSkills, notOffered, withoutSchedule, noSlot);
+    }
+
+    /// <summary>
+    /// A stretch of one search date in which the work may be placed. With a time of day given, the
+    /// work must lie wholly inside it. With none, the work must START on that date and may run on
+    /// past midnight - otherwise a night shift's free 22:30-03:00 would be cut in two at midnight and
+    /// never found, and neither would a technician whose day straddles midnight in the searcher's zone.
+    /// </summary>
+    private sealed record SearchWindow(DateOnly Date, Interval When, bool WorkMustEndInside)
+    {
+        public IReadOnlyList<Interval> Fitting(IReadOnlyList<Interval> free, int minutes)
+        {
+            if (WorkMustEndInside) return CapacityCalculator.Fitting(free, minutes, When);
+            return free.Where(s => s.End > When.Start && s.Start < When.End)
+                .Select(s => new Interval(s.Start > When.Start ? s.Start : When.Start, s.End))
+                .Where(s => s.Length.TotalMinutes >= minutes).ToList();
+        }
+    }
+
+    /// <summary>
+    /// The windows to search, in time order, none of them in the past.
+    ///
+    /// No time of day: each date, midnight to midnight. A band within a day (13:00-17:30): that band
+    /// on each date. A band that crosses midnight (22:00-06:00): on each date, the early hours that
+    /// belong to it (00:00-06:00) and the night that starts on it (22:00 until 06:00 the next day) -
+    /// so at 01:00 a search for today still finds the night that is running.
+    /// </summary>
+    private static List<SearchWindow> SearchWindows(
+        DateOnly from, DateOnly to, string? earliestGiven, string? latestGiven, TimeOnly earliest, TimeOnly latest, TimeZoneInfo zone, DateTimeOffset notBefore)
+    {
+        var windows = new List<SearchWindow>();
+        void Add(DateOnly date, DateTime startWall, DateTime endWall, bool mustEndInside)
+        {
+            var start = TimeZones.WallToUtc(startWall, zone, earlierIfAmbiguous: true);
+            var end = TimeZones.WallToUtc(endWall, zone, earlierIfAmbiguous: false);
+            if (start < notBefore) start = notBefore;
+            if (end > start) windows.Add(new SearchWindow(date, new Interval(start, end), mustEndInside));
+        }
+        var anyTime = string.IsNullOrWhiteSpace(earliestGiven) && string.IsNullOrWhiteSpace(latestGiven);
+        // "Latest" left empty means the end of the day, not a band that crosses midnight.
+        var crossesMidnight = !anyTime && !string.IsNullOrWhiteSpace(latestGiven) && latest <= earliest;
+        for (var d = from; d <= to; d = d.AddDays(1))
+        {
+            var midnight = d.ToDateTime(TimeOnly.MinValue);
+            if (anyTime) Add(d, midnight, midnight.AddDays(1), mustEndInside: false);
+            else if (crossesMidnight)
+            {
+                if (latest > TimeOnly.MinValue) Add(d, midnight, d.ToDateTime(latest), mustEndInside: true);
+                Add(d, d.ToDateTime(earliest), d.AddDays(1).ToDateTime(latest), mustEndInside: true);
+            }
+            else Add(d, d.ToDateTime(earliest),
+                string.IsNullOrWhiteSpace(latestGiven) ? midnight.AddDays(1) : d.ToDateTime(latest), mustEndInside: true);
+        }
+        return windows;
     }
 
     public async Task<ConflictResultDto> EvaluateAsync(Guid callerId, Guid appUserId, ProposedWork proposal, CancellationToken ct = default)

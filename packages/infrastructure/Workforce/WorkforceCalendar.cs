@@ -144,9 +144,11 @@ public sealed class WorkforceCalendar
             .Select(e => new Interval(e.StartsAt!.Value, e.EndsAt!.Value)).ToList();
 
         // Extra availability belongs to the shift date it starts on (in that date's zone), and only
-        // adds time outside every working window still in force - so no minute is offered twice, on
-        // two dates, when it runs into a night shift that began the day before.
-        var liveWindows = dates.Where(d => windows[d] is not null && !allDay.Contains(d))
+        // adds time outside every working window - so no minute is offered twice, on two dates, when
+        // it runs into a night shift that began the day before. A window taken off by a full day
+        // unavailable counts too: that time is unavailable, and offering it from a neighbouring
+        // date's extra availability would contradict the conflict check, which blocks it.
+        var liveWindows = dates.Where(d => windows[d] is not null)
             .Select(d => new Interval(windows[d]!.StartUtc, windows[d]!.EndUtc)).ToList();
         var additional = new Dictionary<DateOnly, List<Interval>>();
         foreach (var e in exceptions.Where(e => !e.AllDay && e.Kind == CapacityExceptionKind.AdditionalAvailability && e.StartsAt is not null && e.EndsAt is not null))

@@ -99,10 +99,14 @@ public sealed record AvailabilityMatchDto(
 /// <summary>
 /// The answer, as facts: who fits, and how many people were looked at and why the rest were left
 /// out. No scoring and no recommendation beyond "earliest first".
+///
+/// With a time of day given, the work lies wholly inside it. With none, the work starts on the
+/// date and may run past midnight (a night shift's free hours are one slot, not two halves).
 /// </summary>
+/// <param name="TotalMatches">How many people fit in all; more than <paramref name="Matches"/> holds when the list was cut short.</param>
 public sealed record AvailabilitySearchResultDto(
     string TimeZone, int DurationMinutes, bool MatchAllSkills,
-    IReadOnlyList<AvailabilityMatchDto> Matches,
+    IReadOnlyList<AvailabilityMatchDto> Matches, int TotalMatches,
     int PeopleConsidered, int WithoutRequiredSkills, int NotOfferedForWork, int WithoutASchedule, int WithNoFittingSlot);
 
 /// <summary>A piece of work someone wants to place: when, whether only pencilled in, and the skills it asks for.</summary>

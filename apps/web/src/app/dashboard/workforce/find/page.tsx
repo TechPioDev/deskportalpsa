@@ -32,17 +32,20 @@ export default function FindAvailablePage() {
   // if the two disagree around midnight.
   const [v, setV] = useState<Form>(() => ({ from: new Date().toLocaleDateString('en-CA'), to: '', duration: '60', earliest: '', latest: '', teamId: '', departmentId: '', skillIds: [], matchAll: true }));
   const [asked, setAsked] = useState<AvailabilitySearch | null>(null);
+  // Counted so that Find asks again even when nothing in the form changed: what was free a minute
+  // ago may be taken now.
+  const [run, setRun] = useState(0);
   const form = v;
   const issues = problems(form);
 
   const { data, error, isFetching } = useQuery({
-    queryKey: ['capacity', 'find', asked], queryFn: () => api.findAvailable(asked!), enabled: !!asked, retry: false,
+    queryKey: ['capacity', 'find', asked, run], queryFn: () => api.findAvailable(asked!), enabled: !!asked, retry: false, gcTime: 0,
   });
 
-  const search = () => setAsked({
+  const search = () => { setRun((n) => n + 1); setAsked({
     from: form.from, to: form.to || null, duration: Number(form.duration), earliest: form.earliest || null, latest: form.latest || null,
     teamId: form.teamId || null, departmentId: form.departmentId || null, skills: form.skillIds, matchAll: form.matchAll,
-  });
+  }); };
   const left = data ? [
     [data.withoutRequiredSkills, data.matchAllSkills ? 'without every skill asked for' : 'without any of the skills asked for'],
     [data.notOfferedForWork, 'not offered for planned work'],
@@ -99,7 +102,8 @@ export default function FindAvailablePage() {
       {data && (
         <section aria-label="Results" className="space-y-3">
           <p className="text-sm">
-            <strong>{data.matches.length}</strong> of {data.peopleConsidered} {data.peopleConsidered === 1 ? 'person' : 'people'} can take {hours(data.durationMinutes)}.
+            <strong>{data.totalMatches}</strong> of {data.peopleConsidered} {data.peopleConsidered === 1 ? 'person' : 'people'} can take {hours(data.durationMinutes)}.
+            {data.totalMatches > data.matches.length && <span> Showing the first {data.matches.length}; choose a team or a skill to narrow it down.</span>}
             {left.length > 0 && <span className="text-[var(--muted)]"> Left out: {left.map(([n, why]) => `${n} ${why}`).join('; ')}.</span>}
             <span className="block text-xs text-[var(--muted)]">Earliest first. Times are in {data.timeZone}.</span>
           </p>

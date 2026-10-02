@@ -251,6 +251,24 @@ public class CapacityEngineTests
         FormulaHolds(c);
     }
 
+    [Fact]
+    public void The_sums_hold_exactly_even_when_work_starts_between_whole_minutes()
+    {
+        // Confirmed 09:00:00 to 10:00:30, tentative 11:00:20 to 11:30:50: nothing here is a whole minute.
+        var day = StandardDay();
+        var at = day.At("09:00", "10:00");
+        var later = day.At("11:00", "11:30");
+        var input = day.Input with
+        {
+            Allocations =
+            [
+                new AllocatedSpan(CapacityDay.Person, new Interval(at.Start, at.End.AddSeconds(30)), true),
+                new AllocatedSpan(CapacityDay.Person, new Interval(later.Start.AddSeconds(20), later.End.AddSeconds(50)), false),
+            ],
+        };
+        FormulaHolds(CapacityCalculator.ForDay(input));
+    }
+
     // ---- finding a slot ------------------------------------------------------------------------
 
     [Fact]
