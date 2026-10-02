@@ -207,6 +207,34 @@ public sealed class RelationalQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task A_schedule_can_be_corrected_on_the_day_it_starts()
+    {
+        // The in-memory provider let this through and a real database answered 500: the corrected
+        // days were added to a tracked schedule's collection, taken for existing rows, and updated
+        // where nothing existed. Same day, same person: the version is replaced, not added to.
+        var role = new Desk.Domain.Identity.Role { MspOrganizationId = Org, Name = "Admin", BuiltInType = Desk.Domain.Enums.RoleType.MspAdministrator };
+        role.Permissions.Add(new Desk.Domain.Identity.RolePermission { PermissionKey = Desk.Domain.Authorization.Permissions.ScheduleView });
+        role.Permissions.Add(new Desk.Domain.Identity.RolePermission { PermissionKey = Desk.Domain.Authorization.Permissions.WorkforceManage });
+        _db.Roles.Add(role);
+        _db.UserRoles.Add(new Desk.Domain.Identity.UserRole { AppUserId = _me, RoleId = role.Id });
+        await _db.SaveChangesAsync();
+        var access = new Desk.Infrastructure.Workforce.WorkforceAccess(_db, _tenant, new Desk.Infrastructure.Authorization.EffectivePermissionService(_db));
+        var schedules = new Desk.Infrastructure.Workforce.WorkScheduleService(_db, access, new Desk.Infrastructure.Admin.AuditWriter(_db, User, _tenant, _clock), _clock);
+        Desk.Application.Workforce.WorkScheduleInput Week(string start, string end, params DayOfWeek[] days) => new(null, "UTC",
+            days.Select(d => new Desk.Application.Workforce.WorkDayInput(d, start, end, [new Desk.Application.Workforce.WorkBreakDto("12:30", "13:30")])).ToList());
+
+        await schedules.SaveAsync(_me, _me, Week("08:30", "17:30", DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday));
+        var corrected = await schedules.SaveAsync(_me, _me, Week("09:00", "18:00", DayOfWeek.Monday, DayOfWeek.Thursday));
+        var again = await schedules.SaveAsync(_me, _me, Week("09:00", "18:00", DayOfWeek.Monday, DayOfWeek.Thursday));
+
+        corrected.Current!.Days.Select(d => (d.Day, d.Start, d.End)).Should().Equal((DayOfWeek.Monday, "09:00", "18:00"), (DayOfWeek.Thursday, "09:00", "18:00"));
+        again.Versions.Should().ContainSingle("a correction replaces the version; it does not add one");
+        (await _db.WorkSchedules.CountAsync()).Should().Be(1);
+        (await _db.WorkScheduleDays.CountAsync()).Should().Be(2, "the days it replaced are gone");
+        (await _db.WorkScheduleBreaks.CountAsync()).Should().Be(2, "and so are their breaks");
+    }
+
+    [Fact]
     public async Task Ticket_history_translates()
     {
         var ticket = await _db.Tickets.SingleAsync(t => t.Id == _ticketId);

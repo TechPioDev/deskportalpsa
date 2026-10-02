@@ -47,7 +47,10 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
             db.WorkScheduleDays.RemoveRange(existing.Days);
             existing.TimeZone = zoneId;
             existing.UpdatedByUserId = callerId;
-            AddDays(existing, days);
+            // Added through the set, not through the tracked schedule's collection: a new entity that
+            // already carries its key and is merely FOUND on a tracked parent is taken for an existing
+            // row, and the save then updates rows that are not there (a 500 on any real database).
+            db.WorkScheduleDays.AddRange(NewDays(existing, days));
         }
         else
         {
@@ -56,7 +59,7 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
                 MspOrganizationId = person.MspOrganizationId ?? Guid.Empty, AppUserId = appUserId,
                 EffectiveFrom = effectiveFrom, TimeZone = zoneId, UpdatedByUserId = callerId,
             };
-            AddDays(schedule, days);
+            foreach (var day in NewDays(schedule, days)) schedule.Days.Add(day);
             db.WorkSchedules.Add(schedule);
         }
         await db.SaveChangesAsync(ct);
@@ -226,15 +229,21 @@ public sealed class WorkScheduleService(DeskDbContext db, WorkforceAccess access
         return from;
     }
 
-    private static void AddDays(WorkSchedule schedule, IReadOnlyList<DayWindow> days)
+    /// <summary>The day and break rows for a schedule, not yet attached to it or to the context.</summary>
+    private static List<WorkScheduleDay> NewDays(WorkSchedule schedule, IReadOnlyList<DayWindow> days)
     {
+        var rows = new List<WorkScheduleDay>(days.Count);
         foreach (var d in days)
         {
-            var day = new WorkScheduleDay { MspOrganizationId = schedule.MspOrganizationId, Day = d.Day, Start = d.Start, End = d.End };
+            var day = new WorkScheduleDay
+            {
+                MspOrganizationId = schedule.MspOrganizationId, WorkScheduleId = schedule.Id, Day = d.Day, Start = d.Start, End = d.End,
+            };
             foreach (var b in d.Breaks.OrderBy(b => WorkingWindow.Offset(d.Start, b.Start)))
                 day.Breaks.Add(new WorkScheduleBreak { MspOrganizationId = schedule.MspOrganizationId, Start = b.Start, End = b.End });
-            schedule.Days.Add(day);
+            rows.Add(day);
         }
+        return rows;
     }
 
     /// <summary>Checks a submitted schedule completely and reports every problem at once.</summary>
