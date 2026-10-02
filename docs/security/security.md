@@ -56,6 +56,16 @@ Staff only. Reading needs `schedule.view` (scoped Own/Team/Department/All) and c
 server, and another organization's people and skills are "not found". See
 `docs/workforce-scheduling/permissions-and-security.md`.
 
+### Workforce capacity and availability: internal only
+
+Capacity, free slots, team capacity, the technician search, conflict checks and capacity exceptions
+are staff-only, behind the same `schedule.view`; recording an exception also needs the scoped
+`availability.manage`. Client ticketing and workforce scheduling are separate security domains: a
+ticket a client can see does not make its planning visible. Tests fail if a client role gains a
+workforce permission, if any controller under `api/workforce` becomes reachable by a client, or if
+a ticket or client-portal response shape gains a workforce field. Conflicts never carry a ticket's
+title, client or number, and name the blocking work only to a caller who may see it.
+
 ## Secret handling
 - PSA credentials are encrypted at rest with **AES-256-GCM** (`EncryptedDbSecretStore`), keyed by a
   master key held only in the host's `.env.prod` (`Secrets:EncryptionKey`), never in the database.

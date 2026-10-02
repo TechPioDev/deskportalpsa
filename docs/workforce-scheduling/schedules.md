@@ -39,8 +39,15 @@ When a working day becomes real instants (`WorkingWindow.Instants`, which capaci
 - **A time the clock skips** (spring forward, e.g. 02:30) moves forward by the gap, to 03:30.
 - **A time the clock passes twice** (fall back, e.g. 01:30): a start takes the **first** occurrence
   and an end the **second**, so the window keeps its true elapsed length.
+- **A break keeps its own length** whatever the clocks do: it starts at its wall-clock time and
+  lasts as long as it is set to. (Until Phase 2 a 01:15-01:45 break on a fall-back night was read
+  as ninety minutes, the first 01:15 to the second 01:45. Fixed.)
 - **Effect on night shifts:** a night spanning spring-forward has an hour less to work, and one
   spanning fall-back has an hour more.
+
+Saving a schedule again for the day it starts on **corrects** that version rather than adding one.
+(On a real database this answered a server error until Phase 2; fixed, with a test on a real SQL
+engine.)
 
 Development note: the solution runs in invariant-globalization mode. On **Windows** that removes
 IANA zone data, so a dev machine accepts well-formed IANA ids without checking them and resolves
