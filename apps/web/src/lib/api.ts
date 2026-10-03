@@ -78,18 +78,21 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
     // endpoints that word their own refusal. Omitting `error` meant those carefully written
     // sentences were built, sent, and then thrown away in favour of "POST /path → 400".
     let detail: string | null = null;
+    let payload: unknown = null;
     try {
       const body = await res.json();
       detail = body?.detail ?? body?.title ?? body?.error ?? null;
+      payload = body?.payload ?? null;
     } catch { /* non-JSON body */ }
-    throw new ApiError(res.status, detail ?? `${init?.method ?? 'GET'} ${path} → ${res.status}`);
+    throw new ApiError(res.status, detail ?? `${init?.method ?? 'GET'} ${path} → ${res.status}`, payload);
   }
   if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T;
   return schema.parse(await res.json());
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** The problem's `payload`, when the API sent one (a 409 from planning carries the conflicts). */
+  constructor(public status: number, message: string, public payload: unknown = null) {
     super(message);
   }
 }
@@ -260,6 +263,44 @@ export const ConflictResultSchema = z.object({
   })),
 });
 export type ConflictResult = z.infer<typeof ConflictResultSchema>;
+
+// ---- Workforce: planned work (internal only) -----------------------------------------------------
+/** status: 1 planned, 5 cancelled. method: 1 self, 2 someone else, 3 the system. */
+export const WorkAllocationSchema = z.object({
+  id: z.string(), appUserId: z.string(), personName: z.string(),
+  ticketId: z.string(), ticketVisible: z.boolean(), reference: z.string().nullable(), title: z.string().nullable(),
+  clientName: z.string().nullable(), ticketStatus: z.string().nullable(), ticketFinished: z.boolean(),
+  startsAt: z.string(), endsAt: z.string(), plannedMinutes: z.number(), timeZone: z.string(),
+  status: z.number(), method: z.number(), scheduledByUserId: z.string(), scheduledByName: z.string().nullable(),
+  isFixed: z.boolean(), note: z.string().nullable(),
+  overrideReason: z.string().nullable(), overriddenConflicts: z.array(z.number()), overriddenByName: z.string().nullable(),
+  cancelledAt: z.string().nullable(), cancelledByName: z.string().nullable(), cancelReason: z.string().nullable(),
+  version: z.number(), canEdit: z.boolean(), canCancel: z.boolean(), canReassign: z.boolean(),
+});
+export type WorkAllocation = z.infer<typeof WorkAllocationSchema>;
+export const PersonPlanSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), timeZone: z.string(), today: z.string(),
+  days: z.array(DayCapacitySchema), allocations: z.array(WorkAllocationSchema),
+  canPlan: z.boolean(), canScheduleOthers: z.boolean(), canOverride: z.boolean(),
+});
+export type PersonPlan = z.infer<typeof PersonPlanSchema>;
+export const UnscheduledWorkSchema = z.object({
+  ticketId: z.string(), reference: z.string(), title: z.string(), clientName: z.string().nullable(), priority: z.string(), status: z.string(),
+  source: z.string(), dueAt: z.string().nullable(), assignedToMe: z.boolean(), teamName: z.string().nullable(), plannedMinutesSoFar: z.number(),
+});
+export type UnscheduledWork = z.infer<typeof UnscheduledWorkSchema>;
+export const PlannablePersonSchema = z.object({ appUserId: z.string(), displayName: z.string(), isSelf: z.boolean(), timeZone: z.string(), isSchedulable: z.boolean() });
+export type PlannablePerson = z.infer<typeof PlannablePersonSchema>;
+/** What a 409 from a planning call carries: the conflicts, and whether an override is possible and allowed. */
+export const ConflictProblemSchema = z.object({
+  canOverride: z.boolean(), overrideAllowedForCaller: z.boolean(), stale: z.boolean().default(false),
+  conflicts: z.array(z.object({ type: z.number(), severity: z.number(), start: z.string(), end: z.string(), message: z.string(), blockingWorkId: z.string().nullable() })),
+});
+export type ConflictProblem = z.infer<typeof ConflictProblemSchema>;
+export type WorkAllocationInput = { ticketId: string; appUserId: string; start: string; end: string; isFixed?: boolean; note?: string | null; overrideReason?: string | null };
+export type WorkAllocationUpdate = { start: string; end: string; version: number; isFixed?: boolean | null; note?: string | null; overrideReason?: string | null };
+export type WorkAllocationReassign = { appUserId: string; version: number; start?: string | null; end?: string | null; overrideReason?: string | null };
+export type InternalWorkInput = { boardId: string; title: string; description?: string | null; clientCompanyId?: string | null; start: string; end: string; priority?: string | null; note?: string | null; overrideReason?: string | null };
 
 export const ViewAsPersonSchema = z.object({
   key: z.string(), kind: z.string(), name: z.string(), email: z.string(),
@@ -554,6 +595,26 @@ export const api = {
     if (q.skills?.length) qs.set('skills', q.skills.join(','));
     return request(`/api/workforce/people/${userId}/conflicts?${qs}`, ConflictResultSchema) as Promise<ConflictResult>;
   },
+  // ── Planned work ── a person's plan, their unscheduled work, and placing or changing work.
+  personPlan: (userId: string, from?: string | null, to?: string | null) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    return request(`/api/workforce/people/${userId}/plan?${qs}`, PersonPlanSchema) as Promise<PersonPlan>;
+  },
+  unscheduledWork: () => request('/api/workforce/plan/unscheduled', z.array(UnscheduledWorkSchema)) as Promise<UnscheduledWork[]>,
+  plannablePeople: () => request('/api/workforce/plan/people', z.array(PlannablePersonSchema)) as Promise<PlannablePerson[]>,
+  ticketPlan: (ticketId: string) => request(`/api/workforce/tickets/${ticketId}/plan`, z.array(WorkAllocationSchema)) as Promise<WorkAllocation[]>,
+  planWork: (body: WorkAllocationInput) =>
+    request('/api/workforce/plan', WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
+  planInternalWork: (body: InternalWorkInput) =>
+    request('/api/workforce/plan/internal-work', WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
+  updatePlannedWork: (id: string, body: WorkAllocationUpdate) =>
+    request(`/api/workforce/plan/${id}`, WorkAllocationSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
+  reassignPlannedWork: (id: string, body: WorkAllocationReassign) =>
+    request(`/api/workforce/plan/${id}/reassign`, WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
+  cancelPlannedWork: (id: string, reason?: string | null) =>
+    request(`/api/workforce/plan/${id}${reason ? `?reason=${encodeURIComponent(reason)}` : ''}`, WorkAllocationSchema, { method: 'DELETE' }) as Promise<WorkAllocation>,
   capacityExceptions: (userId: string, from?: string | null, to?: string | null) => {
     const qs = new URLSearchParams();
     if (from) qs.set('from', from);

@@ -64,6 +64,7 @@ export function WorkforceNav() {
   const seesOthers = (people?.length ?? 0) > 1;
   const items = [
     { href: '/dashboard/workforce', label: 'People' },
+    { href: '/dashboard/workforce/my-plan', label: 'My plan' },
     { href: '/dashboard/workforce/my-capacity', label: 'My capacity' },
     ...(seesOthers ? [
       { href: '/dashboard/workforce/capacity', label: 'Team capacity' },
