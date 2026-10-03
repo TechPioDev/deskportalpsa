@@ -11,6 +11,7 @@ nothing else: no clock-in or clock-out, no keystrokes, screenshots, browsing, mo
 camera, microphone, location or idle telemetry. A working window of 08:30–17:30, 6 h planned and
 5 h 20 m logged are three different facts, and none of them says when anyone arrived or left.
 
+- [Overview](#overview)
 - [The time architecture that already existed](#the-time-architecture-that-already-existed)
 - [The work session](#the-work-session)
 - [One running clock](#one-running-clock)
@@ -31,6 +32,53 @@ camera, microphone, location or idle telemetry. A working window of 08:30–17:3
 - [Performance](#performance)
 - [Deferred](#deferred)
 - [Troubleshooting](#troubleshooting)
+
+## Overview
+
+The employee's day, from the work that reaches them to the comparison with the plan.
+
+```
+   Assigned . Scheduled . Reactive work
+                     |
+                     v
+                  MY DAY
+                     |
+               Start work        one clock at a time; starting a second asks:
+                     |           return, pause the first, or stop the first
+          +----------+----------+
+       Pause (waiting)      Continue
+          +----------+----------+
+                     v
+             Stop the clock  <----------------- or: Add time (minutes typed in, no clock)
+                     |
+                     v
+       Actual worklog = ONE ticket time entry
+       (dated the start; the clock's seconds; the person; the note)
+                     |
+          +----------+----------+
+    board ticket:            PSA ticket: the SAME entry,
+    stays here               pushed to the PSA once (retried if rejected)
+                     |
+                     v
+      Planned against actual, on My day and Team today
+      (the day's entries plus any clock still running; variance, or "not planned")
+                     |
+                     v
+          Finish the ticket   (separate, optional: the existing status change, after the stop)
+```
+
+Three things the picture leaves out, each covered below:
+
+- **Stop and Finish are two different acts.** Stop ends the clock and logs the time; it never changes
+  the ticket. Finish is the existing status change (resolve, with its review and resolution rules),
+  offered after a stop ([Stop: the clock becomes a time entry](#stop-the-clock-becomes-a-time-entry)).
+- **The portal's actual time and the PSA's time entry are one record, not two.** A stopped clock, or
+  minutes typed in, becomes one ticket time entry; it is the portal's actual time, and for a PSA
+  ticket that same entry is pushed to the PSA, kept here as "not in the PSA yet" when the push fails
+  and retried without a duplicate ([The PSA: pushing, duplicates, failures](#the-psa-pushing-duplicates-failures)).
+- **Paused time is not in the picture because it is not in the count.** Only the clock's segments
+  are actual time; a pause, with or without a reason, adds nothing
+  ([Pause, resume, waiting](#pause-resume-waiting)). And nothing here is attendance.
 
 ## The time architecture that already existed
 
