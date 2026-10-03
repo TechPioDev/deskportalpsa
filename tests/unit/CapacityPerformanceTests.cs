@@ -188,7 +188,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     }
 
     /// <summary>A board with one open ticket per person, and allocations on it: <paramref name="perPerson"/> per weekday over four weeks.</summary>
-    private async Task<(Guid BoardId, List<Guid> TicketIds, int Allocations)> SeedAllocationsAsync(DeskDbContext db, Guid adminId, List<Guid> ids, int perPerson)
+    private async Task<(Guid BoardId, List<Guid> TicketIds, int Allocations)> SeedAllocationsAsync(DeskDbContext db, Guid adminId, List<Guid> ids, int perPerson, bool everyDay = false)
     {
         var board = new Board { MspOrganizationId = Org, Name = "Internal", Key = "INT", Kind = BoardKind.Internal, NextNumber = ids.Count + 1 };
         db.Add(board);
@@ -207,7 +207,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
             for (var day = 0; day < 28; day++)
             {
                 var d = Monday.AddDays(day);
-                if (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) continue;
+                if (!everyDay && d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) continue;
                 for (var k = 0; k < perPerson; k++)
                 {
                     // Back to back from 08:30, inside the morning: every one lands on working time.
@@ -304,8 +304,21 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         var place = await MeasureAsync(() => plans.CreateAsync(admin, new WorkAllocationInput(tickets[0], ids[0],
             Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(21).ToDateTime(new TimeOnly(15, 0)), Desk.Domain.Common.TimeZones.Resolve(Zone), true),
             Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(21).ToDateTime(new TimeOnly(16, 0)), Desk.Domain.Common.TimeZones.Resolve(Zone), true))));
+        // The team scheduler: a day and a week for everyone, and the group's unscheduled work.
+        var schedulerDay = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday.AddDays(1), Monday.AddDays(1))));
+        var schedulerWeek = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday, Monday.AddDays(6))));
+        var queue = await MeasureAsync(() => plans.UnscheduledTeamAsync(admin, new TeamPlanQuery()));
 
         output.WriteLine($"{people} people, {total} allocations | one person's week: {plan.Commands} queries, {plan.Ms} ms | team day: {team.Commands} queries, {team.Ms} ms | 14-day search: {search.Commands} queries, {search.Ms} ms | on a ticket: {onTicket.Commands} queries, {onTicket.Ms} ms | place work: {place.Commands} queries, {place.Ms} ms");
+        output.WriteLine($"{people} people, {total} allocations | scheduler day: {schedulerDay.Commands} queries, {schedulerDay.Ms} ms ({schedulerDay.Result.AllocationCount} blocks) | scheduler week: {schedulerWeek.Commands} queries, {schedulerWeek.Ms} ms ({schedulerWeek.Result.AllocationCount} blocks) | team queue: {queue.Commands} queries, {queue.Ms} ms ({queue.Result.Count} items)");
+        schedulerDay.Result.People.Should().HaveCount(people + 1);
+        schedulerDay.Result.AllocationCount.Should().Be(people * perPerson);
+        schedulerWeek.Result.AllocationCount.Should().Be(people * perPerson * 5);
+        // Constant whatever the size: the rows' capacity (as Team capacity costs it) plus one query
+        // for everyone's planned work, shaped in one pass.
+        schedulerDay.Commands.Should().BeLessThanOrEqualTo(42);
+        schedulerWeek.Commands.Should().BeLessThanOrEqualTo(42);
+        queue.Commands.Should().BeLessThanOrEqualTo(8);
 
         plan.Result.Allocations.Should().HaveCount(perPerson * 5);
         plan.Result.Days.Where(d => d.IsWorkingDay).Should().OnlyContain(d => d.ConfirmedMinutes == perPerson * 60);
@@ -320,6 +333,28 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         onTicket.Commands.Should().BeLessThanOrEqualTo(21);
         place.Commands.Should().BeLessThanOrEqualTo(50);
         foreach (var ms in new[] { plan.Ms, team.Ms, search.Ms, onTicket.Ms, place.Ms }) ms.Should().BeLessThan(15_000);
+    }
+
+    [Fact]
+    public async Task The_team_scheduler_at_a_hundred_thousand_allocations_on_a_real_database_reads_only_its_window()
+    {
+        // 500 people with seven pieces of work every day for four weeks: ~98,000 rows. A day and a
+        // week of the scheduler read only their own window, with the same handful of queries.
+        if (Postgres is null) return;
+        var (db, admin, _, _, ids) = await SeedAsync(500);
+        var (_, _, total) = await SeedAllocationsAsync(db, admin, ids, 7, everyDay: true);
+        var (plans, _) = RealStack(db, admin);
+        var day = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday.AddDays(8), Monday.AddDays(8))));
+        var week = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday.AddDays(7), Monday.AddDays(13))));
+        var queue = await MeasureAsync(() => plans.UnscheduledTeamAsync(admin, new TeamPlanQuery()));
+        output.WriteLine($"PostgreSQL | 500 people, {total} allocations | scheduler day: {day.Commands} queries, {day.Ms} ms ({day.Result.AllocationCount} blocks) | week: {week.Commands} queries, {week.Ms} ms ({week.Result.AllocationCount} blocks) | queue: {queue.Commands} queries, {queue.Ms} ms");
+        total.Should().BeGreaterThan(95_000);
+        day.Result.AllocationCount.Should().Be(500 * 7);
+        week.Result.AllocationCount.Should().Be(500 * 7 * 7);
+        day.Commands.Should().BeLessThanOrEqualTo(42);
+        week.Commands.Should().BeLessThanOrEqualTo(42);
+        day.Ms.Should().BeLessThan(10_000);
+        week.Ms.Should().BeLessThan(20_000);
     }
 
     [Fact]

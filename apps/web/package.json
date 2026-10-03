@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:unit": "playwright test -c playwright.unit.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "5.64.2",
