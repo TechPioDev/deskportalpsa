@@ -6,8 +6,12 @@ using Desk.Domain.Enums;
 using Desk.Domain.Identity;
 using Desk.Domain.Organization;
 using Desk.Domain.Tenancy;
+using Desk.Domain.Tickets;
 using Desk.Domain.Workforce;
+using Desk.Infrastructure.Admin;
 using Desk.Infrastructure.Authorization;
+using Desk.Infrastructure.Boards;
+using Desk.Infrastructure.Tickets;
 using Desk.Infrastructure.Persistence;
 using Desk.Infrastructure.Tenancy;
 using Desk.Infrastructure.Workforce;
@@ -116,10 +120,15 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         else await db.Database.MigrateAsync();
 
         var role = new Role { MspOrganizationId = Org, Name = "Administrator", BuiltInType = RoleType.MspAdministrator };
-        foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage })
+        foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage, Permissions.ScheduleManage, Permissions.ScheduleOverride, Permissions.TicketsViewAll })
             role.Permissions.Add(new RolePermission { PermissionKey = key, Scope = PermissionScope.All });
         var admin = new AppUser { MspOrganizationId = Org, DisplayName = "Admin", Email = "admin@techpio.test", IsActive = true };
         admin.Roles.Add(new UserRole { RoleId = role.Id });
+        // The administrator works too, so their own work can be planned in the tests below.
+        var adminSchedule = new WorkSchedule { MspOrganizationId = Org, AppUserId = admin.Id, EffectiveFrom = new DateOnly(2025, 6, 1), TimeZone = Zone };
+        foreach (var day in new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday })
+            adminSchedule.Days.Add(new WorkScheduleDay { MspOrganizationId = Org, Day = day, Start = new TimeOnly(8, 30), End = new TimeOnly(17, 30) });
+        db.Add(adminSchedule);
         var dept = new Department { MspOrganizationId = Org, Name = "Operations" };
         var teams = Enumerable.Range(0, 5).Select(i => new Team { MspOrganizationId = Org, Department = dept, Name = $"Team {i}" }).ToList();
         var skills = Enumerable.Range(0, 4).Select(i => new Skill { MspOrganizationId = Org, Name = $"Skill {i}", NormalizedName = $"SKILL {i}" }).ToList();
@@ -166,6 +175,55 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     private CapacityService Service(DeskDbContext db)
         => new(db, new WorkforceAccess(db, _tenant, new EffectivePermissionService(db)),
             new BusyDesk(Desk.Domain.Common.TimeZones.Resolve(Zone)), _clock);
+
+    /// <summary>The real stack: allocations from the table, ticket visibility through the real scope query.</summary>
+    private (WorkPlanService Plans, CapacityService Capacity) RealStack(DeskDbContext db, Guid callerId)
+    {
+        var permissions = new EffectivePermissionService(db);
+        var access = new WorkforceAccess(db, _tenant, permissions);
+        var scope = new TicketScopeQuery(db, permissions);
+        var audit = new AuditWriter(db, new TestCurrentUser(Org, userId: callerId), _tenant, _clock);
+        var capacity = new CapacityService(db, access, new WorkAllocationReader(db, scope, _clock), _clock);
+        return (new WorkPlanService(db, access, capacity, scope, new InternalTicketService(db, _tenant, _clock, new RecordingActivity()), new PlanningGate(db), audit, _clock), capacity);
+    }
+
+    /// <summary>A board with one open ticket per person, and allocations on it: <paramref name="perPerson"/> per weekday over four weeks.</summary>
+    private async Task<(Guid BoardId, List<Guid> TicketIds, int Allocations)> SeedAllocationsAsync(DeskDbContext db, Guid adminId, List<Guid> ids, int perPerson)
+    {
+        var board = new Board { MspOrganizationId = Org, Name = "Internal", Key = "INT", Kind = BoardKind.Internal, NextNumber = ids.Count + 1 };
+        db.Add(board);
+        var tickets = new List<Guid>();
+        var n = 0;
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        foreach (var id in ids)
+        {
+            var ticket = new Ticket
+            {
+                MspOrganizationId = Org, Origin = TicketOrigin.Internal, BoardId = board.Id, Number = $"INT-{++n:000000}", RequesterName = "Admin", RequesterEmail = "admin@techpio.test",
+                Title = $"Work for {n}", PortalStatus = "IN_PROGRESS", AssignedAppUserId = id, SyncStatus = TicketSyncStatus.Synced,
+            };
+            db.Add(ticket);
+            tickets.Add(ticket.Id);
+            for (var day = 0; day < 28; day++)
+            {
+                var d = Monday.AddDays(day);
+                if (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) continue;
+                for (var k = 0; k < perPerson; k++)
+                {
+                    // Back to back from 08:30, inside the morning: every one lands on working time.
+                    var start = Desk.Domain.Common.TimeZones.WallToUtc(d.ToDateTime(new TimeOnly(8 + k, 30)), zone, true);
+                    db.Add(new WorkAllocation
+                    {
+                        MspOrganizationId = Org, TicketId = ticket.Id, AppUserId = id, StartsAt = start, EndsAt = start.AddMinutes(60), PlannedMinutes = 60,
+                        Method = SchedulingMethod.AuthorizedUser, ScheduledByUserId = adminId,
+                    });
+                }
+            }
+        }
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        return (board.Id, tickets, await db.WorkAllocations.CountAsync());
+    }
 
     private async Task<(int Commands, long Ms, T Result)> MeasureAsync<T>(Func<Task<T>> work)
     {
@@ -218,14 +276,86 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         team.Result.People.Should().HaveCount(people + 1);
         team.Result.People.Count(p => p.Day.UsableMinutes == 480).Should().Be(people - (people + 4) / 5);
         team.Result.People.Count(p => p.Day.UnavailableMinutes == 60).Should().Be((people + 4) / 5, "09:30-10:30 UTC is working time wherever this host puts the zone");
-        oneDay.Result.Matches.Should().HaveCount(Math.Min(people, 200), "everyone is free 15:00-17:30, and the answer is capped at 200");
-        oneDay.Result.TotalMatches.Should().Be(people, "and it says how many fit in all, so a list cut short is never mistaken for everyone");
+        oneDay.Result.Matches.Should().HaveCount(Math.Min(people + 1, 200), "everyone (the administrator too) is free 15:00-17:30, and the answer is capped at 200");
+        oneDay.Result.TotalMatches.Should().Be(people + 1, "and it says how many fit in all, so a list cut short is never mistaken for everyone");
         oneDay.Result.PeopleConsidered.Should().Be(people + 1);
         month.Result.Days.Should().HaveCount(30);
 
         foreach (var ms in new[] { team.Ms, filtered.Ms, oneDay.Ms, sevenDays.Ms, fourteenDays.Ms, month.Ms })
             ms.Should().BeLessThan(15_000);
         everyone.Ms.Should().BeLessThan(30_000);
+    }
+
+    [Theory]
+    [InlineData(50, 1)]
+    [InlineData(100, 2)]
+    [InlineData(500, 3)]
+    public async Task Planned_work_costs_the_same_number_of_queries_whatever_the_number_of_allocations(int people, int perPerson)
+    {
+        var (db, admin, _, _, ids) = await SeedAsync(people);
+        var (_, tickets, total) = await SeedAllocationsAsync(db, admin, ids, perPerson);
+        var (plans, capacity) = RealStack(db, admin);
+
+        // Person 1 has no time away (every fifth person does), so every working day holds exactly the seeded work.
+        var plan = await MeasureAsync(() => plans.PlanAsync(admin, ids[1], Monday, Monday.AddDays(6)));
+        var team = await MeasureAsync(() => capacity.ForTeamAsync(admin, new TeamCapacityQuery(Monday.AddDays(1))));
+        var search = await MeasureAsync(() => capacity.FindAsync(admin, new AvailabilitySearch(Monday, Monday.AddDays(13), 90)));
+        var onTicket = await MeasureAsync(() => plans.ForTicketAsync(admin, tickets[0]));
+        var place = await MeasureAsync(() => plans.CreateAsync(admin, new WorkAllocationInput(tickets[0], ids[0],
+            Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(21).ToDateTime(new TimeOnly(15, 0)), Desk.Domain.Common.TimeZones.Resolve(Zone), true),
+            Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(21).ToDateTime(new TimeOnly(16, 0)), Desk.Domain.Common.TimeZones.Resolve(Zone), true))));
+
+        output.WriteLine($"{people} people, {total} allocations | one person's week: {plan.Commands} queries, {plan.Ms} ms | team day: {team.Commands} queries, {team.Ms} ms | 14-day search: {search.Commands} queries, {search.Ms} ms | on a ticket: {onTicket.Commands} queries, {onTicket.Ms} ms | place work: {place.Commands} queries, {place.Ms} ms");
+
+        plan.Result.Allocations.Should().HaveCount(perPerson * 5);
+        plan.Result.Days.Where(d => d.IsWorkingDay).Should().OnlyContain(d => d.ConfirmedMinutes == perPerson * 60);
+        team.Result.People.Count(p => p.Day.ConfirmedMinutes == perPerson * 60).Should().Be(people, "every technician; the administrator has nothing planned");
+        place.Result.PlannedMinutes.Should().Be(60);
+        // The same number whatever the size - no query per person, per day or per allocation. Higher
+        // than the Phase 2 figures because every read now also resolves ticket visibility and the
+        // caller's planning rights (measured: 40, 17, 14, 21, 50).
+        plan.Commands.Should().BeLessThanOrEqualTo(40);
+        team.Commands.Should().BeLessThanOrEqualTo(17);
+        search.Commands.Should().BeLessThanOrEqualTo(14);
+        onTicket.Commands.Should().BeLessThanOrEqualTo(21);
+        place.Commands.Should().BeLessThanOrEqualTo(50);
+        foreach (var ms in new[] { plan.Ms, team.Ms, search.Ms, onTicket.Ms, place.Ms }) ms.Should().BeLessThan(15_000);
+    }
+
+    [Fact]
+    public async Task Two_requests_for_the_same_hour_on_a_real_database_end_with_one_booking()
+    {
+        // Two contexts on two connections, as two requests are; the gate is the row lock on the
+        // person, which holds across API containers. Exactly one wins and the other is told the time
+        // has gone. Needs PostgreSQL: the SQLite test database lives on one shared connection, and
+        // the in-process gate it would use instead is covered by WorkPlanTests.
+        if (Postgres is null) return;
+        var (db, admin, _, _, ids) = await SeedAsync(3);
+        var (_, tickets, _) = await SeedAllocationsAsync(db, admin, ids, 0);
+        await using var dbA = NewContext();
+        await using var dbB = NewContext();
+        var a = RealStack(dbA, admin).Plans;
+        var b = RealStack(dbB, admin).Plans;
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        var start = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(7).ToDateTime(new TimeOnly(15, 0)), zone, true);
+        var end = start.AddHours(1);
+
+        // Both plan work the person already holds (the seeded technicians have no ticket scope of
+        // their own, so a ticket held by someone else would be refused for a different reason).
+        var results = await Task.WhenAll(
+            Attempt(() => a.CreateAsync(admin, new WorkAllocationInput(tickets[0], ids[0], start, end))),
+            Attempt(() => b.CreateAsync(admin, new WorkAllocationInput(tickets[0], ids[0], start, end))));
+
+        results.Count(r => r is null).Should().Be(1, "one of the two succeeds");
+        // The administrator may override, so the loser is told the time clashes and asked for a reason.
+        results.Single(r => r is not null).Should().BeOfType<Desk.Application.Common.ConflictException>().Which.Message.Should().Contain("Already has confirmed work during this period");
+        (await db.WorkAllocations.CountAsync(x => x.AppUserId == ids[0] && x.StartsAt == start)).Should().Be(1);
+
+        static async Task<Exception?> Attempt(Func<Task<WorkAllocationDto>> call)
+        {
+            try { await call(); return null; }
+            catch (Exception ex) { return ex; }
+        }
     }
 
     [Fact]
@@ -262,6 +392,29 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
 
         await exceptions.RemoveAsync(admin, person, timed.Id);
         (await db.CapacityExceptions.CountAsync(e => e.AppUserId == person)).Should().Be(2);
+
+        // Planned work, through every path, on the same engine.
+        var (_, tickets, _) = await SeedAllocationsAsync(db, admin, ids, 0);
+        var (plans, realCapacity) = RealStack(db, admin);
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        DateTimeOffset AtWall(int day, int hour) => Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(day).ToDateTime(new TimeOnly(hour, 0)), zone, true);
+        var placed = await plans.CreateAsync(admin, new WorkAllocationInput(tickets[2], ids[2], AtWall(7, 9), AtWall(7, 10), IsFixed: true, Note: "Change window"));
+        var moved = await plans.UpdateAsync(admin, placed.Id, new WorkAllocationUpdate(AtWall(7, 10), AtWall(7, 11), placed.Version, IsFixed: false));
+        moved.Version.Should().Be(placed.Version + 1);
+        var given = await plans.ReassignAsync(admin, placed.Id, new WorkAllocationReassign(ids[3], moved.Version, AtWall(8, 9), AtWall(8, 10)));
+        given.AppUserId.Should().Be(ids[3]);
+        (await plans.PlanAsync(admin, ids[3], Monday.AddDays(8), Monday.AddDays(8))).Allocations.Should().ContainSingle();
+        (await realCapacity.ForPersonAsync(admin, ids[3], Monday.AddDays(8), Monday.AddDays(8))).Days.Single().ConfirmedMinutes.Should().Be(60);
+        (await plans.ForTicketAsync(admin, tickets[2])).Should().ContainSingle();
+        (await plans.UnscheduledAsync(admin)).Should().BeEmpty("the administrator holds no ticket");
+        var internalWork = await plans.CreateInternalWorkAsync(admin, new InternalWorkInput((await db.Boards.SingleAsync()).Id, "Documentation", null, null, AtWall(9, 9), AtWall(9, 10)));
+        internalWork.Reference.Should().StartWith("INT-");
+        (await plans.CancelAsync(admin, given.Id, "Done elsewhere")).Status.Should().Be(WorkAllocationStatus.Cancelled);
+        (await plans.PlannablePeopleAsync(admin)).Should().HaveCount(7);
+        // What finished leaves future plans: on a real database too.
+        (await db.Tickets.SingleAsync(t => t.Id == internalWork.TicketId)).PortalStatus = "CLOSED";
+        await db.SaveChangesAsync();
+        (await new WorkAllocationReleaser(db, new AuditWriter(db, new TestCurrentUser(Org, userId: admin), _tenant, _clock), _clock).ReleaseFinishedAsync()).Should().Be(1);
     }
 
     [Fact]

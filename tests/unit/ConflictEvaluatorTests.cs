@@ -63,13 +63,17 @@ public class ConflictEvaluatorTests
     }
 
     [Fact]
-    public void Work_across_a_break_is_a_warning()
+    public void Work_across_a_break_needs_an_override()
     {
+        // Placing work over a break takes time the break does not offer, so it is a decision with a
+        // reason - like overtime - not a note in passing.
         var day = StandardDay();
         var result = Evaluate(day, "12:00", "14:00");
-        result.CanSchedule.Should().BeTrue();
+        result.CanSchedule.Should().BeFalse();
+        result.CanOverride.Should().BeTrue();
         var conflict = result.Conflicts.Should().ContainSingle().Subject;
-        (conflict.Type, conflict.Severity, conflict.When).Should().Be((ConflictType.BreakConflict, ConflictSeverity.Warning, day.At("12:30", "13:30")));
+        (conflict.Type, conflict.Severity, conflict.When).Should().Be((ConflictType.BreakConflict, ConflictSeverity.Overridable, day.At("12:30", "13:30")));
+        Evaluate(day, "12:00", "14:00", tentative: true).CanSchedule.Should().BeTrue("pencilled-in work holds no capacity");
     }
 
     [Fact]
