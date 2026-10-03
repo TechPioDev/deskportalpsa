@@ -308,6 +308,11 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         var schedulerDay = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday.AddDays(1), Monday.AddDays(1))));
         var schedulerWeek = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday, Monday.AddDays(6))));
         var queue = await MeasureAsync(() => plans.UnscheduledTeamAsync(admin, new TeamPlanQuery()));
+        // Advanced planning: the planning queue over a fortnight, and a split preview of ten hours across a week for one person.
+        var planningQueue = await MeasureAsync(() => plans.QueueAsync(admin, new TeamPlanQuery(), 14));
+        var preview = await MeasureAsync(() => plans.PreviewAsync(admin, new PlanPreviewInput(tickets[1], ids[2],
+            Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(21).ToDateTime(new TimeOnly(8, 0)), Desk.Domain.Common.TimeZones.Resolve(Zone), true),
+            Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(27).ToDateTime(new TimeOnly(18, 0)), Desk.Domain.Common.TimeZones.Resolve(Zone), true), 600, Splittable: true)));
 
         output.WriteLine($"{people} people, {total} allocations | one person's week: {plan.Commands} queries, {plan.Ms} ms | team day: {team.Commands} queries, {team.Ms} ms | 14-day search: {search.Commands} queries, {search.Ms} ms | on a ticket: {onTicket.Commands} queries, {onTicket.Ms} ms | place work: {place.Commands} queries, {place.Ms} ms");
         output.WriteLine($"{people} people, {total} allocations | scheduler day: {schedulerDay.Commands} queries, {schedulerDay.Ms} ms ({schedulerDay.Result.AllocationCount} blocks) | scheduler week: {schedulerWeek.Commands} queries, {schedulerWeek.Ms} ms ({schedulerWeek.Result.AllocationCount} blocks) | team queue: {queue.Commands} queries, {queue.Ms} ms ({queue.Result.Count} items)");
@@ -319,6 +324,11 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         schedulerDay.Commands.Should().BeLessThanOrEqualTo(42);
         schedulerWeek.Commands.Should().BeLessThanOrEqualTo(42);
         queue.Commands.Should().BeLessThanOrEqualTo(8);
+        output.WriteLine($"{people} people, {total} allocations | planning queue: {planningQueue.Commands} queries, {planningQueue.Ms} ms ({planningQueue.Result.Items.Count} items, {planningQueue.Result.PeopleCounted} people) | split preview: {preview.Commands} queries, {preview.Ms} ms ({preview.Result.Pieces.Count} pieces)");
+        // The queue is the unscheduled list plus the planning rows, the effort sums and the group's fortnight of capacity; a preview is one person's capacity over the window.
+        planningQueue.Commands.Should().BeLessThanOrEqualTo(26);
+        preview.Commands.Should().BeLessThanOrEqualTo(29);
+        preview.Result.AllocatedMinutes.Should().Be(600);
 
         plan.Result.Allocations.Should().HaveCount(perPerson * 5);
         plan.Result.Days.Where(d => d.IsWorkingDay).Should().OnlyContain(d => d.ConfirmedMinutes == perPerson * 60);
@@ -331,7 +341,8 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         team.Commands.Should().BeLessThanOrEqualTo(17);
         search.Commands.Should().BeLessThanOrEqualTo(14);
         onTicket.Commands.Should().BeLessThanOrEqualTo(21);
-        place.Commands.Should().BeLessThanOrEqualTo(50);
+        // Phase 5 added one read per placement: the ticket's planning row (its skill and due date feed the check).
+        place.Commands.Should().BeLessThanOrEqualTo(51);
         foreach (var ms in new[] { plan.Ms, team.Ms, search.Ms, onTicket.Ms, place.Ms }) ms.Should().BeLessThan(15_000);
     }
 
@@ -446,10 +457,47 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         internalWork.Reference.Should().StartWith("INT-");
         (await plans.CancelAsync(admin, given.Id, "Done elsewhere")).Status.Should().Be(WorkAllocationStatus.Cancelled);
         (await plans.PlannablePeopleAsync(admin)).Should().HaveCount(7);
+
+        // Advanced planning on the real engine: tentative, confirm, pencil in, the requirement, the queue,
+        // and a preview written in one transaction or not at all.
+        var pencilled = await plans.CreateAsync(admin, new WorkAllocationInput(tickets[4], ids[4], AtWall(10, 9), AtWall(10, 10), Tentative: true));
+        pencilled.Status.Should().Be(WorkAllocationStatus.Tentative);
+        (await realCapacity.ForPersonAsync(admin, ids[4], Monday.AddDays(10), Monday.AddDays(10))).Days.Single().Should().Match<DayCapacityDto>(d => d.ConfirmedMinutes == 0 && d.TentativeMinutes == 60);
+        var confirmed = await plans.ConfirmAsync(admin, pencilled.Id, new WorkAllocationStateInput(pencilled.Version));
+        confirmed.Status.Should().Be(WorkAllocationStatus.Planned);
+        (await realCapacity.ForPersonAsync(admin, ids[4], Monday.AddDays(10), Monday.AddDays(10))).Days.Single().ConfirmedMinutes.Should().Be(60);
+        var backToPencil = await plans.MakeTentativeAsync(admin, pencilled.Id, new WorkAllocationStateInput(confirmed.Version));
+        backToPencil.Status.Should().Be(WorkAllocationStatus.Tentative);
+        (await db.Tickets.SingleAsync(t => t.Id == tickets[4])).PortalStatus = "CLOSED";
+        await db.SaveChangesAsync();
+        var finished = () => plans.ConfirmAsync(admin, pencilled.Id, new WorkAllocationStateInput(backToPencil.Version));
+        (await finished.Should().ThrowAsync<Desk.Application.Common.ValidationFailedException>()).Which.Message.Should().Be("This ticket is finished; there is nothing left to plan.");
+
+        // Their own ticket already has an hour of confirmed work on the Friday afternoon; the requirement's sums are derived from it.
+        await plans.CreateAsync(admin, new WorkAllocationInput(tickets[5], ids[5], AtWall(11, 14), AtWall(11, 15)));
+        var need = await plans.SetRequirementAsync(admin, tickets[5], new PlanningRequirementInput(180, AtWall(11, 8), AtWall(12, 18), true, skillId, "Real database"));
+        need.RequiredSkillName.Should().NotBeNull();
+        (await plans.RequirementAsync(admin, tickets[5])).Should().Match<PlanningRequirementDto>(r => r.RequiredMinutes == 180 && r.ConfirmedMinutes == 60 && r.RemainingMinutes == 120 && r.Splittable);
+        (await plans.QueueAsync(admin, new TeamPlanQuery(), 14)).PeopleCounted.Should().BeGreaterThan(0);
+
+        // The preview sees that afternoon work, so its token stays valid while nothing else changes.
+        var request = new PlanPreviewInput(tickets[5], ids[5], AtWall(11, 8), AtWall(11, 18), 120, Splittable: true);
+        var preview = await plans.PreviewAsync(admin, request);
+        preview.Pieces.Should().ContainSingle().Which.Minutes.Should().Be(120);
+        // Pieces crafted by hand: the first is fine, the second lands on that confirmed work. Refused, and nothing of the plan is in the database.
+        var crafted = new List<PlanPieceDto> { new(AtWall(11, 9), AtWall(11, 10), 60), new(AtWall(11, 14), AtWall(11, 15), 60) };
+        var refused = () => plans.ConfirmPreviewAsync(admin, new PlanConfirmInput(request, crafted, preview.PlanToken));
+        await refused.Should().ThrowAsync<Desk.Application.Common.ConflictException>();
+        (await db.WorkAllocations.CountAsync(a => a.TicketId == tickets[5])).Should().Be(1, "a refused plan writes no piece at all; only the afternoon hour is there");
+        var done = await plans.ConfirmPreviewAsync(admin, new PlanConfirmInput(request, preview.Pieces, preview.PlanToken, Note: "On the real engine"));
+        done.Allocations.Should().ContainSingle().Which.Note.Should().Be("On the real engine");
+        (await db.WorkAllocations.CountAsync(a => a.TicketId == tickets[5])).Should().Be(2);
+        (await plans.RequirementAsync(admin, tickets[5])).RemainingMinutes.Should().Be(0);
         // What finished leaves future plans: on a real database too.
         (await db.Tickets.SingleAsync(t => t.Id == internalWork.TicketId)).PortalStatus = "CLOSED";
         await db.SaveChangesAsync();
-        (await new WorkAllocationReleaser(db, new AuditWriter(db, new TestCurrentUser(Org, userId: admin), _tenant, _clock), _clock).ReleaseFinishedAsync()).Should().Be(1);
+        (await new WorkAllocationReleaser(db, new AuditWriter(db, new TestCurrentUser(Org, userId: admin), _tenant, _clock), _clock).ReleaseFinishedAsync())
+            .Should().Be(2, "the internal work's ticket and the ticket closed with pencilled-in work on it: tentative work is released like committed work");
     }
 
     [Fact]

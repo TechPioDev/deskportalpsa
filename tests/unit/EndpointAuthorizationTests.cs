@@ -144,6 +144,13 @@ public class EndpointAuthorizationTests
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Update), [Permissions.ScheduleManage] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Reassign), [Permissions.ScheduleManage] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Cancel), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Confirm), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.MakeTentative), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Requirement), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.SetRequirement), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Queue), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Preview), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.ConfirmPreview), [Permissions.ScheduleManage] },
     };
 
     [Fact]
@@ -188,6 +195,9 @@ public class EndpointAuthorizationTests
         foreach (var name in new[] { nameof(WorkforceCapacityController.PersonCapacity), nameof(WorkforceCapacityController.TeamCapacity), nameof(WorkforceCapacityController.Groups),
                      nameof(WorkforceCapacityController.FindAvailable), nameof(WorkforceCapacityController.EvaluateConflicts), nameof(WorkforceCapacityController.Exceptions) })
             typeof(WorkforceCapacityController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
+        // Phase 5's reads too: the requirement, the queue and a preview (which writes nothing) are GETs.
+        foreach (var name in new[] { nameof(WorkforcePlanController.Requirement), nameof(WorkforcePlanController.Queue), nameof(WorkforcePlanController.Preview) })
+            typeof(WorkforcePlanController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
     }
 
     [Fact]
@@ -196,7 +206,7 @@ public class EndpointAuthorizationTests
         // A ticket a client can see does not make its planning visible. The shapes the ticket API and
         // the client portal return must not grow a field about schedules, capacity or who is planned
         // when - whatever a later phase adds to the internal side.
-        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override"];
+        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override", "RequiredMinutes", "WaitingReason", "PlanToken", "Shortage"];
         var clientFacing = typeof(Desk.Application.Tickets.TicketDetailDto).Assembly.GetTypes().Where(t =>
             t.Namespace is "Desk.Application.Tickets" or "Desk.Application.ControlPanel" or "Desk.Application.Knowledge" or "Desk.Application.Attachments"
             && !t.IsInterface && !t.IsEnum && !t.Name.StartsWith('<')).ToList();

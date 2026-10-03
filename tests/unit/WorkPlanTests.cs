@@ -533,6 +533,276 @@ public class WorkPlanTests
         (await past.Should().ThrowAsync<ConflictException>()).Which.Message.Should().StartWith("This time is no longer available");
     }
 
+    // ---- Phase 5: tentative work, requirements, the queue, previews ------------------------------
+
+    [Fact]
+    public async Task Tentative_work_takes_tentative_capacity_only_and_is_confirmed_after_a_fresh_check()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        var jason = w.As(w.Jason);
+        var pencilled = await lead.Plans.CreateAsync(w.Lead.Id, Place(w.OpenTicket, w.Jason, Monday, "09:00", "11:00") with { Tentative = true });
+        pencilled.Status.Should().Be(WorkAllocationStatus.Tentative);
+        pencilled.CanConfirm.Should().BeTrue("the lead schedules Jason");
+
+        // Confirmed capacity is untouched; projected capacity carries it.
+        var day = await DayAsync(w, w.Lead, w.Jason, Monday);
+        (day.ConfirmedMinutes, day.TentativeMinutes, day.RemainingConfirmedMinutes, day.ProjectedRemainingMinutes).Should().Be((0, 120, 480, 360));
+        day.FreeSlots.Should().HaveCount(2, "the morning is still free for confirmed work");
+        day.ProjectedFreeSlots.Select(s => s.Start).Should().Contain(At(Monday, "08:30")).And.Contain(At(Monday, "11:00"));
+        // His own plan shows it as pencilled in, and he may confirm it himself (flexible, scheduled for him).
+        var mine = await jason.Plans.PlanAsync(w.Jason.Id, w.Jason.Id, Monday, Monday);
+        mine.Allocations.Should().ContainSingle().Which.Should().Match<WorkAllocationDto>(a => a.Status == WorkAllocationStatus.Tentative && a.CanConfirm);
+        // Pencilled-in work does not keep the ticket in the queue.
+        (await lead.Plans.UnscheduledTeamAsync(w.Lead.Id, new TeamPlanQuery())).Should().NotContain(t => t.TicketId == w.OpenTicket.Id);
+
+        // Jason commits his own work over it: a warning, not a refusal, since pencilled work holds no capacity.
+        await jason.Plans.CreateAsync(w.Jason.Id, Place(w.JasonsTicket, w.Jason, Monday, "09:30", "10:30"));
+        (await w.Db.AuditLog.Where(a => a.Action == "workforce.allocation.created").OrderBy(a => a.CreatedAt).LastAsync()).DetailJson.Should().Contain("tentative work");
+
+        // Now the pencilled work no longer fits as committed work: confirming re-checks everything.
+        var refused = () => lead.Plans.ConfirmAsync(w.Lead.Id, pencilled.Id, new WorkAllocationStateInput(pencilled.Version));
+        (await refused.Should().ThrowAsync<ConflictException>()).Which.Message.Should().StartWith("This time is no longer available");
+        (await w.Db.WorkAllocations.AsNoTracking().SingleAsync(a => a.Id == pencilled.Id)).Status.Should().Be(WorkAllocationStatus.Tentative, "nothing was confirmed blindly");
+        var confirmed = await w.As(w.Admin).Plans.ConfirmAsync(w.Admin.Id, pencilled.Id, new WorkAllocationStateInput(pencilled.Version, "Both on the same server"));
+        (confirmed.Status, confirmed.OverrideReason, confirmed.Version).Should().Be((WorkAllocationStatus.Planned, "Both on the same server", pencilled.Version + 1));
+        (await DayAsync(w, w.Lead, w.Jason, Monday)).ConfirmedMinutes.Should().Be(120, "the two overlap for an hour, and a double-booked hour is taken once");
+        (await w.Db.AuditLog.CountAsync(a => a.Action == "workforce.allocation.confirmed")).Should().Be(1);
+        var again = () => lead.Plans.ConfirmAsync(w.Lead.Id, pencilled.Id, new WorkAllocationStateInput(confirmed.Version));
+        (await again.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Be("This work is not pencilled in.");
+    }
+
+    [Fact]
+    public async Task Committed_work_is_pencilled_back_in_only_by_a_scheduler_and_finished_tentative_work_is_released_too()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        var planned = await lead.Plans.CreateAsync(w.Lead.Id, Place(w.OpenTicket, w.Jason, Monday, "09:00", "10:00"));
+        var own = () => w.As(w.Jason).Plans.MakeTentativeAsync(w.Jason.Id, planned.Id, new WorkAllocationStateInput(planned.Version));
+        (await own.Should().ThrowAsync<ForbiddenException>()).Which.Message.Should().Be("Only someone who schedules others can pencil committed work back in.");
+        var back = await lead.Plans.MakeTentativeAsync(w.Lead.Id, planned.Id, new WorkAllocationStateInput(planned.Version));
+        back.Status.Should().Be(WorkAllocationStatus.Tentative);
+        (await DayAsync(w, w.Lead, w.Jason, Monday)).Should().Match<DayCapacityDto>(d => d.ConfirmedMinutes == 0 && d.TentativeMinutes == 60);
+        (await w.Db.AuditLog.CountAsync(a => a.Action == "workforce.allocation.made_tentative")).Should().Be(1);
+        // A finished ticket releases its future pencilled time as it releases committed time.
+        w.Db.Tickets.Single(t => t.Id == w.OpenTicket.Id).PortalStatus = "CLOSED";
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        (await lead.Releaser.ReleaseFinishedAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_requirement_says_effort_window_splittable_and_skill_and_what_is_allocated_is_derived()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        var skill = new Skill { MspOrganizationId = OrgA, Name = "SonicWall", NormalizedName = "SONICWALL", IsActive = true };
+        w.Db.Skills.Add(skill);
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+
+        var set = await lead.Plans.SetRequirementAsync(w.Lead.Id, w.JasonsTicket.Id, new PlanningRequirementInput(120, At(Monday, "08:30"), At(Tuesday, "17:30"), false, skill.Id, "Change window first"));
+        (set.RequiredMinutes, set.Splittable, set.RequiredSkillName, set.RemainingMinutes, set.UpdatedByName).Should().Be((120, false, "SonicWall", 120, "Lena Lead"));
+        // Allocated effort is derived from the plans: confirmed counts against the requirement, pencilled-in does not.
+        await lead.Plans.CreateAsync(w.Lead.Id, Place(w.JasonsTicket, w.Jason, Monday, "09:00", "10:00"));
+        await lead.Plans.CreateAsync(w.Lead.Id, Place(w.JasonsTicket, w.Abbie, Monday, "14:00", "14:30") with { Tentative = true });
+        var got = await lead.Plans.RequirementAsync(w.Lead.Id, w.JasonsTicket.Id);
+        (got.ConfirmedMinutes, got.TentativeMinutes, got.RemainingMinutes).Should().Be((60, 30, 60));
+        // The skill the work asks for is a warning on a person without it, kept with the placement.
+        (await w.Db.AuditLog.Where(a => a.Action == "workforce.allocation.created").OrderBy(a => a.CreatedAt).FirstAsync()).DetailJson.Should().Contain("SonicWall");
+        (await w.Db.AuditLog.CountAsync(a => a.Action == "workforce.planning.requirement_set")).Should().Be(1);
+
+        foreach (var (input, message) in new (PlanningRequirementInput, string)[]
+        {
+            (new PlanningRequirementInput(3, null, null), "Effort is between 5 minutes and 100 hours, in whole five-minute steps."),
+            (new PlanningRequirementInput(60, At(Tuesday, "17:30"), At(Monday, "08:30")), "The window must end after it starts."),
+            (new PlanningRequirementInput(60, At(Monday, "08:30"), At(Monday.AddDays(40), "08:30")), "The planning window is at most 31 days."),
+            (new PlanningRequirementInput(60, null, null, RequiredSkillId: Guid.NewGuid()), "That skill is not in the skill catalogue."),
+        })
+        {
+            var bad = () => lead.Plans.SetRequirementAsync(w.Lead.Id, w.JasonsTicket.Id, input);
+            (await bad.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Be(message);
+        }
+        // A technician cannot see Sam's ticket, so there is no requirement to read or write.
+        var hidden = () => w.As(w.Jason).Plans.RequirementAsync(w.Jason.Id, w.SamsTicket.Id);
+        (await hidden.Should().ThrowAsync<NotFoundException>()).WithMessage("Ticket was not found.");
+        // A technician says what their own work needs; not what they neither hold nor share a team with, even when they can see it.
+        (await w.As(w.Jason).Plans.SetRequirementAsync(w.Jason.Id, w.JasonsTicket.Id, new PlanningRequirementInput(60, null, null))).RequiredMinutes.Should().Be(60);
+        var notTheirs = () => w.As(w.Jason).Plans.SetRequirementAsync(w.Jason.Id, w.OpenTicket.Id, new PlanningRequirementInput(60, null, null));
+        (await notTheirs.Should().ThrowAsync<ForbiddenException>()).Which.Message.Should().Be("Only whoever holds this work, their team, or someone who schedules others can say what it needs.");
+    }
+
+    [Fact]
+    public async Task The_planning_queue_says_why_work_waits_how_urgent_it_is_and_what_the_group_is_short()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        var nas = await w.Db.Tickets.SingleAsync(t => t.Id == w.OpenTicket.Id);
+        nas.AssignedTeamId = w.Noc.Id;
+        var firewall = await w.Db.Tickets.SingleAsync(t => t.Id == w.JasonsTicket.Id);
+        firewall.SlaDueAt = At(Today.AddDays(1), "17:00");
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        // Jason's ticket needs twenty hours by tomorrow evening; he has eight hours a day, so sixteen before it is due.
+        await lead.Plans.SetRequirementAsync(w.Lead.Id, w.JasonsTicket.Id, new PlanningRequirementInput(1200, null, null, true));
+
+        var queue = await lead.Plans.QueueAsync(w.Lead.Id, new TeamPlanQuery(), 14);
+        queue.From.Should().Be(Today);
+        var waiting = queue.Items.Single(i => i.Work.TicketId == w.JasonsTicket.Id);
+        (waiting.Reason, waiting.Due, waiting.RequiredMinutes, waiting.RemainingMinutes, waiting.Splittable).Should().Be((WaitingReason.InsufficientCapacityBeforeDue, DueRisk.DueTomorrow, 1200, 1200, true));
+        waiting.FreeBeforeDueMinutes.Should().Be(2 * 480, "today and tomorrow, nothing planned yet");
+        queue.Items.Single(i => i.Work.TicketId == w.OpenTicket.Id).Reason.Should().Be(WaitingReason.NoTechnicianAssigned);
+        queue.Items.Single(i => i.Work.TicketId == w.Autotask.Id).Should().Match<PlanningQueueItemDto>(i => i.Reason == WaitingReason.AwaitingPlanning && i.Due == DueRisk.None && i.RequiredMinutes == null);
+        queue.Items.First().Work.TicketId.Should().Be(w.JasonsTicket.Id, "the most urgent comes first");
+        // Demand is the remaining effort of what has an estimate; the shortage is what the group lacks over the horizon.
+        (queue.DemandMinutes, queue.ItemsWithoutEstimate, queue.PeopleCounted).Should().Be((1200, 2, 3));
+        queue.AvailableMinutes.Should().Be(2 * 10 * 480, "Jason and Abbie have schedules and ten working days each in the fortnight with nothing planned; the lead is offered for work but has no schedule, so counts for nothing");
+        queue.ShortageMinutes.Should().Be(0);
+        // Past its due date (yesterday evening), it is overdue; a technician's queue is their own work only.
+        firewall = await w.Db.Tickets.SingleAsync(t => t.Id == w.JasonsTicket.Id);
+        firewall.SlaDueAt = At(Today.AddDays(-1), "17:00");
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        (await lead.Plans.QueueAsync(w.Lead.Id, new TeamPlanQuery(), 14)).Items.Single(i => i.Work.TicketId == w.JasonsTicket.Id)
+            .Should().Match<PlanningQueueItemDto>(i => i.Due == DueRisk.Overdue && i.Reason == WaitingReason.AwaitingPlanning && i.FreeBeforeDueMinutes == null, "there is no time before a date that has gone");
+        (await w.As(w.Jason).Plans.QueueAsync(w.Jason.Id, new TeamPlanQuery(), 14)).PeopleCounted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_preview_places_continuous_work_in_one_sitting_and_splittable_work_across_free_time_and_says_what_does_not_fit()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        await lead.Plans.CreateAsync(w.Lead.Id, Place(w.JasonsTicket, w.Jason, Monday, "09:00", "10:00"));
+        var window = (From: At(Monday, "08:30"), To: At(Monday, "17:30"));
+
+        // Four hours in one sitting: the morning has only two and a half left, so the afternoon.
+        var sitting = await lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, window.To, 240));
+        sitting.Pieces.Should().ContainSingle().Which.Should().Be(new PlanPieceDto(At(Monday, "13:30"), At(Monday, "17:30"), 240));
+        (sitting.AllocatedMinutes, sitting.UnallocatedMinutes, sitting.FreeMinutesInWindow, sitting.LongestFreeMinutes).Should().Be((240, 0, 420, 240));
+        sitting.Warnings.Should().BeEmpty();
+        sitting.PlanToken.Should().HaveLength(32);
+
+        // Five hours in one sitting: nothing that long is free; the longest free period is named.
+        var tooLong = await lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, window.To, 300));
+        tooLong.Pieces.Should().BeEmpty();
+        tooLong.UnallocatedMinutes.Should().Be(300);
+        tooLong.Warnings.Should().ContainSingle().Which.Should().Be("No single free period of 5h in the window; the longest is 4h.");
+
+        // Five hours that may be split: the free time in order, nothing shorter than half an hour unless it finishes the work.
+        var split = await lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, window.To, 300, Splittable: true));
+        split.Pieces.Should().Equal(
+            new PlanPieceDto(At(Monday, "08:30"), At(Monday, "09:00"), 30),
+            new PlanPieceDto(At(Monday, "10:00"), At(Monday, "12:30"), 150),
+            new PlanPieceDto(At(Monday, "13:30"), At(Monday, "15:30"), 120));
+        (split.AllocatedMinutes, split.UnallocatedMinutes).Should().Be((300, 0));
+
+        // Ten hours in one day: seven fit, three are said to remain. Nothing is overbooked.
+        var partial = await lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, window.To, 600, Splittable: true));
+        (partial.AllocatedMinutes, partial.UnallocatedMinutes).Should().Be((420, 180));
+        partial.Warnings.Should().Contain("Only 7h of 10h fits in the window; 3h remains unallocated.");
+
+        // A preview writes nothing.
+        (await w.Db.WorkAllocations.CountAsync()).Should().Be(1);
+        // Limits: a window of more than two weeks, and effort beyond a hundred hours, are refused before anything is read.
+        var wide = () => lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, At(Monday.AddDays(20), "17:30"), 60));
+        (await wide.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Be("A preview covers at most 14 days.");
+        var huge = () => lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, window.To, 6005));
+        await huge.Should().ThrowAsync<ValidationFailedException>();
+        // Scope: a technician previews only for themselves (a colleague is outside what they see), and only work they can see.
+        var others = () => w.As(w.Jason).Plans.PreviewAsync(w.Jason.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Abbie.Id, window.From, window.To, 60));
+        (await others.Should().ThrowAsync<NotFoundException>()).WithMessage("Person was not found.");
+        var hidden = () => w.As(w.Jason).Plans.PreviewAsync(w.Jason.Id, new PlanPreviewInput(w.SamsTicket.Id, w.Jason.Id, window.From, window.To, 60));
+        (await hidden.Should().ThrowAsync<NotFoundException>()).WithMessage("Ticket was not found.");
+        // Time that has passed is never proposed: at 10:00 on Monday a window from 08:30 proposes from 10:00, and says so.
+        w.Clock.Advance(Monday.ToDateTime(new TimeOnly(10, 0)) - Today.ToDateTime(TimeOnly.MinValue));
+        var late = await lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, window.To, 240));
+        late.Pieces.Should().ContainSingle().Which.Start.Should().Be(At(Monday, "13:30"), "what is left of the morning after 10:00 is too short for four hours");
+        late.Warnings.Should().Contain("The window started before now; proposing from 5 Jan 10:00.");
+        late.FreeMinutesInWindow.Should().Be(150 + 240, "10:00-12:30 and the afternoon");
+    }
+
+    [Fact]
+    public async Task A_preview_is_written_only_while_the_plan_is_what_it_saw_and_what_is_written_follows_every_rule()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        await lead.Plans.SetRequirementAsync(w.Lead.Id, w.OpenTicket.Id, new PlanningRequirementInput(300, null, null, true));
+        var request = new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, At(Monday, "08:30"), At(Monday, "17:30"), 300, Splittable: true);
+        var preview = await lead.Plans.PreviewAsync(w.Lead.Id, request);
+        preview.Pieces.Should().HaveCount(2);
+
+        // Someone else takes part of the morning before the confirmation: the plan the preview saw is gone.
+        await w.As(w.Jason).Plans.CreateAsync(w.Jason.Id, Place(w.JasonsTicket, w.Jason, Monday, "09:00", "09:30"));
+        var stale = () => lead.Plans.ConfirmPreviewAsync(w.Lead.Id, new PlanConfirmInput(request, preview.Pieces, preview.PlanToken));
+        var refused = (await stale.Should().ThrowAsync<ConflictException>()).Which;
+        refused.Message.Should().Be("The plan changed since the preview. Review the new proposal.");
+        var changed = refused.Payload.Should().BeOfType<PlanChangedDto>().Subject;
+        changed.Stale.Should().BeTrue();
+        changed.Preview.PlanToken.Should().NotBe(preview.PlanToken);
+        changed.Preview.Pieces.Should().HaveCount(3, "the morning is now in two pieces");
+        (await w.Db.WorkAllocations.CountAsync(a => a.TicketId == w.OpenTicket.Id)).Should().Be(0, "nothing stale was written");
+
+        // The fresh preview, confirmed: every piece checked and written in one transaction; the holder bridge once.
+        var done = await lead.Plans.ConfirmPreviewAsync(w.Lead.Id, new PlanConfirmInput(request, changed.Preview.Pieces, changed.Preview.PlanToken, Note: "Spread over the day"));
+        (done.Allocations.Count, done.AllocatedMinutes, done.RemainingMinutes).Should().Be((3, 300, 0));
+        done.Allocations.Should().OnlyContain(a => a.Status == WorkAllocationStatus.Planned && a.Note == "Spread over the day" && a.Method == SchedulingMethod.AuthorizedUser);
+        (await w.Db.Tickets.AsNoTracking().SingleAsync(t => t.Id == w.OpenTicket.Id)).AssignedAppUserId.Should().Be(w.Jason.Id);
+        (await w.Db.AuditLog.CountAsync(a => a.Action == "ticket.assigned.portal")).Should().Be(1);
+        (await w.Db.AuditLog.CountAsync(a => a.Action == "workforce.allocation.plan_confirmed")).Should().Be(1);
+        (await DayAsync(w, w.Lead, w.Jason, Monday)).RemainingConfirmedMinutes.Should().Be(480 - 30 - 300);
+        // The same token again: the plan is no longer what it saw.
+        var twice = () => lead.Plans.ConfirmPreviewAsync(w.Lead.Id, new PlanConfirmInput(request, changed.Preview.Pieces, changed.Preview.PlanToken));
+        await twice.Should().ThrowAsync<ConflictException>();
+        // Pieces outside the window, overlapping each other, or adding up to more than the effort are refused before the gate.
+        var outside = () => lead.Plans.ConfirmPreviewAsync(w.Lead.Id, new PlanConfirmInput(request, [new PlanPieceDto(At(Tuesday, "09:00"), At(Tuesday, "10:00"), 60)], "x"));
+        (await outside.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Be("Every piece must lie inside the planning window.");
+    }
+
+    [Fact]
+    public async Task Two_managers_confirming_previews_for_the_same_time_end_with_one_plan()
+    {
+        var w = await WorldAsync();
+        var leadDb = AdminHarness.Create(OrgA, w.DbName).Db;
+        var adminDb = AdminHarness.Create(OrgA, w.DbName).Db;
+        var lead = World.For(leadDb, OrgA, w.Lead, w.Clock).Plans;
+        var admin = World.For(adminDb, OrgA, w.Admin, w.Clock).Plans;
+        var request = new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, At(Monday, "08:30"), At(Monday, "12:30"), 240);
+        var a = await lead.PreviewAsync(w.Lead.Id, request);
+        var b = await admin.PreviewAsync(w.Admin.Id, request with { TicketId = w.ConnectWise.Id });
+        a.PlanToken.Should().NotBe(b.PlanToken, "a different ticket is a different plan");
+
+        var results = await Task.WhenAll(
+            Attempt(() => lead.ConfirmPreviewAsync(w.Lead.Id, new PlanConfirmInput(request, a.Pieces, a.PlanToken))),
+            Attempt(() => admin.ConfirmPreviewAsync(w.Admin.Id, new PlanConfirmInput(request with { TicketId = w.ConnectWise.Id }, b.Pieces, b.PlanToken))));
+        results.Count(r => r is null).Should().Be(1, "one wins");
+        results.Single(r => r is not null).Should().BeOfType<ConflictException>();
+        (await w.Db.WorkAllocations.CountAsync(a => a.AppUserId == w.Jason.Id && a.StartsAt == At(Monday, "08:30"))).Should().Be(1);
+
+        static async Task<Exception?> Attempt(Func<Task<PlanConfirmedDto>> call)
+        {
+            try { await call(); return null; }
+            catch (Exception ex) { return ex; }
+        }
+    }
+
+    [Fact]
+    public async Task Work_that_would_end_after_its_due_date_is_placed_with_a_warning_never_a_moved_due_date()
+    {
+        var w = await WorldAsync();
+        var firewall = await w.Db.Tickets.SingleAsync(t => t.Id == w.JasonsTicket.Id);
+        firewall.SlaDueAt = At(Monday, "10:00");
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        var jason = w.As(w.Jason);
+        await jason.Plans.CreateAsync(w.Jason.Id, Place(w.JasonsTicket, w.Jason, Monday, "09:30", "10:30"));
+        (await w.Db.AuditLog.Where(a => a.Action == "workforce.allocation.created").SingleAsync()).DetailJson.Should().Contain("Ends after the due date");
+        (await w.Db.Tickets.AsNoTracking().SingleAsync(t => t.Id == w.JasonsTicket.Id)).SlaDueAt.Should().Be(At(Monday, "10:00"));
+        // The preview says it too.
+        var preview = await jason.Plans.PreviewAsync(w.Jason.Id, new PlanPreviewInput(w.JasonsTicket.Id, w.Jason.Id, At(Monday, "10:30"), At(Monday, "17:30"), 60));
+        preview.Warnings.Should().ContainSingle().Which.Should().StartWith("Ends after the due date");
+    }
+
     [Fact]
     public async Task Time_away_blocks_everyone_and_exact_boundaries_are_fine()
     {
@@ -753,6 +1023,11 @@ public class WorkPlanTests
             () => notStaff.Update(id, new WorkAllocationUpdate(At(Monday, "09:00"), At(Monday, "10:00"), 0), default),
             () => notStaff.Reassign(id, new WorkAllocationReassign(id, 0), default), () => notStaff.Cancel(id, null, default),
             () => notStaff.Team(new Desk.Api.Controllers.WorkforcePlanController.TeamPlanRequest(), default), () => notStaff.UnscheduledTeam(new Desk.Api.Controllers.WorkforcePlanController.TeamPlanRequest(), default),
+            () => notStaff.Confirm(id, new WorkAllocationStateInput(0), default), () => notStaff.MakeTentative(id, new WorkAllocationStateInput(0), default),
+            () => notStaff.Requirement(id, default), () => notStaff.SetRequirement(id, new PlanningRequirementInput(60, null, null), default),
+            () => notStaff.Queue(new Desk.Api.Controllers.WorkforcePlanController.TeamPlanRequest(), null, default),
+            () => notStaff.Preview(new Desk.Api.Controllers.WorkforcePlanController.PreviewRequest(id, id, At(Monday, "08:00"), At(Monday, "18:00"), 60), default),
+            () => notStaff.ConfirmPreview(new PlanConfirmInput(new PlanPreviewInput(id, id, At(Monday, "08:00"), At(Monday, "18:00"), 60), [new PlanPieceDto(At(Monday, "09:00"), At(Monday, "10:00"), 60)], "x"), default),
         ];
         foreach (var call in calls)
             (await call.Should().ThrowAsync<ForbiddenException>()).WithMessage("Only staff accounts can use the workforce module.");
@@ -802,6 +1077,13 @@ public class WorkPlanTests
         (await b.TeamAsync(adminB.Id, new TeamPlanQuery(Monday, Monday, TeamId: w.Noc.Id))).People.Should().BeEmpty();
         (await b.UnscheduledTeamAsync(adminB.Id, new TeamPlanQuery())).Should().BeEmpty();
         (await b.UnscheduledTeamAsync(adminB.Id, new TeamPlanQuery(TeamId: w.Noc.Id))).Should().BeEmpty();
+        (await b.QueueAsync(adminB.Id, new TeamPlanQuery(), 14)).Items.Should().BeEmpty();
+        var requirement = () => b.RequirementAsync(adminB.Id, w.OpenTicket.Id);
+        (await requirement.Should().ThrowAsync<NotFoundException>()).WithMessage("Ticket was not found.");
+        var preview = () => b.PreviewAsync(adminB.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, At(Monday, "08:00"), At(Monday, "18:00"), 60));
+        (await preview.Should().ThrowAsync<NotFoundException>()).WithMessage("Person was not found.");
+        var confirm = () => b.ConfirmAsync(adminB.Id, planned.Id, new WorkAllocationStateInput(0));
+        (await confirm.Should().ThrowAsync<NotFoundException>()).WithMessage("Planned work was not found.");
         (await w.Db.WorkAllocations.AsNoTracking().SingleAsync()).Should().Match<WorkAllocation>(a => a.Id == planned.Id && a.Status == WorkAllocationStatus.Planned && a.Version == 0);
     }
 }
