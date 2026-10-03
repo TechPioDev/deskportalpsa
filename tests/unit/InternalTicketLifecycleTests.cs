@@ -163,7 +163,10 @@ public class InternalTicketLifecycleTests
             .Should().ThrowAsync<ForbiddenException>();
 
         await TimeAs(k, k.Anika).Update(t.Id, entry.Id.ToString(), new(2m, null, null), default);
-        await TimeAs(k, k.Arjun, lead: true).Update(t.Id, entry.Id.ToString(), new(2.5m, null, null), default);
+        // A lead may change it, saying why (Phase 6): the reason goes with the change; without one it is refused.
+        await TimeAs(k, k.Arjun, lead: true).Invoking(c => c.Update(t.Id, entry.Id.ToString(), new(2.5m, null, null), default))
+            .Should().ThrowAsync<ValidationFailedException>();
+        await TimeAs(k, k.Arjun, lead: true).Update(t.Id, entry.Id.ToString(), new(2.5m, null, null, "Logged against the wrong task"), default);
         (await k.H.Db.TicketTimeEntries.SingleAsync()).Hours.Should().Be(2.5m);
         (await AuditsAsync(k, t)).Should().Contain(["ticket.time.logged", "ticket.time.edited"]);
     }

@@ -174,8 +174,15 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     }
     /// <summary>When set, pushing time throws it — how a provider REJECTS a payload it dislikes.</summary>
     public ConnectorException? TimeEntryFailure { get; set; }
+    /// <summary>When set, pushing time succeeds with this (the id the PSA gave it); each push is recorded in <see cref="PushedTime"/>.</summary>
+    public CreateTimeEntryResult? NextTimeEntryResult { get; set; }
+    public List<(string TicketId, UnifiedTimeEntryCreateRequest Entry)> PushedTime { get; } = [];
     public Task<CreateTimeEntryResult> AddTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, CancellationToken ct = default)
-        => TimeEntryFailure is { } ex ? throw ex : No<CreateTimeEntryResult>();
+    {
+        if (TimeEntryFailure is { } ex) throw ex;
+        PushedTime.Add((ticketId, entry));
+        return NextTimeEntryResult is { } ok ? Task.FromResult(ok) : No<CreateTimeEntryResult>();
+    }
     public Task<UpdateTimeEntryResult> UpdateTimeEntryAsync(string entryId, UnifiedTimeEntryUpdate update, CancellationToken ct = default) => No<UpdateTimeEntryResult>();
     public Task<UpdateTimeEntryResult> DeleteTimeEntryAsync(string entryId, CancellationToken ct = default) => No<UpdateTimeEntryResult>();
     public Task<IReadOnlyList<ExternalFieldOption>> GetStatusesAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldOption>>();

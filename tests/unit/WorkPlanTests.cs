@@ -28,7 +28,7 @@ namespace Desk.Tests.Unit;
 /// flexible work, moving, giving away and taking out, what each does to the ticket (nothing on the
 /// PSA side), the release of finished work, and that another organization's plans do not exist.
 /// </summary>
-public class WorkPlanTests
+public partial class WorkPlanTests
 {
     private static readonly Guid OrgA = Guid.NewGuid();
     private static readonly Guid OrgB = Guid.NewGuid();
@@ -39,14 +39,18 @@ public class WorkPlanTests
     private static readonly TimeZoneInfo Tz = TimeZones.Resolve(Zone);
     private static DateTimeOffset At(DateOnly date, string hm) => TimeZones.WallToUtc(date.ToDateTime(TimeOnly.Parse(hm)), Tz, true);
 
-    private sealed record Services(WorkPlanService Plans, CapacityService Capacity, WorkScheduleService Schedules, CapacityExceptionService Exceptions, WorkAllocationReleaser Releaser);
+    private sealed record Services(WorkPlanService Plans, CapacityService Capacity, WorkScheduleService Schedules, CapacityExceptionService Exceptions, WorkAllocationReleaser Releaser,
+        WorkTimeService Time, TicketTimeWriter Writer, TicketScopeQuery Scope, AuditWriter Audit);
 
     private sealed record World(DeskDbContext Db, string DbName, AppUser Admin, AppUser Lead, AppUser Jason, AppUser Abbie, AppUser Sam, AppUser Outsider,
         Team Noc, Board Board, Ticket JasonsTicket, Ticket OpenTicket, Ticket SamsTicket, Ticket Autotask, Ticket ConnectWise, TestClock Clock)
     {
-        public Services As(AppUser who) => For(Db, OrgA, who, Clock);
+        /// <summary>The PSA every Autotask ticket's time goes to, shared by every service built from this world.</summary>
+        public StubConnector Connector { get; } = new();
 
-        public static Services For(DeskDbContext db, Guid org, AppUser who, TimeProvider clock)
+        public Services As(AppUser who) => For(Db, OrgA, who, Clock, Connector);
+
+        public static Services For(DeskDbContext db, Guid org, AppUser who, TimeProvider clock, StubConnector? connector = null)
         {
             var tenant = new Desk.Infrastructure.Tenancy.TenantContext();
             tenant.SetTenant(org);
@@ -56,9 +60,12 @@ public class WorkPlanTests
             var scope = new TicketScopeQuery(db, permissions);
             var audit = new AuditWriter(db, user, tenant, clock);
             var capacity = new CapacityService(db, access, new WorkAllocationReader(db, scope, clock), clock);
-            var plans = new WorkPlanService(db, access, capacity, scope, new InternalTicketService(db, tenant, clock, new RecordingActivity()), new PlanningGate(db), audit, clock);
+            var gate = new PlanningGate(db);
+            var plans = new WorkPlanService(db, access, capacity, scope, new InternalTicketService(db, tenant, clock, new RecordingActivity()), gate, audit, clock);
+            var writer = new TicketTimeWriter(db, null!, audit);
+            var time = new WorkTimeService(db, access, capacity, scope, plans, new StubResolver(connector ?? new StubConnector()), writer, permissions, gate, audit, clock);
             return new Services(plans, capacity, new WorkScheduleService(db, access, audit, clock), new CapacityExceptionService(db, access, audit, clock),
-                new WorkAllocationReleaser(db, audit, clock));
+                new WorkAllocationReleaser(db, audit, clock), time, writer, scope, audit);
         }
     }
 
@@ -75,11 +82,11 @@ public class WorkPlanTests
             return role;
         }
         var all = PermissionScope.All;
-        var admin = R("Administrator", RoleType.MspAdministrator, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all),
+        var admin = R("Administrator", RoleType.MspAdministrator, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all), (Permissions.BoardsManage, all),
             (Permissions.ScheduleView, all), (Permissions.WorkforceManage, all), (Permissions.AvailabilityManage, all), (Permissions.ScheduleManage, all), (Permissions.ScheduleOverride, all));
-        var lead = R("Team lead", RoleType.Manager, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all),
+        var lead = R("Team lead", RoleType.Manager, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all), (Permissions.BoardsManage, all),
             (Permissions.ScheduleView, PermissionScope.Team), (Permissions.AvailabilityManage, PermissionScope.Team), (Permissions.ScheduleManage, PermissionScope.Team));
-        var tech = R("Technician", RoleType.Technician, (Permissions.TicketsViewAssigned, PermissionScope.Assigned), (Permissions.TicketsCreate, all), (Permissions.TicketsUpdate, all),
+        var tech = R("Technician", RoleType.Technician, (Permissions.TicketsViewAssigned, PermissionScope.Assigned), (Permissions.TicketsCreate, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all),
             (Permissions.ScheduleView, PermissionScope.Own), (Permissions.ScheduleManage, PermissionScope.Own));
         AppUser U(string name, Role role, Guid? org = null)
         {
