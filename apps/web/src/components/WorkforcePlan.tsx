@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, CalendarPlus, ChevronLeft, ChevronRight, Lock, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, CalendarPlus, Check, ChevronLeft, ChevronRight, Lock, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import {
-  api, ApiError, ConflictProblemSchema, type ConflictProblem, type DayCapacity, type UnscheduledWork, type WorkAllocation,
+  api, ApiError, ConflictProblemSchema, inPlan, type ConflictProblem, type DayCapacity, type UnscheduledWork, type WorkAllocation,
 } from '@/lib/api';
 import { hours } from '@/components/Workforce';
 import { addDays, dateIn, fmtDay, fmtSlot, fmtTime } from '@/components/WorkforceCapacity';
@@ -74,6 +74,44 @@ export function ConflictNotice({ error, reason, onReason }: { error: unknown; re
 
 export type PlanTarget = { ticketId: string; reference: string; title: string };
 
+/** Pencilled-in work is marked wherever it is listed: it holds no confirmed capacity until someone confirms it. */
+export function TentativeChip({ a }: { a: { status: number } }) {
+  return a.status === 2 ? <span className={`${chip} border border-dashed border-sky-500 text-sky-800 dark:text-sky-200`}>Tentative</span> : null;
+}
+
+/**
+ * Pencilled-in work becomes committed work: the server checks the time again as confirmed work and
+ * says what is in the way; whoever may override gives a reason, which stays with the work.
+ */
+export function ConfirmWorkDialog({ allocation: a, onClose, onSaved }: { allocation: WorkAllocation; onClose: () => void; onSaved: (a: WorkAllocation) => void }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('');
+  useDialog(onClose);
+  const save = useMutation({
+    mutationFn: () => api.confirmPlannedWork(a.id, { version: a.version, overrideReason: reason.trim() || null }),
+    onSuccess: (row) => { qc.invalidateQueries({ queryKey: ['plan'] }); qc.invalidateQueries({ queryKey: ['capacity'] }); qc.invalidateQueries({ queryKey: ['ticket-plan'] }); onSaved(row); },
+  });
+  const conflict = conflictProblem(save.error);
+  const canSave = !save.isPending && (!conflict || (conflict.canOverride && conflict.overrideAllowedForCaller && reason.trim().length >= 5));
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Confirm planned work" className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[14vh]" onClick={onClose}>
+      <form className="w-full max-w-md space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => { e.preventDefault(); if (canSave) save.mutate(); }}>
+        <h2 className="text-sm font-semibold">Confirm {a.reference ?? 'this work'}</h2>
+        <p className="text-sm">{a.title ?? 'Work'} for {a.personName}: {fmtDay(dateIn(a.startsAt, a.timeZone))} {fmtSlot({ start: a.startsAt, end: a.endsAt }, a.timeZone)} ({hours(a.plannedMinutes)}).</p>
+        <p className="text-xs text-[var(--muted)]">Confirmed work takes capacity. The time is checked again as it is now, not as it was when the work was pencilled in.</p>
+        <ConflictNotice error={save.error} reason={reason} onReason={setReason} />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">Cancel</button>
+          <button type="submit" disabled={!canSave} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
+            <Check size={14} /> {save.isPending ? 'Confirming…' : conflict?.canOverride && conflict.overrideAllowedForCaller ? 'Override and confirm' : 'Confirm'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /**
  * One form for putting work into someone's time, or moving it: whose time, which date, how long,
  * and where in their free windows. The server checks everything again when it saves; what this
@@ -105,6 +143,7 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
     if (initialStart) setStart(clock(Date.parse(initialStart), tz));
   }, [initialStart, allocation, people, tz]);
   const [isFixed, setIsFixed] = useState(allocation?.isFixed ?? false);
+  const [tentative, setTentative] = useState(false);
   const [note, setNote] = useState(allocation?.note ?? '');
   const [reason, setReason] = useState('');
   const [finding, setFinding] = useState(false);
@@ -146,7 +185,7 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
       const body = { start: startIso!, end: endIso!, note: note.trim() || null, overrideReason: reason.trim() || null };
       return allocation
         ? api.updatePlannedWork(allocation.id, { ...body, version: allocation.version, isFixed: self ? null : isFixed })
-        : api.planWork({ ticketId: target!.ticketId, appUserId: person, isFixed: !self && isFixed, ...body });
+        : api.planWork({ ticketId: target!.ticketId, appUserId: person, isFixed: !self && isFixed, tentative, ...body });
     },
     onSuccess: (a) => {
       qc.invalidateQueries({ queryKey: ['plan'] });
@@ -237,6 +276,12 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
             <span><span className="font-medium">Fixed</span><span className="block text-xs text-[var(--muted)]">They cannot move it; only someone who schedules others can. Leave off for work they may rearrange.</span></span>
           </label>
         )}
+        {!moving && (
+          <label className="flex items-start gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" checked={tentative} onChange={(e) => setTentative(e.target.checked)} aria-label="Pencil in" className="mt-0.5" />
+            <span><span className="font-medium">Pencil in</span><span className="block text-xs text-[var(--muted)]">Tentative: shown in the plan but taking no confirmed capacity until it is confirmed. Clashes are warnings.</span></span>
+          </label>
+        )}
         <label className="block space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2">
           Note (optional)
           <input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} aria-label="Planning note" placeholder="Client wants it done before 16:00" className={`w-full ${field}`} />
@@ -247,7 +292,7 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
         <div className="flex justify-end gap-2 sm:col-span-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">Cancel</button>
           <button type="submit" disabled={!canSave} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
-            {save.isPending ? 'Saving…' : conflict?.canOverride && conflict.overrideAllowedForCaller ? 'Override and save' : moving ? 'Move' : 'Add to plan'}
+            {save.isPending ? 'Saving…' : conflict?.canOverride && conflict.overrideAllowedForCaller ? 'Override and save' : moving ? 'Move' : tentative ? 'Pencil in' : 'Add to plan'}
           </button>
         </div>
       </form>
@@ -445,7 +490,7 @@ export function PlanAgenda({ userId, viewerId, initialDate }: { userId: string; 
     queryKey: ['plan', userId, picked ?? 'today'], queryFn: () => api.personPlan(userId, picked, picked), retry: false, placeholderData: (prev) => prev,
   });
   const date = picked ?? plan?.today ?? null;
-  const [dialog, setDialog] = useState<{ kind: 'move' | 'reassign'; allocation: WorkAllocation } | { kind: 'pick' } | { kind: 'plan'; target: PlanTarget } | null>(null);
+  const [dialog, setDialog] = useState<{ kind: 'move' | 'reassign' | 'confirm'; allocation: WorkAllocation } | { kind: 'pick' } | { kind: 'plan'; target: PlanTarget } | null>(null);
   const cancel = useMutation({
     mutationFn: (a: WorkAllocation) => api.cancelPlannedWork(a.id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan'] }); qc.invalidateQueries({ queryKey: ['capacity'] }); qc.invalidateQueries({ queryKey: ['ticket-plan'] }); },
@@ -478,8 +523,8 @@ export function PlanAgenda({ userId, viewerId, initialDate }: { userId: string; 
       {day && (
         <dl className="grid grid-cols-3 gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm">
           <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Capacity</dt><dd className="text-lg font-semibold tabular-nums">{hours(day.usableMinutes)}</dd></div>
-          <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Planned</dt><dd className="text-lg font-semibold tabular-nums">{hours(day.confirmedMinutes)}</dd></div>
-          <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Free</dt><dd className="text-lg font-semibold tabular-nums text-green-700 dark:text-green-300">{hours(day.remainingConfirmedMinutes)}</dd></div>
+          <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Planned</dt><dd className="text-lg font-semibold tabular-nums">{hours(day.confirmedMinutes)}</dd>{day.tentativeMinutes > 0 && <dd className="text-[11px] tabular-nums text-sky-700 dark:text-sky-300">+{hours(day.tentativeMinutes)} tentative</dd>}</div>
+          <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Free</dt><dd className="text-lg font-semibold tabular-nums text-green-700 dark:text-green-300">{hours(day.remainingConfirmedMinutes)}</dd>{day.tentativeMinutes > 0 && <dd className="text-[11px] tabular-nums text-[var(--muted)]">{hours(day.projectedRemainingMinutes)} if confirmed</dd>}</div>
         </dl>
       )}
 
@@ -496,6 +541,7 @@ export function PlanAgenda({ userId, viewerId, initialDate }: { userId: string; 
             {it.kind === 'work' && <WorkRow a={it.allocation} viewerId={viewerId} self={self}
               onMove={() => setDialog({ kind: 'move', allocation: it.allocation })}
               onReassign={() => setDialog({ kind: 'reassign', allocation: it.allocation })}
+              onConfirm={() => setDialog({ kind: 'confirm', allocation: it.allocation })}
               onCancel={() => { if (window.confirm(`Take ${it.allocation.reference ?? 'this work'} out of the plan? The ticket itself is not changed.`)) cancel.mutate(it.allocation); }} />}
           </li>
         ))}
@@ -503,13 +549,14 @@ export function PlanAgenda({ userId, viewerId, initialDate }: { userId: string; 
       {cancel.isError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{(cancel.error as Error).message}</p>}
       {dialog?.kind === 'move' && <PlanWorkDialog allocation={dialog.allocation} personId={dialog.allocation.appUserId} viewerId={viewerId} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} />}
       {dialog?.kind === 'reassign' && <ReassignDialog allocation={dialog.allocation} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} />}
+      {dialog?.kind === 'confirm' && <ConfirmWorkDialog allocation={dialog.allocation} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} />}
       {dialog?.kind === 'pick' && <TicketPickerDialog personName={self ? 'you' : plan.displayName} onClose={() => setDialog(null)} onPick={(target) => setDialog({ kind: 'plan', target })} />}
       {dialog?.kind === 'plan' && <PlanWorkDialog target={dialog.target} personId={plan.appUserId} lockPerson viewerId={viewerId} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} />}
     </div>
   );
 }
 
-function WorkRow({ a, viewerId, self, onMove, onReassign, onCancel }: { a: WorkAllocation; viewerId: string | null; self: boolean; onMove: () => void; onReassign: () => void; onCancel: () => void }) {
+function WorkRow({ a, viewerId, self, onMove, onReassign, onConfirm, onCancel }: { a: WorkAllocation; viewerId: string | null; self: boolean; onMove: () => void; onReassign: () => void; onConfirm: () => void; onCancel: () => void }) {
   const title = a.ticketVisible ? a.title : 'Work you cannot open';
   return (
     <div className="min-w-0 flex-1">
@@ -521,11 +568,13 @@ function WorkRow({ a, viewerId, self, onMove, onReassign, onCancel }: { a: WorkA
       </div>
       <div className="flex flex-wrap items-center gap-1.5 pt-1">
         <span className={`${chip} ${a.method === 1 ? 'bg-[var(--bg)] text-[var(--muted)]' : 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200'}`}>{whoPlanned(a, viewerId)}</span>
+        <TentativeChip a={a} />
         {a.isFixed && <span className={`${chip} bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200`}><Lock size={10} aria-hidden="true" /> Fixed</span>}
         {a.overrideReason && <span className={`${chip} border border-[var(--border)]`} title={a.overrideReason}>Override: {a.overrideReason}</span>}
         {a.ticketFinished && <span className={`${chip} bg-[var(--bg)] text-[var(--muted)]`}>Ticket finished</span>}
         {a.note && <span className="text-xs text-[var(--muted)]">{a.note}</span>}
         <span className="ml-auto flex items-center gap-0.5">
+          {a.canConfirm && <button type="button" onClick={onConfirm} aria-label={`Confirm ${a.reference ?? 'work'}`} className="inline-flex items-center gap-1 rounded border border-sky-500 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 hover:bg-sky-50 dark:text-sky-200 dark:hover:bg-sky-950"><Check size={12} /> Confirm</button>}
           {a.canEdit && <button type="button" onClick={onMove} aria-label={`Move ${a.reference ?? 'work'}`} className="rounded p-1 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]"><Pencil size={14} /></button>}
           {a.canReassign && <button type="button" onClick={onReassign} aria-label={`Give ${a.reference ?? 'work'} to someone else`} className="rounded p-1 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]"><ArrowRightLeft size={14} /></button>}
           {a.canCancel && <button type="button" onClick={onCancel} aria-label={`Remove ${a.reference ?? 'work'} from the plan`} className="rounded p-1 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-red-600"><Trash2 size={14} /></button>}
@@ -586,18 +635,26 @@ export function UnscheduledWorkList({ viewerId, canPlan }: { viewerId: string; c
 // ---- On a ticket --------------------------------------------------------------------------------
 
 /** What is planned on this ticket, for the people the viewer may see, and a way to plan it. Staff only. */
-export function TicketPlanPanel({ ticketId, reference, title, viewerId, canPlan }: { ticketId: string; reference: string; title: string; viewerId: string | null; canPlan: boolean }) {
+export function TicketPlanPanel({ ticketId, reference, title, viewerId, canPlan, onPlanWindow, children }: {
+  ticketId: string; reference: string; title: string; viewerId: string | null; canPlan: boolean;
+  /** Opens effort-in-a-window planning for this ticket (the advanced planning dialog lives beside this panel). */
+  onPlanWindow?: () => void; children?: React.ReactNode;
+}) {
   const { data: rows, error } = useQuery({ queryKey: ['ticket-plan', ticketId], queryFn: () => api.ticketPlan(ticketId), retry: false });
   const [planning, setPlanning] = useState(false);
-  const live = (rows ?? []).filter((a) => a.status === 1);
+  const live = (rows ?? []).filter((a) => inPlan(a.status));
   return (
     <section aria-labelledby="ticket-plan-heading" className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
       <div className="flex items-center justify-between gap-2 px-4 py-3">
         <h2 id="ticket-plan-heading" className="text-sm font-semibold">Planned work</h2>
         {canPlan && viewerId && (
-          <button type="button" onClick={() => setPlanning(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg)]"><CalendarPlus size={13} /> Plan this work</button>
+          <span className="flex flex-wrap gap-1">
+            <button type="button" onClick={() => setPlanning(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg)]"><CalendarPlus size={13} /> Plan this work</button>
+            {onPlanWindow && <button type="button" onClick={onPlanWindow} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg)]">Plan with a window</button>}
+          </span>
         )}
       </div>
+      {children && <div className="border-t border-[var(--border)] px-4 py-2">{children}</div>}
       {error && <p role="alert" className="px-4 pb-3 text-sm text-red-600 dark:text-red-400">{(error as Error).message}</p>}
       {rows && live.length === 0 && <p className="px-4 pb-3 text-xs text-[var(--muted)]">Not in anyone&rsquo;s plan yet.</p>}
       {live.length > 0 && (
@@ -608,6 +665,7 @@ export function TicketPlanPanel({ ticketId, reference, title, viewerId, canPlan 
                 <Link href={`/dashboard/workforce/people/${a.appUserId}?tab=plan&date=${dateIn(a.startsAt, a.timeZone)}`} className="font-medium hover:underline">{a.personName}</Link>
                 <span className="tabular-nums">{fmtDay(dateIn(a.startsAt, a.timeZone))} {fmtSlot({ start: a.startsAt, end: a.endsAt }, a.timeZone)}</span>
                 <span className="text-xs text-[var(--muted)]">· {hours(a.plannedMinutes)}</span>
+                <TentativeChip a={a} />
               </div>
               <div className="flex flex-wrap gap-1 pt-0.5 text-[11px] text-[var(--muted)]">
                 <span>{whoPlanned(a, viewerId)}</span>{a.isFixed && <span>· Fixed</span>}{a.note && <span>· {a.note}</span>}
