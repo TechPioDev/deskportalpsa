@@ -19,6 +19,7 @@ under the person's gate, and a refusal is a 409 with the conflicts in its payloa
 | `BreakConflict` (3) | Overlaps a planned break | **Overridable** (a Warning in Phase 2; changed in Phase 3, see below) | Warning |
 | `TentativeConflict` (2) | Overlaps tentative work | Warning | Warning |
 | `SkillWarning` (7) | A requested skill is not one the person holds | Warning | Warning |
+| `DueDateRisk` (9) | The work would end after the ticket is due (Phase 5; planning never moves a due date) | Warning | Warning |
 
 Severity: 1 Warning, 2 Overridable, 3 Block.
 
@@ -36,6 +37,9 @@ Why they are not all overridable:
   disagree. Working through lunch is a decision with a reason, like overtime.
 - A **tentative** proposal holds no capacity itself, so what would be overridable for confirmed
   work is only a warning for it. Blocks stay blocks.
+- A **due date** is the ticket's own: work that ends after it is placed with a warning, so the
+  planner decides; refusing would push the work later still, and moving the due date is not
+  planning's to do ([advanced-planning.md](advanced-planning.md#due-dates)).
 
 ## The answer
 

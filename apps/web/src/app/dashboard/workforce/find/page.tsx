@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { Check, Search } from 'lucide-react';
@@ -32,6 +32,11 @@ export default function FindAvailablePage() {
   // if the two disagree around midnight.
   const [v, setV] = useState<Form>(() => ({ from: new Date().toLocaleDateString('en-CA'), to: '', duration: '60', earliest: '', latest: '', teamId: '', departmentId: '', skillIds: [], matchAll: true }));
   const [asked, setAsked] = useState<AvailabilitySearch | null>(null);
+  // Opened from the planning queue with the remaining effort: a valid ?duration= seeds the form once, after mount (no server/client mismatch).
+  useEffect(() => {
+    const asked = Number(new URLSearchParams(window.location.search).get('duration'));
+    if (Number.isInteger(asked) && asked >= 5 && asked <= 720) setV((f) => ({ ...f, duration: String(asked - (asked % 5)) }));
+  }, []);
   // Counted so that Find asks again even when nothing in the form changed: what was free a minute
   // ago may be taken now.
   const [run, setRun] = useState(0);

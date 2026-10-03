@@ -275,9 +275,11 @@ export const WorkAllocationSchema = z.object({
   isFixed: z.boolean(), note: z.string().nullable(),
   overrideReason: z.string().nullable(), overriddenConflicts: z.array(z.number()), overriddenByName: z.string().nullable(),
   cancelledAt: z.string().nullable(), cancelledByName: z.string().nullable(), cancelReason: z.string().nullable(),
-  version: z.number(), canEdit: z.boolean(), canCancel: z.boolean(), canReassign: z.boolean(),
+  version: z.number(), canEdit: z.boolean(), canCancel: z.boolean(), canReassign: z.boolean(), canConfirm: z.boolean().default(false),
 });
 export type WorkAllocation = z.infer<typeof WorkAllocationSchema>;
+/** 1 planned (committed), 2 tentative (pencilled in), 5 cancelled. */
+export const inPlan = (status: number) => status === 1 || status === 2;
 export const PersonPlanSchema = z.object({
   appUserId: z.string(), displayName: z.string(), timeZone: z.string(), today: z.string(),
   days: z.array(DayCapacitySchema), allocations: z.array(WorkAllocationSchema),
@@ -306,7 +308,7 @@ export const TeamPlanPersonSchema = z.object({
 export type TeamPlanPerson = z.infer<typeof TeamPlanPersonSchema>;
 export const TeamPlanSchema = z.object({
   from: z.string(), to: z.string(), today: z.string(), timeZone: z.string(), people: z.array(TeamPlanPersonSchema),
-  usableMinutes: z.number(), confirmedMinutes: z.number(), remainingConfirmedMinutes: z.number(), allocationCount: z.number(),
+  usableMinutes: z.number(), confirmedMinutes: z.number(), tentativeMinutes: z.number().default(0), remainingConfirmedMinutes: z.number(), projectedRemainingMinutes: z.number().default(0), allocationCount: z.number(),
   canScheduleOthers: z.boolean(), canOverride: z.boolean(),
 });
 export type TeamPlan = z.infer<typeof TeamPlanSchema>;
@@ -317,7 +319,40 @@ export const TeamUnscheduledWorkSchema = z.object({
 });
 export type TeamUnscheduledWork = z.infer<typeof TeamUnscheduledWorkSchema>;
 export type TeamPlanQuery = { from?: string | null; to?: string | null; teamId?: string | null; departmentId?: string | null; skills?: string[]; matchAll?: boolean };
-export type WorkAllocationInput = { ticketId: string; appUserId: string; start: string; end: string; isFixed?: boolean; note?: string | null; overrideReason?: string | null };
+// ---- Workforce: advanced planning (internal only) ----------------------------------------------
+export const PlanningRequirementSchema = z.object({
+  ticketId: z.string(), requiredMinutes: z.number().nullable(), earliestStart: z.string().nullable(), latestEnd: z.string().nullable(), splittable: z.boolean(),
+  requiredSkillId: z.string().nullable(), requiredSkillName: z.string().nullable(), note: z.string().nullable(),
+  confirmedMinutes: z.number(), tentativeMinutes: z.number(), remainingMinutes: z.number().nullable(), updatedByName: z.string().nullable(), updatedAt: z.string().nullable(),
+});
+export type PlanningRequirement = z.infer<typeof PlanningRequirementSchema>;
+export type PlanningRequirementInput = { requiredMinutes: number | null; earliestStart: string | null; latestEnd: string | null; splittable: boolean; requiredSkillId: string | null; note: string | null };
+/** reason: 1 awaiting planning, 2 no technician assigned, 3 insufficient capacity before the due date. due: 0 none, 1 tomorrow, 2 today, 3 overdue. */
+export const PlanningQueueItemSchema = z.object({
+  work: TeamUnscheduledWorkSchema, requiredMinutes: z.number().nullable(), splittable: z.boolean(), earliestStart: z.string().nullable(), latestEnd: z.string().nullable(),
+  requiredSkillName: z.string().nullable(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), remainingMinutes: z.number().nullable(),
+  reason: z.number(), due: z.number(), freeBeforeDueMinutes: z.number().nullable(), ageDays: z.number(),
+});
+export type PlanningQueueItem = z.infer<typeof PlanningQueueItemSchema>;
+export const PlanningQueueSchema = z.object({
+  from: z.string(), to: z.string(), items: z.array(PlanningQueueItemSchema),
+  demandMinutes: z.number(), itemsWithoutEstimate: z.number(), availableMinutes: z.number(), shortageMinutes: z.number(), peopleCounted: z.number(),
+});
+export type PlanningQueue = z.infer<typeof PlanningQueueSchema>;
+export const PlanPieceSchema = z.object({ start: z.string(), end: z.string(), minutes: z.number() });
+export type PlanPiece = z.infer<typeof PlanPieceSchema>;
+export const PlanPreviewSchema = z.object({
+  ticketId: z.string(), appUserId: z.string(), personName: z.string(), timeZone: z.string(),
+  earliestStart: z.string(), latestEnd: z.string(), requiredMinutes: z.number(), splittable: z.boolean(), tentative: z.boolean(),
+  pieces: z.array(PlanPieceSchema), allocatedMinutes: z.number(), unallocatedMinutes: z.number(), warnings: z.array(z.string()),
+  freeMinutesInWindow: z.number(), longestFreeMinutes: z.number(), planToken: z.string(),
+});
+export type PlanPreview = z.infer<typeof PlanPreviewSchema>;
+export type PlanPreviewRequest = { ticketId: string; appUserId: string; earliest: string; latest: string; minutes: number; splittable?: boolean; tentative?: boolean; minChunk?: number };
+export const PlanChangedSchema = z.object({ stale: z.boolean(), preview: PlanPreviewSchema });
+export const PlanConfirmedSchema = z.object({ allocations: z.array(WorkAllocationSchema), allocatedMinutes: z.number(), remainingMinutes: z.number().nullable() });
+export type PlanConfirmed = z.infer<typeof PlanConfirmedSchema>;
+export type WorkAllocationInput = { ticketId: string; appUserId: string; start: string; end: string; isFixed?: boolean; note?: string | null; overrideReason?: string | null; tentative?: boolean };
 export type WorkAllocationUpdate = { start: string; end: string; version: number; isFixed?: boolean | null; note?: string | null; overrideReason?: string | null };
 export type WorkAllocationReassign = { appUserId: string; version: number; start?: string | null; end?: string | null; overrideReason?: string | null };
 export type InternalWorkInput = { boardId: string; title: string; description?: string | null; clientCompanyId?: string | null; start: string; end: string; priority?: string | null; note?: string | null; overrideReason?: string | null };
@@ -647,6 +682,27 @@ export const api = {
   // ── Team scheduler ── everyone the viewer may see, their days and what is planned; the group's unscheduled work.
   teamPlan: (q: TeamPlanQuery) => request(`/api/workforce/plan/team?${teamPlanQs(q)}`, TeamPlanSchema) as Promise<TeamPlan>,
   teamUnscheduled: (q: TeamPlanQuery) => request(`/api/workforce/plan/unscheduled/team?${teamPlanQs(q)}`, z.array(TeamUnscheduledWorkSchema)) as Promise<TeamUnscheduledWork[]>,
+  // ── Advanced planning ── tentative work, what the work needs, the queue, previews.
+  confirmPlannedWork: (id: string, body: { version: number; overrideReason?: string | null }) =>
+    request(`/api/workforce/plan/${id}/confirm`, WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
+  makeTentative: (id: string, body: { version: number }) =>
+    request(`/api/workforce/plan/${id}/tentative`, WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
+  planningRequirement: (ticketId: string) => request(`/api/workforce/plan/requirements/${ticketId}`, PlanningRequirementSchema) as Promise<PlanningRequirement>,
+  setPlanningRequirement: (ticketId: string, body: PlanningRequirementInput) =>
+    request(`/api/workforce/plan/requirements/${ticketId}`, PlanningRequirementSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<PlanningRequirement>,
+  planningQueue: (q: TeamPlanQuery & { horizonDays?: number }) => {
+    const qs = teamPlanQs(q);
+    return request(`/api/workforce/plan/queue?${qs}${q.horizonDays ? `&horizonDays=${q.horizonDays}` : ''}`, PlanningQueueSchema) as Promise<PlanningQueue>;
+  },
+  planPreview: (q: PlanPreviewRequest) => {
+    const qs = new URLSearchParams({ ticketId: q.ticketId, appUserId: q.appUserId, earliest: q.earliest, latest: q.latest, minutes: String(q.minutes) });
+    if (q.splittable) qs.set('splittable', 'true');
+    if (q.tentative) qs.set('tentative', 'true');
+    if (q.minChunk) qs.set('minChunk', String(q.minChunk));
+    return request(`/api/workforce/plan/preview?${qs}`, PlanPreviewSchema) as Promise<PlanPreview>;
+  },
+  confirmPlanPreview: (body: { request: { ticketId: string; appUserId: string; earliestStart: string; latestEnd: string; requiredMinutes: number; splittable: boolean; tentative: boolean; minChunkMinutes: number }; pieces: PlanPiece[]; planToken: string; overrideReason?: string | null; note?: string | null }) =>
+    request('/api/workforce/plan/preview/confirm', PlanConfirmedSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<PlanConfirmed>,
   cancelPlannedWork: (id: string, reason?: string | null) =>
     request(`/api/workforce/plan/${id}${reason ? `?reason=${encodeURIComponent(reason)}` : ''}`, WorkAllocationSchema, { method: 'DELETE' }) as Promise<WorkAllocation>,
   capacityExceptions: (userId: string, from?: string | null, to?: string | null) => {

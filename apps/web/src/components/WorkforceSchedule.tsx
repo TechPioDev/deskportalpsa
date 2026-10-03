@@ -4,14 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, ArrowRightLeft, CalendarPlus, ChevronLeft, ChevronRight, ExternalLink, GripVertical, ListTodo, Lock, Pencil, RefreshCw, Search, Trash2, UserSearch, X,
+  AlertTriangle, ArrowRightLeft, CalendarPlus, Check, ChevronLeft, ChevronRight, ExternalLink, GripVertical, ListTodo, Lock, Pencil, RefreshCw, Search, Trash2, UserSearch, X,
 } from 'lucide-react';
 import {
   api, ApiError, type DayCapacity, type TeamPlan, type TeamPlanPerson, type TeamUnscheduledWork, type WorkAllocation, type ConflictProblem,
 } from '@/lib/api';
 import { hours } from '@/components/Workforce';
 import { addDays, fmtDay, fmtSlot, fmtTime, GroupAndSkillFilters } from '@/components/WorkforceCapacity';
-import { CONFLICT_NAMES, conflictProblem, PlanWorkDialog, ReassignDialog, TicketPickerDialog, useDialog, whoPlanned, type PlanTarget } from '@/components/WorkforcePlan';
+import { CONFLICT_NAMES, ConfirmWorkDialog, conflictProblem, PlanWorkDialog, ReassignDialog, TentativeChip, TicketPickerDialog, useDialog, whoPlanned, type PlanTarget } from '@/components/WorkforcePlan';
 import { type Axis, buildAxis, clock, dateOf, lanes, minutesBetween, place, atPointer, snap } from '@/lib/timeline';
 
 const field = 'rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm outline-none focus:border-brand disabled:opacity-60';
@@ -117,6 +117,7 @@ export function TeamScheduleWorkspace({ viewerId, initialDate, initialView, canP
     | { kind: 'plan'; target: PlanTarget; personId: string; startIso: string | null; minutes: number | null }
     | { kind: 'move'; allocation: WorkAllocation }
     | { kind: 'reassign'; allocation: WorkAllocation }
+    | { kind: 'confirm'; allocation: WorkAllocation }
     | null>(null);
   const [pending, setPending] = useState<Pending>({});
   const [notice, setNotice] = useState<Notice>(null);
@@ -202,6 +203,12 @@ export function TeamScheduleWorkspace({ viewerId, initialDate, initialView, canP
     onSuccess: () => { setSelected(null); refresh(); },
     onError: (err) => setNotice({ tone: 'error', text: (err as Error).message }),
   });
+  // Committed work back to pencil: it stops taking confirmed capacity. Schedulers only; the server says so otherwise.
+  const pencil = useMutation({
+    mutationFn: (a: WorkAllocation) => api.makeTentative(a.id, { version: a.version }),
+    onSuccess: () => { setSelected(null); refresh(); setNotice({ tone: 'info', text: 'Pencilled in. It no longer takes confirmed capacity.' }); },
+    onError: (err) => setNotice({ tone: 'error', text: (err as Error).message }),
+  });
 
   const onDropMove = useCallback((a: WorkAllocation, personId: string, startMs: number) => {
     const length = Date.parse(a.endsAt) - Date.parse(a.startsAt);
@@ -222,7 +229,7 @@ export function TeamScheduleWorkspace({ viewerId, initialDate, initialView, canP
     setDialog({ kind: 'pick', personId: p.appUserId, personName: p.displayName, startIso });
   }, []);
 
-  const totals = plan ? { usable: plan.usableMinutes, planned: plan.confirmedMinutes, free: plan.remainingConfirmedMinutes, blocks: plan.allocationCount } : null;
+  const totals = plan ? { usable: plan.usableMinutes, planned: plan.confirmedMinutes, tentative: plan.tentativeMinutes, free: plan.remainingConfirmedMinutes, projected: plan.projectedRemainingMinutes, blocks: plan.allocationCount } : null;
 
   return (
     <div className="space-y-3">
@@ -243,9 +250,10 @@ export function TeamScheduleWorkspace({ viewerId, initialDate, initialView, canP
           </select>
         )}
         <span className="text-xs text-[var(--muted)]">Times in {plan?.timeZone ?? '…'}</span>
-        <span className="ml-auto flex items-center gap-2">
+        <span className="ml-auto flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => setFinding(true)} className={btn}><UserSearch size={14} /> Find available technician</button>
           <button type="button" aria-pressed={queueOpen} onClick={() => setQueueOpen((v) => !v)} className={btn}><ListTodo size={14} /> Unscheduled work{queue ? ` (${queue.length})` : ''}</button>
+          <Link href="/dashboard/workforce/queue" className={btn}>Planning queue</Link>
           <button type="button" onClick={() => refetch()} aria-label="Refresh" className="rounded-lg border border-[var(--border)] p-1.5 hover:bg-[var(--bg)]"><RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} /></button>
         </span>
       </section>
@@ -282,10 +290,12 @@ export function TeamScheduleWorkspace({ viewerId, initialDate, initialView, canP
 
       {/* ---- summary ---- */}
       {totals && (
-        <dl className="grid grid-cols-2 gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm sm:grid-cols-6" aria-label="Capacity summary">
           <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Capacity</dt><dd className="text-lg font-semibold tabular-nums">{hours(totals.usable)}</dd></div>
           <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Planned</dt><dd className="text-lg font-semibold tabular-nums">{hours(totals.planned)}</dd></div>
+          <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Tentative</dt><dd className="text-lg font-semibold tabular-nums text-sky-700 dark:text-sky-300">{hours(totals.tentative)}</dd></div>
           <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Free</dt><dd className="text-lg font-semibold tabular-nums text-green-700 dark:text-green-300">{hours(totals.free)}</dd></div>
+          <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Free if confirmed</dt><dd className="text-lg font-semibold tabular-nums">{hours(totals.projected)}</dd></div>
           <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Pieces of work</dt><dd className="text-lg font-semibold tabular-nums">{totals.blocks}</dd></div>
         </dl>
       )}
@@ -318,7 +328,9 @@ export function TeamScheduleWorkspace({ viewerId, initialDate, initialView, canP
       {selected && (
         <AllocationDrawer allocation={people.flatMap((p) => p.allocations).find((a) => a.id === selected.id) ?? selected} viewerId={viewerId} onClose={() => setSelected(null)}
           onMove={(a) => setDialog({ kind: 'move', allocation: a })} onReassign={(a) => setDialog({ kind: 'reassign', allocation: a })}
-          onRemove={(a) => { if (window.confirm(`Take ${a.reference ?? 'this work'} out of the plan? The ticket itself is not changed.`)) remove.mutate(a); }} />
+          onRemove={(a) => { if (window.confirm(`Take ${a.reference ?? 'this work'} out of the plan? The ticket itself is not changed.`)) remove.mutate(a); }}
+          onConfirm={(a) => setDialog({ kind: 'confirm', allocation: a })}
+          onPencil={(a) => { if (window.confirm(`Pencil ${a.reference ?? 'this work'} back in? It stops taking confirmed capacity until it is confirmed again.`)) pencil.mutate(a); }} />
       )}
       {finding && plan && shown && (
         <FindPanel date={shown} filters={f} people={plan.people} onClose={() => setFinding(false)}
@@ -330,6 +342,7 @@ export function TeamScheduleWorkspace({ viewerId, initialDate, initialView, canP
       {dialog?.kind === 'plan' && <PlanWorkDialog target={dialog.target} personId={dialog.personId} lockPerson={!!dialog.startIso} initialStart={dialog.startIso} initialMinutes={dialog.minutes} viewerId={viewerId} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); refresh(); }} />}
       {dialog?.kind === 'move' && <PlanWorkDialog allocation={dialog.allocation} personId={dialog.allocation.appUserId} viewerId={viewerId} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); setSelected(null); refresh(); }} />}
       {dialog?.kind === 'reassign' && <ReassignDialog allocation={dialog.allocation} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); setSelected(null); refresh(); }} />}
+      {dialog?.kind === 'confirm' && <ConfirmWorkDialog allocation={dialog.allocation} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); setSelected(null); refresh(); }} />}
     </div>
   );
 }
@@ -597,10 +610,12 @@ function Block({ a, viewerId, axisZone, left, width, top, height, pxWidth, onOpe
 }) {
   const src = sourceOf(a.reference);
   const movable = a.canEdit || a.canReassign;
+  const tentative = a.status === 2;
   const tone = a.ticketFinished
     ? 'border-[var(--border)] bg-[var(--bg)] text-[var(--muted)] line-through'
+    : tentative ? 'border-dashed border-sky-500 bg-sky-50/70 text-sky-950 dark:bg-sky-950/40 dark:text-sky-100'
     : a.isFixed ? 'border-amber-400 bg-amber-50 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100' : 'border-brand/60 bg-brand/15 text-[var(--fg)]';
-  const label = `${a.reference ?? 'Work'}${a.title ? `, ${a.title}` : ''}, ${fmtSlot({ start: a.startsAt, end: a.endsAt }, a.timeZone)}${a.timeZone !== axisZone ? ` (${a.timeZone})` : ''}, ${hours(a.plannedMinutes)}${a.isFixed ? ', fixed' : ''}${a.ticketFinished ? ', ticket finished' : ''}`;
+  const label = `${a.reference ?? 'Work'}${a.title ? `, ${a.title}` : ''}, ${fmtSlot({ start: a.startsAt, end: a.endsAt }, a.timeZone)}${a.timeZone !== axisZone ? ` (${a.timeZone})` : ''}, ${hours(a.plannedMinutes)}${tentative ? ', tentative' : ''}${a.isFixed ? ', fixed' : ''}${a.ticketFinished ? ', ticket finished' : ''}`;
   return (
     <div className="absolute" style={{ left: `${left}%`, width: `${width}%`, top, height }}>
       <button type="button" draggable={movable} onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen} aria-label={label} title={label}
@@ -613,7 +628,7 @@ function Block({ a, viewerId, axisZone, left, width, top, height, pxWidth, onOpe
             {pxWidth > 110 && <span className={`${chip} border border-current/30`} aria-label={src.name} title={src.name}>{src.short}</span>}
           </span>
           {pxWidth > 90 && height > 24 && <span className="block truncate">{a.ticketVisible ? a.title : 'Work you cannot open'}</span>}
-          {pxWidth > 150 && height > 38 && (a.clientName || a.plannedMinutes) && <span className="block truncate text-[10px] opacity-80">{[a.clientName, hours(a.plannedMinutes)].filter(Boolean).join(' · ')}</span>}
+          {pxWidth > 150 && height > 38 && (a.clientName || a.plannedMinutes) && <span className="block truncate text-[10px] opacity-80">{[a.clientName, hours(a.plannedMinutes), tentative ? 'tentative' : ''].filter(Boolean).join(' · ')}</span>}
         </span>
       </button>
       {resize && (
@@ -631,16 +646,19 @@ function CapacityBar({ day, compact = false }: { day: DayCapacity; compact?: boo
   const scale = Math.max(day.usableMinutes, day.confirmedMinutes, 1);
   const planned = Math.min(day.confirmedMinutes, day.usableMinutes);
   const overBy = Math.max(0, day.confirmedMinutes - day.usableMinutes);
-  const free = Math.max(0, day.usableMinutes - day.confirmedMinutes);
+  // Pencilled-in work sits inside the free time: it is drawn there, and the free figure stays confirmed-only.
+  const tentative = Math.min(day.tentativeMinutes, Math.max(0, day.usableMinutes - day.confirmedMinutes));
+  const free = Math.max(0, day.usableMinutes - day.confirmedMinutes - tentative);
   return (
     <div className={compact ? 'pt-1' : 'space-y-1'}>
-      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg)]" role="img" aria-label={`${hours(day.confirmedMinutes)} planned of ${hours(day.usableMinutes)} usable${overBy ? `, ${hours(overBy)} over` : ''}`}>
+      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg)]" role="img" aria-label={`${hours(day.confirmedMinutes)} planned of ${hours(day.usableMinutes)} usable${tentative ? `, ${hours(day.tentativeMinutes)} tentative` : ''}${overBy ? `, ${hours(overBy)} over` : ''}`}>
         <span className="bg-brand" style={{ width: `${(planned / scale) * 100}%` }} />
+        {tentative > 0 && <span className="bg-sky-400/70" style={{ width: `${(tentative / scale) * 100}%` }} />}
         <span className="bg-green-400/70" style={{ width: `${(free / scale) * 100}%` }} />
         {overBy > 0 && <span className="bg-red-500" style={{ width: `${(overBy / scale) * 100}%` }} />}
       </div>
       <div className="text-[11px] tabular-nums text-[var(--muted)]">
-        {hours(day.confirmedMinutes)} planned / {hours(day.usableMinutes)}{overBy ? <span className="text-red-600 dark:text-red-400"> · {hours(overBy)} over</span> : ` · ${hours(day.remainingConfirmedMinutes)} free`}
+        {hours(day.confirmedMinutes)} planned / {hours(day.usableMinutes)}{overBy ? <span className="text-red-600 dark:text-red-400"> · {hours(overBy)} over</span> : ` · ${hours(day.remainingConfirmedMinutes)} free`}{day.tentativeMinutes > 0 && !overBy ? <span className="text-sky-700 dark:text-sky-300"> · {hours(day.tentativeMinutes)} tentative</span> : null}
       </div>
     </div>
   );
@@ -690,7 +708,7 @@ function WeekGrid({ people, viewerId, onPickDay }: { people: TeamPlanPerson[]; v
                     <button type="button" onClick={() => onPickDay(d.date)} className="w-full rounded-lg border border-transparent p-1 text-left hover:border-[var(--border)] hover:bg-[var(--bg)]"
                       aria-label={`${p.displayName}, ${fmtDay(d.date)}: ${state ?? `${hours(d.confirmedMinutes)} planned of ${hours(d.usableMinutes)}, ${items.length} pieces of work`}. Open the day`}>
                       {state ? <span className="text-xs text-[var(--muted)]">{state}</span> : <CapacityBar day={d} compact />}
-                      {items.slice(0, 3).map((a) => <span key={a.id} className="block truncate text-[11px]" title={whoPlanned(a, viewerId)}>{a.isFixed ? '🔒 ' : ''}{a.reference} · {hours(a.plannedMinutes)}</span>)}
+                      {items.slice(0, 3).map((a) => <span key={a.id} className={`block truncate text-[11px] ${a.status === 2 ? 'text-sky-700 dark:text-sky-300' : ''}`} title={`${whoPlanned(a, viewerId)}${a.status === 2 ? ' · tentative' : ''}`}>{a.isFixed ? '🔒 ' : ''}{a.reference} · {hours(a.plannedMinutes)}{a.status === 2 ? ' · tentative' : ''}</span>)}
                       {items.length > 3 && <span className="block text-[11px] text-[var(--muted)]">+{items.length - 3} more</span>}
                     </button>
                   </td>
@@ -815,8 +833,9 @@ function UnscheduledQueue({ rows, loading, error, narrow, people, canPlan, viewe
 
 // ---- the detail drawer ------------------------------------------------------------------------------
 
-function AllocationDrawer({ allocation: a, viewerId, onClose, onMove, onReassign, onRemove }: {
+function AllocationDrawer({ allocation: a, viewerId, onClose, onMove, onReassign, onRemove, onConfirm, onPencil }: {
   allocation: WorkAllocation; viewerId: string; onClose: () => void; onMove: (a: WorkAllocation) => void; onReassign: (a: WorkAllocation) => void; onRemove: (a: WorkAllocation) => void;
+  onConfirm: (a: WorkAllocation) => void; onPencil: (a: WorkAllocation) => void;
 }) {
   useDialog(onClose);
   const src = sourceOf(a.reference);
@@ -826,7 +845,7 @@ function AllocationDrawer({ allocation: a, viewerId, onClose, onMove, onReassign
       <div className="flex h-full w-full max-w-md flex-col gap-3 overflow-y-auto border-l border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2"><span className="font-mono text-xs text-[var(--muted)]">{a.reference}</span><span className={`${chip} border border-[var(--border)]`}>{src.name}</span>{a.isFixed && <span className={`${chip} bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200`}><Lock size={10} /> Fixed</span>}{a.ticketFinished && <span className={`${chip} bg-[var(--bg)]`}>Ticket finished</span>}</div>
+            <div className="flex items-center gap-2"><span className="font-mono text-xs text-[var(--muted)]">{a.reference}</span><span className={`${chip} border border-[var(--border)]`}>{src.name}</span><TentativeChip a={a} />{a.isFixed && <span className={`${chip} bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200`}><Lock size={10} /> Fixed</span>}{a.ticketFinished && <span className={`${chip} bg-[var(--bg)]`}>Ticket finished</span>}</div>
             <h2 className="pt-1 text-base font-semibold">{a.ticketVisible ? a.title : 'Work you cannot open'}</h2>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="rounded p-1 text-[var(--muted)] hover:bg-[var(--bg)]"><X size={16} /></button>
@@ -836,7 +855,7 @@ function AllocationDrawer({ allocation: a, viewerId, onClose, onMove, onReassign
           {row('Client', a.clientName ?? '—')}
           {row('Date', fmtDay(dateOf(Date.parse(a.startsAt), a.timeZone), { weekday: 'long', day: 'numeric', month: 'long' }))}
           {row('Time', `${fmtSlot({ start: a.startsAt, end: a.endsAt }, a.timeZone)} (${a.timeZone})`)}
-          {row('Planned', hours(a.plannedMinutes))}
+          {row('Planned', `${hours(a.plannedMinutes)}${a.status === 2 ? ' · tentative, takes no confirmed capacity' : ''}`)}
           {row('Ticket status', a.ticketStatus ?? '—')}
           {row('Scheduled', `${whoPlanned(a, viewerId)}${a.isFixed ? ' · fixed in place' : ' · flexible'}`)}
           {a.note && row('Note', a.note)}
@@ -844,6 +863,8 @@ function AllocationDrawer({ allocation: a, viewerId, onClose, onMove, onReassign
         </dl>
         <div className="flex flex-wrap gap-2">
           {a.ticketVisible && <Link href={`/dashboard/tickets/${a.ticketId}`} className={btn}><ExternalLink size={14} /> Open ticket</Link>}
+          {a.canConfirm && <button type="button" onClick={() => onConfirm(a)} className={`${btn} border-sky-500 text-sky-800 dark:text-sky-200`}><Check size={14} /> Confirm</button>}
+          {a.status === 1 && a.canReassign && !a.ticketFinished && <button type="button" onClick={() => onPencil(a)} className={btn}>Pencil in</button>}
           {a.canEdit && <button type="button" onClick={() => onMove(a)} className={btn}><Pencil size={14} /> Reschedule</button>}
           {a.canReassign && <button type="button" onClick={() => onReassign(a)} className={btn}><ArrowRightLeft size={14} /> Give to someone else</button>}
           {a.canCancel && <button type="button" onClick={() => onRemove(a)} className={`${btn} text-red-700 dark:text-red-300`}><Trash2 size={14} /> Remove from plan</button>}

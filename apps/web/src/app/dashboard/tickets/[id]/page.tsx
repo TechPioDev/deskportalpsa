@@ -17,6 +17,7 @@ import { TasksPanel } from '@/components/TasksPanel';
 import { EditBoardTicketForm, EditDetailsButton, ResolutionPrompt, TicketHistoryPanel, finishes } from '@/components/BoardTicketTools';
 import { RelatedTicketsPanel, ReviewBanner } from '@/components/TicketReviewAndLinks';
 import { TicketPlanPanel } from '@/components/WorkforcePlan';
+import { PlanningPreviewDialog, RequirementEditor } from '@/components/WorkforcePlanning';
 import { isResolvedStatus } from '@/lib/status';
 import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
@@ -454,6 +455,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // Asked for by the followers panel as well as the picker: adding a colleague needs the same staff
   // list, and both are a provider round trip most visits to a ticket never need.
   const [needPeople, setNeedPeople] = useState(false);
+  const [planWindow, setPlanWindow] = useState(false);
   const { data: assignOpts } = useQuery({
     queryKey: ['assignees', id],
     queryFn: () => api.ticketAssignees(id),
@@ -1017,7 +1019,16 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 module on; a client's page never renders it and the API would refuse it anyway. */}
             {isStaff && me?.features?.workforce === true && me.permissions.includes('schedule.view') && ticket && (
               <TicketPlanPanel ticketId={id} reference={ticket.number ?? (ticket.externalTicketId ? `#${ticket.externalTicketId}` : 'Ticket')} title={ticket.title}
-                viewerId={me.userId ?? null} canPlan={me.permissions.includes('schedule.manage') && !isResolvedStatus(ticket.portalStatus)} />
+                viewerId={me.userId ?? null} canPlan={me.permissions.includes('schedule.manage') && !isResolvedStatus(ticket.portalStatus)}
+                onPlanWindow={me.userId ? () => setPlanWindow(true) : undefined}>
+                {/* What the work needs (effort, window, splittable, skill): planning's own row beside the ticket, never on it. */}
+                <RequirementEditor ticketId={id} canEdit={me.permissions.includes('schedule.manage') && !isResolvedStatus(ticket.portalStatus)} timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'} compact />
+              </TicketPlanPanel>
+            )}
+            {planWindow && me?.userId && ticket && (
+              <PlanningPreviewDialog target={{ ticketId: id, reference: ticket.number ?? (ticket.externalTicketId ? `#${ticket.externalTicketId}` : 'Ticket'), title: ticket.title }}
+                personId={ticket.assignedAppUserId ?? null} viewerId={me.userId} timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}
+                onClose={() => setPlanWindow(false)} onSaved={() => setPlanWindow(false)} />
             )}
 
             {/* Time entries (query disabled without tickets.time.log, so this stays absent for clients) */}

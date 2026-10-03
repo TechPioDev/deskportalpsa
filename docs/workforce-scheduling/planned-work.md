@@ -176,11 +176,15 @@ it to change it". Proven by
 ## Status lifecycle
 
 ```
-Planned (1)  ──cancelled by a person──▶  Cancelled (5)
-             ──released: the ticket finished before the planned time──▶  Cancelled (5)
+Tentative (2) ──confirmed (checked again as committed work)──▶  Planned (1)
+Planned (1)   ──pencilled in by a scheduler──▶  Tentative (2)
+Planned (1) / Tentative (2)  ──cancelled by a person──▶  Cancelled (5)
+                             ──released: the ticket finished before the planned time──▶  Cancelled (5)
 ```
 
-Deliberately two states: in the plan, or not any more. Only `Planned` takes capacity.
+Two live states and one end state. Only `Planned` takes confirmed capacity; `Tentative` (Phase 5,
+[advanced-planning.md](advanced-planning.md#tentative-and-confirmed-work)) is in the plan, keeps the
+ticket off the unscheduled list, is shown and projected, and takes nothing until it is confirmed.
 
 - A cancelled allocation is kept, with when, by whom and why (`CancelledAt`, `CancelledByUserId`,
   `CancelReason`, up to 200 characters). Nothing is deleted except with the ticket or the person
@@ -230,7 +234,7 @@ gate on fresh data: what a screen showed as free a moment ago is not a reservati
 |---|---|
 | **Block** (`UnavailableConflict`, `NotSchedulable`) | Refused. Nobody can override: change the time away, or switch "offered for planned work" back on |
 | **Overridable** (`HardConflict`, `OutsideWorkingWindow`, `OverCapacity`, `BreakConflict`) | Refused unless the caller holds `schedule.override` **and** gives a reason of at least 5 characters |
-| **Warning** (`TentativeConflict`, `SkillWarning`) | Never refuses. The messages are kept in the audit entry (`warnings`) |
+| **Warning** (`TentativeConflict`, `SkillWarning`, `DueDateRisk` from Phase 5) | Never refuses. The messages are kept in the audit entry (`warnings`); a `DueDateRisk` also travels in the 409 payload when something else refuses, so the screen names it |
 
 `BreakConflict` was a warning in Phase 2 and is **overridable** from Phase 3: work placed over a
 break takes capacity the break does not offer, so the planned duration and the capacity taken

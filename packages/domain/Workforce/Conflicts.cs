@@ -19,6 +19,8 @@ public enum ConflictType
     SkillWarning = 7,
     /// <summary>The person is not offered for planned work at all (switched off, or their account is inactive).</summary>
     NotSchedulable = 8,
+    /// <summary>The work would end after its due date. Worth knowing; the due date itself is never touched.</summary>
+    DueDateRisk = 9,
 }
 
 /// <summary>What a conflict means for whoever is trying to place the work.</summary>
