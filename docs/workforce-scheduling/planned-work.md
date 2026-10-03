@@ -15,6 +15,55 @@ ticket as always."
 does not make who is planned on it, or when, theirs ([permissions-and-security.md](permissions-and-security.md)
 and [Tenant isolation and client security](#tenant-isolation-and-client-security) below).
 
+## Overview
+
+```
+     Internal        Autotask        ConnectWise
+        |               |                |
+        +---------------+----------------+
+                        v
+                 Unified work item  (the ticket row, whatever its origin)
+                        |
+             +----------+----------+
+             v                     v
+       SELF PLANNING        AUTHORIZED SCHEDULING
+       schedule.manage      schedule.manage at Team,
+       at Own scope         Department or All scope
+             |                     |
+             +----------+----------+
+                        v
+                  Work allocation
+                        |
+            Capacity and conflict validation,
+            under the person's gate
+                        |
+                        v
+                 Technician plan
+                        |
+             +----------+----------+
+             v                     v
+           My plan            My day (later)
+```
+
+Three things the picture leaves out, each covered below:
+
+- **"Authorized scheduling" is a permission scope, not a role name.** Whoever holds `schedule.manage`
+  at Team, Department or All may schedule the people that scope reaches, so a team lead qualifies for
+  their team. Administrator and Manager hold it at All by default; Technician holds it at Own, which
+  is the self-planning path ([Self-planning and authorized scheduling](#self-planning-and-authorized-scheduling)).
+- **Capacity and conflict validation are one pass, with one extra exit.** Working window, time away,
+  "not offered for work", breaks, overlaps and over-capacity come back from a single evaluation
+  against what is really in the plan at that moment, under the person's gate. Blocks stop there;
+  overridable conflicts can be placed by someone holding `schedule.override` who gives a reason,
+  kept on the work ([Conflicts and overrides](#conflicts-and-overrides), [Concurrency](#concurrency)).
+- **Two arrows run the other way.** Scheduling someone on a ticket nobody in the portal holds makes
+  them its portal holder, the only link from allocation back to assignment, and the PSA is never
+  told ([Allocation is not assignment](#allocation-is-not-assignment)). A ticket that finishes
+  releases its future allocations from the worker ([What finishes leaves the plan](#what-finishes-leaves-the-plan)).
+
+"My day" is a later phase: starting and completing work from the plan, and actual time against
+planned. Nothing of it exists yet.
+
 ## One work model
 
 An allocation points at the existing `Ticket` row, whatever the ticket's origin: the team's own
