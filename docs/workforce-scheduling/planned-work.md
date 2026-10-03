@@ -15,6 +15,11 @@ ticket as always."
 does not make who is planned on it, or when, theirs ([permissions-and-security.md](permissions-and-security.md)
 and [Tenant isolation and client security](#tenant-isolation-and-client-security) below).
 
+From Phase 4 the same model has a **second screen**: the team scheduler
+([team-scheduler.md](team-scheduler.md)) shows everyone a scheduler may see on one board and lets
+them drag, drop and resize, but every one of those gestures ends in the writes described here
+(`PUT`, `reassign`, `POST plan`, `DELETE`), under the same rules; it adds two reads and no table.
+
 ## Overview
 
 ```
@@ -345,9 +350,10 @@ Proven by `Work_that_finishes_leaves_future_plans_and_stays_in_past_ones`.
 ## Screens
 
 All under **Workforce** (menu entry for staff with `schedule.view`, module on). The sub-navigation
-is People · **My plan** · My capacity, plus Team capacity and Find available technician for anyone
-who can see more than themselves. Every time is shown in the person's zone ("Times in
-Asia/Kolkata").
+is People · **My plan** · My capacity, plus Team schedule ([team-scheduler.md](team-scheduler.md),
+Phase 4), Team capacity and Find available technician for anyone who can see more than themselves.
+Every time is shown in the person's zone ("Times in Asia/Kolkata"); the team scheduler's axis is the
+one place drawn in the organization's zone, with each person's own zone named beside it.
 
 ### My plan (`/dashboard/workforce/my-plan?date=`)
 
@@ -456,7 +462,8 @@ person's own zone: "5 Oct 2026 14:00–15:30 (Europe/London)".
 | Action | When | Detail |
 |---|---|---|
 | `workforce.allocation.created` | Work placed (incl. internal work) | person, ticketId, reference, method, when, isFixed, overrideReason, overridden (types), warnings, holderSet |
-| `workforce.allocation.moved` | A `PUT` that changes the time (a move or resize) | person, reference, before, after, isFixed, overrideReason, overridden, warnings |
+| `workforce.allocation.moved` | A `PUT` that changes the start (with or without the end): a move | person, reference, before, after, isFixed, overrideReason, overridden, warnings |
+| `workforce.allocation.resized` | A `PUT` that keeps the start and changes only the end: a resize (Phase 4; the team scheduler's edge handle, or a longer duration in Move planned work) | the same fields as `moved` |
 | `workforce.allocation.changed` | A `PUT` that leaves the time alone (note-only or fixed-only) | the same fields; overrideReason and overridden are null |
 | `workforce.allocation.reassigned` | Work given to someone else | reference, from, to, before, after, overrideReason, overridden, warnings, holderSet |
 | `workforce.allocation.cancelled` | Work taken out by a person | person, reference, was, reason |
