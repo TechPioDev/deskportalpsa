@@ -203,9 +203,13 @@ The engine does not know any ticket type. It asks `IWorkAllocationReader` for th
 placed in people's time, so the same capacity works for the team's own tickets, Autotask and
 ConnectWise tickets, and later projects or monitoring work. No ticket entity is duplicated.
 
-**In Phase 2 nothing can be booked yet**, so the registered reader returns no work and confirmed
-and tentative figures are 0. The engine is tested against real allocations through that seam; work
-allocation (the next phase) replaces the one registration.
+From Phase 3 the registered reader is `WorkAllocationReader`, which reads the `work_allocations`
+table ([planned-work.md](planned-work.md)): every allocation in the plan counts as **confirmed**
+work (there is no pencilled-in state yet, so tentative figures stay 0), and a future allocation on a
+ticket that has finished is left out at once, before the worker has cancelled it. The work's id is
+passed on only for tickets the caller may see, so a conflict can name the work to someone who could
+open it and say only "taken" to anyone else. The Phase 2 tests still drive the engine through the
+seam with a fake reader; Phase 3's run the real one.
 
 ## Holidays
 

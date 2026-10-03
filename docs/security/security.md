@@ -66,6 +66,23 @@ workforce permission, if any controller under `api/workforce` becomes reachable 
 a ticket or client-portal response shape gains a workforce field. Conflicts never carry a ticket's
 title, client or number, and name the blocking work only to a caller who may see it.
 
+### Workforce planned work: internal only, and not assignment
+
+Planned work (who is planned to do which ticket when) is staff-only behind `schedule.view`; placing,
+moving, giving away or cancelling it needs the scoped `schedule.manage` (Technician: Own, their own
+plan only; Manager and Administrator: All), and overriding a conflict needs `schedule.override`
+(Manager, Administrator). No client role holds any of them. A plan carries a ticket's reference,
+title and client only to a caller who may see that ticket; otherwise only the time is known. Another
+organization's people, tickets and allocations are "not found", the same words as for an id that
+names nothing. Planning never changes what the PSA says about a ticket and cancelling never touches
+the ticket; the one portal-side effect (someone scheduled on a ticket nobody holds becomes its
+portal holder) is audited as `ticket.assigned.portal` with `viaPlanning`. Every write to a plan
+holds a per-person gate (a `SELECT ... FOR UPDATE` row lock on PostgreSQL) and checks conflicts on
+fresh data, and carries a version so a stale screen cannot overwrite a later change. Every change is
+audited (`workforce.allocation.*`). Tests fail if a client role gains a planning permission, if a
+non-staff sign-in can reach any planning action, or if a client-facing shape gains an `Allocat`,
+`Planned`, `MyPlan` or `Override` field. See `docs/workforce-scheduling/planned-work.md`.
+
 ## Secret handling
 - PSA credentials are encrypted at rest with **AES-256-GCM** (`EncryptedDbSecretStore`), keyed by a
   master key held only in the host's `.env.prod` (`Secrets:EncryptionKey`), never in the database.
