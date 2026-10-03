@@ -548,6 +548,23 @@ that change nothing, so they stay usable while an administrator views the portal
 
 ## Performance
 
+Measured on 3 October 2026 with `CapacityPerformanceTests` (the theory on SQLite on a development
+machine; the last row on PostgreSQL 17 in a throwaway container). Query counts are what is pinned;
+timings are what one run printed and are not a promise.
+
+| People | Allocations | Scheduler day | Scheduler week | Team queue |
+|---|---|---|---|---|
+| 50 | 1,000 | 42 queries, 89 ms (50 blocks) | 42 queries, 122 ms (250 blocks) | 8 queries, 9 ms |
+| 100 | 4,000 | 42 queries, 112 ms (200 blocks) | 42 queries, 150 ms (1,000 blocks) | 8 queries, 9 ms |
+| 500 | 30,000 | 42 queries, 773 ms (1,500 blocks) | 42 queries, 987 ms (7,500 blocks) | 8 queries, 331 ms |
+| 500 (PostgreSQL) | 98,000 | 42 queries, 1,475 ms (3,500 blocks) | 42 queries, 2,813 ms (24,500 blocks) | 8 queries, 1,222 ms |
+
+The query count never moves with the size: the rows' capacity costs what Team capacity costs, the
+planned work is one query for everyone, shaped once, and the queue is eight. The week of 500 people
+carries 24,500 blocks in one response, which is why the board windows its rows past 60 people and
+groups each person's work by date once per render.
+
+
 **Server.** `TeamAsync` costs what Team capacity costs over the days asked for (the calendar loads
 schedules, exceptions, planned work and holidays for everyone shown in a fixed number of queries),
 plus **one** query for everyone's planned work in the window (`AllocationsOnAsync`: the people,
