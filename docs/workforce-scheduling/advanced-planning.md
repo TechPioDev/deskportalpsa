@@ -9,6 +9,7 @@ nothing about any of it ([permissions-and-security.md](permissions-and-security.
 Planning never changes a due date. A due date is the ticket's own (`SlaDueAt`, from the PSA or the
 board); planning reads it to warn and to order the queue, and writes nothing back.
 
+- [Overview](#overview)
 - [Tentative and confirmed work](#tentative-and-confirmed-work)
 - [What the work needs: the planning requirement](#what-the-work-needs-the-planning-requirement)
 - [The planning queue](#the-planning-queue)
@@ -26,6 +27,61 @@ board); planning reads it to warn and to order the queue, and writes nothing bac
 - [Performance](#performance)
 - [Deferred](#deferred)
 - [Troubleshooting](#troubleshooting)
+
+## Overview
+
+The Phase 3 picture ([planned-work.md](planned-work.md#overview)) with what this phase adds: the
+queue in front of planning, and the two states a placed piece of work can be in.
+
+```
+   PIO internal      Autotask      ConnectWise      (future PSA / RMM)
+        |                |              |                  |
+        +----------------+--------------+------------------+
+                                v
+                      Unscheduled work  --->  Planning queue
+                                |              why it waits, DUE TODAY / TOMORROW /
+                                |              OVERDUE, what it needs, the shortage
+                   +------------+------------+
+                   v                         v
+             SELF PLANNING            MANAGER PLANNING
+             own work,                schedule.manage at Team,
+             schedule.manage at Own   Department or All scope
+                   |                         |
+                   +------------+------------+
+                                v
+                 Capacity and conflict check, under the person's gate
+                 (a preview computes the same thing and writes nothing)
+                                v
+                         Work allocation
+                   +------------+------------+
+                   v                         v
+              CONFIRMED                 TENTATIVE
+           takes capacity         projected only, takes none
+                   ^                         |
+                   +------ confirm, checked --+
+                           again as confirmed
+                   |
+          each one is also FIXED or FLEXIBLE
+          (who may move it; unchanged by confirming)
+                                v
+            My plan  .  Team scheduler  .  the ticket's Planned work
+                                v
+                   My day, actual time (Phase 6, not built)
+```
+
+Three things the picture leaves out, each covered below:
+
+- **Fixed and flexible are not a third state.** They say who may move a piece of work
+  ([planned-work.md](planned-work.md#fixed-and-flexible)); tentative and confirmed say whether it
+  takes capacity. Every allocation is one of each, and confirming changes neither.
+- **Confirmed is the usual path, tentative the detour.** Most work is confirmed at placement. Work
+  pencilled in is checked with the tentative rules (overridable conflicts become warnings), and
+  confirming it later runs every check again as committed work, under the gate, so what fitted when
+  it was pencilled in may be refused then ([Tentative and confirmed work](#tentative-and-confirmed-work)).
+- **Every screen reads both states.** The scheduler, My plan and the ticket panel show tentative
+  work dashed and marked; the capacity figures keep it out of confirmed and remaining and show it as
+  projected. The queue is the way in: Schedule, Plan with a window and Find technician all start
+  from a row of it ([The planning queue](#the-planning-queue), [Effort in a window](#effort-in-a-window-preview-then-confirm)).
 
 ## Tentative and confirmed work
 

@@ -69,6 +69,10 @@ Three things the picture leaves out, each covered below:
 "My day" is a later phase: starting and completing work from the plan, and actual time against
 planned. Nothing of it exists yet.
 
+Phase 5 put a planning queue in front of this picture and gave a placed piece of work two states,
+confirmed or tentative; the picture with those in it is in
+[advanced-planning.md](advanced-planning.md#overview).
+
 ## One work model
 
 An allocation points at the existing `Ticket` row, whatever the ticket's origin: the team's own
