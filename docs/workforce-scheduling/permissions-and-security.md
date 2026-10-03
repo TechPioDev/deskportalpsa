@@ -117,4 +117,12 @@ every audit entry; it was always empty before.
 | Capacity exceptions | `workforce.exception.added`, `workforce.exception.updated` (before/after), `workforce.exception.removed` |
 | Planned work (Phase 3, Phase 4) | `workforce.allocation.created`, `workforce.allocation.moved` (before/after, when the start changes), `workforce.allocation.resized` (Phase 4: before/after, when the start is kept and only the end changes, as dragging a block's edge on the team scheduler does), `workforce.allocation.changed` (a note-only or fixed-only change), `workforce.allocation.reassigned` (from/to, before/after), `workforce.allocation.cancelled` (with the reason), `workforce.allocation.released` (the worker, when the ticket finished first; one entry per pass listing every release); `ticket.assigned.portal` with `viaPlanning: true` when planning made someone the holder. Override reasons are written; planning notes are not. The team scheduler adds no event of its own: a drop within a row is a `moved`, on another row a `reassigned`, a resize a `resized` |
 
+| Advanced planning (Phase 5) | `workforce.allocation.created` now carries `status` (Planned / Tentative) and the warnings; `workforce.allocation.confirmed` (tentative → planned, with any override reason and types), `workforce.allocation.made_tentative` (planned → tentative), `workforce.planning.requirement_set` (before/after), `workforce.allocation.plan_confirmed` (a preview confirmed: the pieces with their ids, allocated minutes, the plan token) beside one `created` per piece |
+
+**Phase 5 shapes stay internal.** The client-shape guard (`Nothing_a_client_can_receive_carries_workforce_planning`)
+now also forbids `RequiredMinutes`, `WaitingReason`, `PlanToken` and `Shortage` in any ticket,
+control-panel, knowledge or attachment DTO, so a requirement, a queue item, a preview or a shortage
+figure can never grow onto something a client receives. The planning requirement is its own row
+beside the ticket, never a column on it ([advanced-planning.md](advanced-planning.md#permissions-client-isolation-tenant-isolation)).
+
 View as is read-only, so it can't change a schedule.

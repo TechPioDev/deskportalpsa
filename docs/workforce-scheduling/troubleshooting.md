@@ -40,6 +40,14 @@
 | Unscheduled work is empty on the team schedule | Nothing open is held by, or routed to a team of, the people shown, or all of it is in someone's future plan | "Nothing is waiting: everything open is planned." is the normal state; clear the team and skill filters |
 | A person is not a row on the team schedule | Outside the `schedule.view` scope, inactive, excluded by the team / department / skill filter, or hidden by the search | Widen the scope, reactivate, clear the filters |
 | A block's time in its panel is not where it sits on the axis | The person works in another zone: the axis is in the organization's zone, the panel in theirs (named) | Expected; the row shows "· {zone}" |
+| "This work is not pencilled in." / "This work is not committed." | Confirm on work that is not tentative; Pencil in on work that is not committed | Nothing to do |
+| "Only someone who schedules others can pencil committed work back in." | The person it is planned for tried to take committed work back to tentative | Ask a scheduler, or take it out of the plan |
+| "The plan changed since the preview. Review the new proposal." | The person's time changed between Calculate and Confirm | The dialog shows the new proposal; confirm it or change the window |
+| "Only 7h of 10h fits in the window; 3h remains unallocated." | Less confirmed free time in the window than the effort; nothing is over-booked | Widen the window, plan the rest elsewhere, or correct the estimate |
+| "No single free period of 5h in the window; the longest is 4h." | Continuous work, no stretch long enough | Tick *May be split*, widen the window, or pick someone else |
+| A tentative block has no Confirm | `canConfirm` is false: fixed work scheduled for the viewer, or outside their `schedule.manage` scope | Ask whoever planned it |
+| The queue says *Not enough capacity before the due date* | The holder's confirmed free time on the days up to the due date is less than the remaining effort | The figure beside the reason is the free time; plan it for someone else, split it, or accept the fact |
 
-More in [planned-work.md](planned-work.md#troubleshooting) and
-[team-scheduler.md](team-scheduler.md#troubleshooting).
+More in [planned-work.md](planned-work.md#troubleshooting),
+[team-scheduler.md](team-scheduler.md#troubleshooting) and
+[advanced-planning.md](advanced-planning.md#troubleshooting).

@@ -19,10 +19,12 @@ AppUser (existing identity, +IsSchedulable)
   1-*  CapacityException   capacity_exceptions   tenant | Kind (1 unavailable, 2 additional) | AllDay | FromDate | ToDate
                                                  | StartsAt | EndsAt (instants, part-day only) | TimeZone | Reason | Note
   1-*  WorkAllocation      work_allocations      tenant | TicketId (-> tickets) | StartsAt | EndsAt (instants) | PlannedMinutes
-                                                 | Status (1 planned, 5 cancelled) | Method (1 self, 2 authorized user, 3 automation)
+                                                 | Status (1 planned, 2 tentative, 5 cancelled) | Method (1 self, 2 authorized user, 3 automation)
                                                  | ScheduledByUserId | IsFixed | Note | OverrideReason | OverriddenConflicts | OverriddenByUserId | OverriddenAt
                                                  | CancelledAt | CancelledByUserId | CancelReason | UpdatedByUserId | Version
 Skill                      skills                tenant | Name | NormalizedName | Description | IsActive
+WorkPlanning               work_planning         tenant | TicketId (-> tickets, unique) | RequiredMinutes | EarliestStart | LatestEnd | Splittable
+                                                 | RequiredSkillId | Note | UpdatedByUserId   (Phase 5: what the work needs; what is allocated is derived)
 Ticket                     tickets               (existing, reused unchanged: the work an allocation points at)
 Team / Department / UserTeam / UserDepartment    (existing, reused unchanged)
 ```
@@ -36,6 +38,7 @@ Team / Department / UserTeam / UserDepartment    (existing, reused unchanged)
 | Time zone | Stored per schedule version as an IANA id. |
 | Skill, staff skill | **New**. Certification and expiry are deferred. |
 | Capacity exception | **New** (one table, Phase 2). Capacity planning only: no leave balances, approvals or payroll. |
+| Planning requirement | **New** (one table, Phase 5). What a piece of work needs that the ticket does not say: effort, a window, whether it may be split, a skill. One row per ticket, beside it and never on it, so the ticket shapes a client receives stay as they are. Allocated and remaining effort are derived from the allocations on every read. See [advanced-planning.md](advanced-planning.md). |
 | Work allocation | **New** (one table, Phase 3). WHO is planned to do WHICH work WHEN: it points at the existing `Ticket` row (board, Autotask, ConnectWise, monitoring) and carries no title, client, status or provider of its own. Planned time, never actual time. The engine reads it through `IWorkAllocationReader`, whose registration is now `WorkAllocationReader`. See [planned-work.md](planned-work.md). |
 | Planning vs assignment | An allocation never changes what the PSA says. The one bridge: someone scheduled on a ticket nobody in the portal holds becomes its portal holder (the fact "Take it" records), through the existing `TicketAssignment`. |
 | Holidays | **Reused** (`DeskHoliday`, the SLA calendar): shown on the day, not deducted. |
@@ -113,7 +116,19 @@ Phase 4 (two more reads on `WorkforcePlanController`; details in [team-scheduler
 | `GET plan/team?from&to&teamId&departmentId&skills=a,b&matchAll` | schedule.view | The team scheduler: everyone the caller's scope reaches (narrowed), each day's capacity with planned work counted, the work itself with what the caller may do to it, the sums; today when no dates are given; at most 14 days |
 | `GET plan/unscheduled/team?teamId&departmentId&skills&matchAll` | schedule.view | Open work held by those people or routed to their teams that is in nobody's future plan; at most 100 |
 
-Both are GETs. The board's drags, drops and resizes call the Phase 3 `PUT plan/{id}` and
+Phase 5 (seven more actions on `WorkforcePlanController`; details in [advanced-planning.md](advanced-planning.md#api)):
+
+| Route | Permission | Notes |
+|---|---|---|
+| `POST plan/{id}/confirm` | schedule.manage | Tentative → planned, every check run again as confirmed work; `{ version, overrideReason? }` |
+| `POST plan/{id}/tentative` | schedule.manage | Planned → tentative; schedulers of the person only; `{ version }` |
+| `GET plan/requirements/{ticketId}` | schedule.view | What the work needs and what is allocated (derived) |
+| `PUT plan/requirements/{ticketId}` | schedule.manage | Sets effort, window, splittable, skill, note |
+| `GET plan/queue?teamId&departmentId&skills&matchAll&horizonDays` | schedule.view | The planning queue: unscheduled work with why it waits, urgency, free time before due, the group's demand / available / shortage over the horizon (≤ 14 days) |
+| `GET plan/preview?ticketId&appUserId&earliest&latest&minutes&splittable&tentative&minChunk` | schedule.view | Effort in a window for one person: pieces, unallocated, warnings, a plan token; writes nothing |
+| `POST plan/preview/confirm` | schedule.manage | Writes the pieces as previewed in one transaction, or 409 with a fresh preview when the plan changed |
+
+`POST plan` takes `tentative` on its body. Both of Phase 4's reads are GETs. The board's drags, drops and resizes call the Phase 3 `PUT plan/{id}` and
 `POST plan/{id}/reassign`; a `PUT` that keeps the start and changes only the end is audited as
 `workforce.allocation.resized`.
 
@@ -124,7 +139,7 @@ Both are GETs. The board's drags, drops and resizes call the Phase 3 `PUT plan/{
 ```
 domain      Intervals            set arithmetic over half-open stretches of real time (normalize, subtract, intersect)
             CapacityCalculator   one person, one shift date -> usable, confirmed, tentative, remaining, free slots; FirstFit
-            ConflictEvaluator    a proposed stretch -> conflicts, each Block / Overridable / Warning
+            ConflictEvaluator    a proposed stretch -> conflicts, each Block / Overridable / Warning (nine types from Phase 5: + DueDateRisk)
             (pure: no database, no clock - safe to call again inside the transaction that books work)
 infra       WorkforceCalendar    reads schedules, exceptions, planned work and holidays for N people over a run
                                  of dates in a fixed number of queries, and builds the calculator's inputs
