@@ -138,6 +138,8 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Workforce.IWorkAllocationReader, Workforce.WorkAllocationReader>();
         services.AddScoped<Workforce.PlanningGate>();
         services.AddScoped<Desk.Application.Workforce.IWorkPlanService, Workforce.WorkPlanService>();
+        services.AddScoped<Desk.Application.Workforce.IWorkTimeService, Workforce.WorkTimeService>();
+        services.AddScoped<Tickets.TicketTimeWriter>();
         services.AddScoped<Desk.Application.Workforce.IWorkAllocationReleaser, Workforce.WorkAllocationReleaser>();
         services.AddSingleton<Desk.Application.Workforce.IWorkAllocationReleaseRunner, Workforce.WorkAllocationReleaseRunner>();
         services.AddSingleton(new Desk.Application.Workforce.WorkforceFeatureOptions

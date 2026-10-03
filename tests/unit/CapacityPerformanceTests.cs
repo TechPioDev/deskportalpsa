@@ -120,7 +120,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         else await db.Database.MigrateAsync();
 
         var role = new Role { MspOrganizationId = Org, Name = "Administrator", BuiltInType = RoleType.MspAdministrator };
-        foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage, Permissions.ScheduleManage, Permissions.ScheduleOverride, Permissions.TicketsViewAll })
+        foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage, Permissions.ScheduleManage, Permissions.ScheduleOverride, Permissions.TicketsViewAll, Permissions.TicketsLogTime })
             role.Permissions.Add(new RolePermission { PermissionKey = key, Scope = PermissionScope.All });
         var admin = new AppUser { MspOrganizationId = Org, DisplayName = "Admin", Email = "admin@techpio.test", IsActive = true };
         admin.Roles.Add(new UserRole { RoleId = role.Id });
@@ -179,12 +179,27 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     /// <summary>The real stack: allocations from the table, ticket visibility through the real scope query.</summary>
     private (WorkPlanService Plans, CapacityService Capacity) RealStack(DeskDbContext db, Guid callerId)
     {
+        var (plans, capacity, _) = FullStack(db, callerId);
+        return (plans, capacity);
+    }
+
+    /// <summary>The real services, including the Phase 6 clock, over a real database.</summary>
+    private (WorkPlanService Plans, CapacityService Capacity, WorkTimeService Time) FullStack(DeskDbContext db, Guid callerId)
+    {
         var permissions = new EffectivePermissionService(db);
         var access = new WorkforceAccess(db, _tenant, permissions);
         var scope = new TicketScopeQuery(db, permissions);
         var audit = new AuditWriter(db, new TestCurrentUser(Org, userId: callerId), _tenant, _clock);
         var capacity = new CapacityService(db, access, new WorkAllocationReader(db, scope, _clock), _clock);
-        return (new WorkPlanService(db, access, capacity, scope, new InternalTicketService(db, _tenant, _clock, new RecordingActivity()), new PlanningGate(db), audit, _clock), capacity);
+        var gate = new PlanningGate(db);
+        var plans = new WorkPlanService(db, access, capacity, scope, new InternalTicketService(db, _tenant, _clock, new RecordingActivity()), gate, audit, _clock);
+        var time = new WorkTimeService(db, access, capacity, scope, plans, new NoResolver(), new TicketTimeWriter(db, null!, audit), permissions, gate, audit, _clock);
+        return (plans, capacity, time);
+    }
+
+    private sealed class NoResolver : Desk.Application.Connectors.IConnectorResolver
+    {
+        public Task<Desk.PsaCore.Contracts.IServiceManagementConnector> ResolveAsync(Guid psaConnectionId, CancellationToken ct = default) => throw new NotSupportedException("no PSA in this test");
     }
 
     /// <summary>A board with one open ticket per person, and allocations on it: <paramref name="perPerson"/> per weekday over four weeks.</summary>
@@ -308,6 +323,14 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         var schedulerDay = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday.AddDays(1), Monday.AddDays(1))));
         var schedulerWeek = await MeasureAsync(() => plans.TeamAsync(admin, new TeamPlanQuery(Monday, Monday.AddDays(6))));
         var queue = await MeasureAsync(() => plans.UnscheduledTeamAsync(admin, new TeamPlanQuery()));
+        // Work execution: one person's day (planned against actual, with a clock running), the team today and the active lookup.
+        // The technicians here hold no time-logging permission (bare users), so the administrator runs the clock; the day read is a technician's, through the administrator's scope.
+        var (_, _, time) = FullStack(db, admin);
+        var clockOn = await time.StartAsync(admin, new StartWorkInput(tickets[1]));
+        var myDay = await MeasureAsync(() => time.MyDayAsync(admin, ids[1], Monday.AddDays(1)));
+        var active = await MeasureAsync(() => time.ActiveAsync(admin));
+        var teamToday = await MeasureAsync(() => time.TeamTodayAsync(admin, new TeamPlanQuery(Monday.AddDays(1))));
+        await time.StopAsync(admin, clockOn.Id, new StopWorkInput(clockOn.Version, Discard: true));
         // Advanced planning: the planning queue over a fortnight, and a split preview of ten hours across a week for one person.
         var planningQueue = await MeasureAsync(() => plans.QueueAsync(admin, new TeamPlanQuery(), 14));
         var preview = await MeasureAsync(() => plans.PreviewAsync(admin, new PlanPreviewInput(tickets[1], ids[2],
@@ -329,6 +352,16 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         planningQueue.Commands.Should().BeLessThanOrEqualTo(26);
         preview.Commands.Should().BeLessThanOrEqualTo(29);
         preview.Result.AllocatedMinutes.Should().Be(600);
+        output.WriteLine($"{people} people, {total} allocations | my day: {myDay.Commands} queries, {myDay.Ms} ms ({myDay.Result.Items.Count} items) | active: {active.Commands} queries, {active.Ms} ms | team today: {teamToday.Commands} queries, {teamToday.Ms} ms ({teamToday.Result.People.Count} people)");
+        active.Result.Should().ContainSingle().Which.Status.Should().Be(WorkSessionStatus.Active);
+        myDay.Result.Items.Should().ContainSingle("every allocation of the day is on the person's one ticket").Which.PlannedMinutes.Should().Be(perPerson * 60);
+        teamToday.Result.People.Should().HaveCount(people + 1);
+        teamToday.Result.Working.Should().Be(1, "the administrator's clock");
+        // Constant whatever the size: a day is the person's capacity, their allocations, entries and sessions; the team is one query each over everyone.
+        myDay.Commands.Should().BeLessThanOrEqualTo(27);
+        // The active lookup reads the day the clock started on once (the outside-the-schedule fact): the session plus one capacity day.
+        active.Commands.Should().BeLessThanOrEqualTo(17);
+        teamToday.Commands.Should().BeLessThanOrEqualTo(27);
 
         plan.Result.Allocations.Should().HaveCount(perPerson * 5);
         plan.Result.Days.Where(d => d.IsWorkingDay).Should().OnlyContain(d => d.ConfirmedMinutes == perPerson * 60);
@@ -493,6 +526,35 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         done.Allocations.Should().ContainSingle().Which.Note.Should().Be("On the real engine");
         (await db.WorkAllocations.CountAsync(a => a.TicketId == tickets[5])).Should().Be(2);
         (await plans.RequirementAsync(admin, tickets[5])).RemainingMinutes.Should().Be(0);
+
+        // The clock on the real engine: start, pause (a second segment inserted, not updated), resume, stop; one entry per session, held by the database.
+        var (_, _, clock) = FullStack(db, admin);
+        var session = await clock.StartAsync(admin, new StartWorkInput(tickets[5]));
+        _clock.Advance(TimeSpan.FromMinutes(20));
+        var paused = await clock.PauseAsync(admin, session.Id, new WorkSessionStateInput(session.Version, WorkPauseReason.WaitingOnClient));
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        var resumed = await clock.ResumeAsync(admin, session.Id, new WorkSessionStateInput(paused.Version));
+        _clock.Advance(TimeSpan.FromMinutes(25));
+        (await db.WorkSessionSegments.CountAsync(x => x.SessionId == session.Id)).Should().Be(2, "the resume inserted a second segment");
+        var stopped = await clock.StopAsync(admin, session.Id, new StopWorkInput(resumed.Version, "On the real engine"));
+        (stopped.Status, stopped.ActiveSeconds, stopped.TimeEntrySyncStatus).Should().Be((WorkSessionStatus.Completed, 45 * 60, TimeEntrySyncStatus.Synced));
+        var written = await db.TicketTimeEntries.AsNoTracking().SingleAsync(e => e.WorkSessionId == session.Id);
+        written.Hours.Should().Be(0.75m);
+        var twice = () => db.TicketTimeEntries.Add(new TicketTimeEntry { MspOrganizationId = Org, TicketId = tickets[5], Hours = 0.25m, EntryDate = _clock.GetUtcNow(), WorkSessionId = session.Id, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Synced });
+        twice();
+        var saveTwice = () => db.SaveChangesAsync();
+        await saveTwice.Should().ThrowAsync<DbUpdateException>("one entry per session is a database rule");
+        db.ChangeTracker.Clear();
+        // One running clock per person is a database rule too: a second Active row for the same person is refused.
+        var another = await clock.StartAsync(admin, new StartWorkInput(tickets[3]));
+        db.WorkSessions.Add(new WorkSession { MspOrganizationId = Org, AppUserId = admin, TicketId = tickets[5], Status = WorkSessionStatus.Active, StartedAt = _clock.GetUtcNow(), UpdatedByUserId = admin });
+        var secondClock = () => db.SaveChangesAsync();
+        await secondClock.Should().ThrowAsync<DbUpdateException>("IX_work_sessions_one_active");
+        db.ChangeTracker.Clear();
+        await clock.StopAsync(admin, another.Id, new StopWorkInput(another.Version, Discard: true));
+        var day = await clock.MyDayAsync(admin, null, Desk.Domain.Common.TimeZones.Resolve(Zone) is var z ? DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(session.StartedAt, z).DateTime) : Monday);
+        day.Items.Single(i => i.TicketId == tickets[5]).Should().Match<MyDayItemDto>(i => i.ActualSeconds == 45 * 60 && !i.Planned && i.VarianceMinutes == null, "the administrator's own, unplanned work on the real engine");
+        (await db.AuditLog.CountAsync(a => a.Action.StartsWith("workforce.session."))).Should().Be(6, "started, paused, resumed, stopped for the first clock; started and cancelled for the second");
         // What finished leaves future plans: on a real database too.
         (await db.Tickets.SingleAsync(t => t.Id == internalWork.TicketId)).PortalStatus = "CLOSED";
         await db.SaveChangesAsync();

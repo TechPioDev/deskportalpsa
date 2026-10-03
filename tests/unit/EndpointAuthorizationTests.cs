@@ -150,6 +150,20 @@ public class EndpointAuthorizationTests
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.SetRequirement), [Permissions.ScheduleManage] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Queue), [Permissions.ScheduleView] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Preview), [Permissions.ScheduleView] },
+        // Phase 6: the clock on a piece of work is logging time; a day and the team are schedule reads.
+        { nameof(WorkforceTimeController), nameof(WorkforceTimeController.Active), [Permissions.ScheduleView] },
+        { nameof(WorkforceTimeController), nameof(WorkforceTimeController.Start), [Permissions.TicketsLogTime] },
+        { nameof(WorkforceTimeController), nameof(WorkforceTimeController.Pause), [Permissions.TicketsLogTime] },
+        { nameof(WorkforceTimeController), nameof(WorkforceTimeController.Resume), [Permissions.TicketsLogTime] },
+        { nameof(WorkforceTimeController), nameof(WorkforceTimeController.Stop), [Permissions.TicketsLogTime] },
+        { nameof(WorkforceTimeController), nameof(WorkforceTimeController.MyDay), [Permissions.ScheduleView] },
+        { nameof(WorkforceTimeController), nameof(WorkforceTimeController.TeamToday), [Permissions.ScheduleView] },
+        // The ticket time panel, which a stopped clock writes through: every action needs tickets.time.log.
+        { nameof(TicketTimeController), nameof(TicketTimeController.List), [Permissions.TicketsLogTime] },
+        { nameof(TicketTimeController), nameof(TicketTimeController.LogTime), [Permissions.TicketsLogTime] },
+        { nameof(TicketTimeController), nameof(TicketTimeController.Update), [Permissions.TicketsLogTime] },
+        { nameof(TicketTimeController), nameof(TicketTimeController.Delete), [Permissions.TicketsLogTime] },
+        { nameof(TicketTimeController), nameof(TicketTimeController.Retry), [Permissions.TicketsLogTime] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.ConfirmPreview), [Permissions.ScheduleManage] },
     };
 
@@ -163,7 +177,7 @@ public class EndpointAuthorizationTests
             .Select(p => p.Key).Concat([Permissions.TicketsCreate, Permissions.TicketsAddPublicNote]).ToHashSet();
         // Every controller under api/workforce - found by route, so one added later is covered too.
         var workforce = Controllers.Where(c => (c.GetCustomAttribute<RouteAttribute>()?.Template ?? "").StartsWith("api/workforce", StringComparison.Ordinal)).ToList();
-        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController), typeof(WorkforcePlanController)]);
+        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController), typeof(WorkforcePlanController), typeof(WorkforceTimeController)]);
         foreach (var controller in workforce)
         {
             controller.GetCustomAttributes<AuthorizeAttribute>().Should().NotBeEmpty($"{controller.Name} is never anonymous");
@@ -198,6 +212,11 @@ public class EndpointAuthorizationTests
         // Phase 5's reads too: the requirement, the queue and a preview (which writes nothing) are GETs.
         foreach (var name in new[] { nameof(WorkforcePlanController.Requirement), nameof(WorkforcePlanController.Queue), nameof(WorkforcePlanController.Preview) })
             typeof(WorkforcePlanController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
+        // Phase 6: reading the running clock, a day and the team changes nothing; every clock change is a POST.
+        foreach (var name in new[] { nameof(WorkforceTimeController.Active), nameof(WorkforceTimeController.MyDay), nameof(WorkforceTimeController.TeamToday) })
+            typeof(WorkforceTimeController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
+        foreach (var name in new[] { nameof(WorkforceTimeController.Start), nameof(WorkforceTimeController.Pause), nameof(WorkforceTimeController.Resume), nameof(WorkforceTimeController.Stop) })
+            typeof(WorkforceTimeController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("POST");
     }
 
     [Fact]
@@ -206,7 +225,7 @@ public class EndpointAuthorizationTests
         // A ticket a client can see does not make its planning visible. The shapes the ticket API and
         // the client portal return must not grow a field about schedules, capacity or who is planned
         // when - whatever a later phase adds to the internal side.
-        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override", "RequiredMinutes", "WaitingReason", "PlanToken", "Shortage"];
+        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override", "RequiredMinutes", "WaitingReason", "PlanToken", "Shortage", "Session", "Segment", "ActualSeconds", "MyDay", "TeamToday", "Variance"];
         var clientFacing = typeof(Desk.Application.Tickets.TicketDetailDto).Assembly.GetTypes().Where(t =>
             t.Namespace is "Desk.Application.Tickets" or "Desk.Application.ControlPanel" or "Desk.Application.Knowledge" or "Desk.Application.Attachments"
             && !t.IsInterface && !t.IsEnum && !t.Name.StartsWith('<')).ToList();

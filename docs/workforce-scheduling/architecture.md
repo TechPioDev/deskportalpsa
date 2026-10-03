@@ -25,6 +25,10 @@ AppUser (existing identity, +IsSchedulable)
 Skill                      skills                tenant | Name | NormalizedName | Description | IsActive
 WorkPlanning               work_planning         tenant | TicketId (-> tickets, unique) | RequiredMinutes | EarliestStart | LatestEnd | Splittable
                                                  | RequiredSkillId | Note | UpdatedByUserId   (Phase 5: what the work needs; what is allocated is derived)
+WorkSession                work_sessions         tenant | AppUserId | TicketId (-> tickets) | AllocationId | Status (1 active, 2 paused, 3 completed, 4 cancelled)
+                                                 | PauseReason | StartedAt | EndedAt | ActiveSeconds | TimeEntryId | Note | Version   (Phase 6: the clock on a piece of work)
+  1-*  WorkSessionSegment  work_session_segments tenant | StartedAt | EndedAt | Seconds   (one run of the clock)
+TicketTimeEntry            ticket_time_entries   (existing: the recorded hour; + WorkSessionId, unique where set, Phase 6)
 Ticket                     tickets               (existing, reused unchanged: the work an allocation points at)
 Team / Department / UserTeam / UserDepartment    (existing, reused unchanged)
 ```
@@ -39,6 +43,8 @@ Team / Department / UserTeam / UserDepartment    (existing, reused unchanged)
 | Skill, staff skill | **New**. Certification and expiry are deferred. |
 | Capacity exception | **New** (one table, Phase 2). Capacity planning only: no leave balances, approvals or payroll. |
 | Planning requirement | **New** (one table, Phase 5). What a piece of work needs that the ticket does not say: effort, a window, whether it may be split, a skill. One row per ticket, beside it and never on it, so the ticket shapes a client receives stay as they are. Allocated and remaining effort are derived from the allocations on every read. See [advanced-planning.md](advanced-planning.md). |
+| Work session, segment | **New** (two tables, Phase 6). Execution state: a clock attached to a ticket, running only inside its segments. A stopped clock becomes one ordinary `TicketTimeEntry` (the historical record, which may travel to the PSA) and counts for nothing itself. Never attendance. See [work-execution.md](work-execution.md). |
+| Recorded time | **Reused** (`TicketTimeEntry`, Phase 6 extends it with `WorkSessionId`): the one record of actual hours; the time panel and a stopped clock write it through the same `TicketTimeWriter`. |
 | Work allocation | **New** (one table, Phase 3). WHO is planned to do WHICH work WHEN: it points at the existing `Ticket` row (board, Autotask, ConnectWise, monitoring) and carries no title, client, status or provider of its own. Planned time, never actual time. The engine reads it through `IWorkAllocationReader`, whose registration is now `WorkAllocationReader`. See [planned-work.md](planned-work.md). |
 | Planning vs assignment | An allocation never changes what the PSA says. The one bridge: someone scheduled on a ticket nobody in the portal holds becomes its portal holder (the fact "Take it" records), through the existing `TicketAssignment`. |
 | Holidays | **Reused** (`DeskHoliday`, the SLA calendar): shown on the day, not deducted. |
@@ -128,6 +134,16 @@ Phase 5 (seven more actions on `WorkforcePlanController`; details in [advanced-p
 | `GET plan/preview?ticketId&appUserId&earliest&latest&minutes&splittable&tentative&minChunk` | schedule.view | Effort in a window for one person: pieces, unallocated, warnings, a plan token; writes nothing |
 | `POST plan/preview/confirm` | schedule.manage | Writes the pieces as previewed in one transaction, or 409 with a fresh preview when the plan changed |
 
+Phase 6 (`WorkforceTimeController`; details in [work-execution.md](work-execution.md#api)):
+
+| Route | Permission | Notes |
+|---|---|---|
+| `GET work/active` | schedule.view | The caller's running and paused clocks: what a reload recovers |
+| `POST work/start` | tickets.time.log | Start on a ticket (an allocation may be named); 409 with the running work when another runs |
+| `POST work/{id}/pause`, `resume`, `stop` | tickets.time.log | State changes only; stop writes the time entry |
+| `GET my-day?appUserId&date` | schedule.view | A day: planned against actual, the live clock, the unscheduled work |
+| `GET team-today?date&teamId&departmentId&skills&matchAll` | schedule.view | Who is on what, planned against actual, for the people in scope |
+
 `POST plan` takes `tentative` on its body. Both of Phase 4's reads are GETs. The board's drags, drops and resizes call the Phase 3 `PUT plan/{id}` and
 `POST plan/{id}/reassign`; a `PUT` that keeps the start and changes only the end is audited as
 `workforce.allocation.resized`.
@@ -147,6 +163,8 @@ infra       WorkforceCalendar    reads schedules, exceptions, planned work and h
                                  also team over a run of dates (ForTeamRangeAsync, TeamRangeQuery -> TeamRangeDto,
                                  MaxTeamRangeDays = 14): the scheduler's rows and their days
             CapacityExceptionService
+            WorkTimeService      the clock (start / pause / resume / stop under the person's gate), a day as planned against
+                                 actual, team today; writes time through Tickets.TicketTimeWriter (Phase 6)
             WorkforceAccess      who the caller may see (schedule.view scope) and plan for (schedule.manage scope),
                                  and whether they may override (schedule.override); ScheduledByAsync (Phase 4): which of
                                  a list of people the caller schedules as a scheduler, in one query

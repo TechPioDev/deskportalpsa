@@ -76,4 +76,7 @@ public class TicketTimeEntry : TenantEntity
     public string? SyncError { get; set; }
 
     public DateTimeOffset EntryDate { get; set; }
+
+    /// <summary>The work session this entry was written from when a clock was stopped (Phase 6); null for an hour typed in. One entry per session, held by a unique index.</summary>
+    public Guid? WorkSessionId { get; set; }
 }

@@ -47,7 +47,13 @@
 | "No single free period of 5h in the window; the longest is 4h." | Continuous work, no stretch long enough | Tick *May be split*, widen the window, or pick someone else |
 | A tentative block has no Confirm | `canConfirm` is false: fixed work scheduled for the viewer, or outside their `schedule.manage` scope | Ask whoever planned it |
 | The queue says *Not enough capacity before the due date* | The holder's confirmed free time on the days up to the due date is less than the remaining effort | The figure beside the reason is the free time; plan it for someone else, split it, or accept the fact |
+| "You already have active work on …" | One clock runs at a time | Return, or pause / stop the current one from the dialog |
+| "This work changed since the screen loaded. Reload and try again." (a clock) | Another tab or device changed the session | Reload |
+| The clock stopped but no time entry appeared | Under a minute, or discarded | Add the time by hand if it was real |
+| "Not in the PSA yet" on My day | The entry's push failed or is pending | Retry from the ticket's time panel |
+| "Say why the time is being changed (at least 5 characters)." | A lead changing someone else's time without a reason | Give the reason |
 
 More in [planned-work.md](planned-work.md#troubleshooting),
-[team-scheduler.md](team-scheduler.md#troubleshooting) and
-[advanced-planning.md](advanced-planning.md#troubleshooting).
+[team-scheduler.md](team-scheduler.md#troubleshooting),
+[advanced-planning.md](advanced-planning.md#troubleshooting) and
+[work-execution.md](work-execution.md#troubleshooting).

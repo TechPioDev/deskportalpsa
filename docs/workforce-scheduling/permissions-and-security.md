@@ -119,6 +119,10 @@ every audit entry; it was always empty before.
 
 | Advanced planning (Phase 5) | `workforce.allocation.created` now carries `status` (Planned / Tentative) and the warnings; `workforce.allocation.confirmed` (tentative → planned, with any override reason and types), `workforce.allocation.made_tentative` (planned → tentative), `workforce.planning.requirement_set` (before/after), `workforce.allocation.plan_confirmed` (a preview confirmed: the pieces with their ids, allocated minutes, the plan token) beside one `created` per piece |
 
+| Work execution (Phase 6) | `workforce.session.started` / `paused` (with the reason) / `resumed` / `stopped` (seconds, hours, the entry) / `cancelled` (discarded or under a minute); `ticket.time.logged` carries `context` { sessionId, activeSeconds, allocationId } for a clock's entry; `ticket.time.edited` now carries `reason`, `byUserId`, `forUserId` (a lead changing someone else's time must give the reason) |
+
+**Phase 6 adds no permission key.** The clock is logging time (`tickets.time.log` on the ticket, through the ticket scope); one's own day is `schedule.view` at Own; Team today is `schedule.view` beyond Own; correcting someone else's time is `boards.manage`, with a reason. The client-shape guard also forbids `Session`, `Segment`, `ActualSeconds`, `MyDay`, `TeamToday` and `Variance`. Nothing about presence is collected ([work-execution.md](work-execution.md#permissions-client-isolation-tenant-isolation-privacy)).
+
 **Phase 5 shapes stay internal.** The client-shape guard (`Nothing_a_client_can_receive_carries_workforce_planning`)
 now also forbids `RequiredMinutes`, `WaitingReason`, `PlanToken` and `Shortage` in any ticket,
 control-panel, knowledge or attachment DTO, so a requirement, a queue item, a preview or a shortage

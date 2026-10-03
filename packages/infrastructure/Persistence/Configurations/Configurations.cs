@@ -469,6 +469,37 @@ public sealed class WorkPlanningConfig : IEntityTypeConfiguration<Desk.Domain.Wo
     }
 }
 
+public sealed class WorkSessionConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.WorkSession>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.WorkSession> b)
+    {
+        b.ToTable("work_sessions");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Note).HasMaxLength(2000);
+        b.Property(x => x.Version).IsConcurrencyToken();
+        // "What is this person doing now": the lookup every screen makes.
+        b.HasIndex(x => new { x.AppUserId, x.Status });
+        // One running clock per person, held by the database itself where it supports a partial
+        // index (PostgreSQL and SQLite); the person's gate holds it everywhere else.
+        b.HasIndex(x => x.AppUserId).HasDatabaseName("IX_work_sessions_one_active").IsUnique().HasFilter("\"Status\" = 1");
+        // A person's day, and a ticket's sessions.
+        b.HasIndex(x => new { x.MspOrganizationId, x.AppUserId, x.StartedAt });
+        b.HasIndex(x => x.TicketId);
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
+        b.HasMany(x => x.Segments).WithOne(x => x.Session).HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class WorkSessionSegmentConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.WorkSessionSegment>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.WorkSessionSegment> b)
+    {
+        b.ToTable("work_session_segments");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => new { x.SessionId, x.StartedAt });
+    }
+}
+
 public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedResponse>
 {
     public void Configure(EntityTypeBuilder<CannedResponse> b)
@@ -740,6 +771,8 @@ public sealed class TicketTimeEntryConfig : IEntityTypeConfiguration<TicketTimeE
         // "Hours this technician logged between two dates" is the query every productivity report
         // runs, per person, per range — so it gets the date alongside the person.
         b.HasIndex(x => new { x.MspOrganizationId, x.AppUserId, x.EntryDate });
+        // A stopped clock writes exactly one entry: a second write for the same session is refused by the database.
+        b.HasIndex(x => x.WorkSessionId).IsUnique().HasFilter("\"WorkSessionId\" IS NOT NULL");
     }
 }
 

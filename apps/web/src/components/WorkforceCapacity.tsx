@@ -63,10 +63,12 @@ export function WorkforceNav() {
   const { data: people } = useQuery({ queryKey: ['workforce-people', 'nav'], queryFn: () => api.workforcePeople({}), staleTime: 5 * 60_000 });
   const seesOthers = (people?.length ?? 0) > 1;
   const items = [
+    { href: '/dashboard/workforce/my-day', label: 'My day' },
     { href: '/dashboard/workforce', label: 'People' },
     { href: '/dashboard/workforce/my-plan', label: 'My plan' },
     { href: '/dashboard/workforce/my-capacity', label: 'My capacity' },
     ...(seesOthers ? [
+      { href: '/dashboard/workforce/team-today', label: 'Team today' },
       { href: '/dashboard/workforce/schedule', label: 'Team schedule' },
       { href: '/dashboard/workforce/queue', label: 'Planning queue' },
       { href: '/dashboard/workforce/capacity', label: 'Team capacity' },

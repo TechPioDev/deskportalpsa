@@ -66,8 +66,8 @@ Three things the picture leaves out, each covered below:
   told ([Allocation is not assignment](#allocation-is-not-assignment)). A ticket that finishes
   releases its future allocations from the worker ([What finishes leaves the plan](#what-finishes-leaves-the-plan)).
 
-"My day" is a later phase: starting and completing work from the plan, and actual time against
-planned. Nothing of it exists yet.
+"My day" arrived in Phase 6: a clock on a piece of work started from the plan (or from nothing),
+and the day read as planned against actual ([work-execution.md](work-execution.md)).
 
 Phase 5 put a planning queue in front of this picture and gave a placed piece of work two states,
 confirmed or tentative; the picture with those in it is in

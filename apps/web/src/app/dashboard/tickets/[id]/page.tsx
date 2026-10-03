@@ -9,7 +9,7 @@ import {
   Send, ArrowUpDown, Lock, Monitor, Wifi, Mail, KeyRound, Cpu, Ticket,
   Copy, RefreshCw, Download, Clock, Trash2, Check, X, ClipboardList, UserCog, ExternalLink, AlertTriangle,
   Eye, Hand, UserPlus} from 'lucide-react';
-import { useTimer } from '@/components/TimerProvider';
+import { useWorkTime, WorkControls } from '@/components/WorkTime';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
 import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPreview';
@@ -435,7 +435,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
     try { window.localStorage.setItem(TIME_PANEL_KEY, next ? '1' : '0'); } catch { /* the preference is a nicety */ }
     return next;
   });
-  const timer = useTimer();
+  const work = useWorkTime();
+  const mySession = work.sessions.find((s) => s.ticketId === id) ?? null;
   const fileRef = useRef<HTMLInputElement>(null);
   const replyBox = useRef<HTMLTextAreaElement>(null);
 
@@ -475,13 +476,6 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
   const { data: timeOpts } = useQuery({ queryKey: ['time-options', id], queryFn: () => api.ticketTimeOptions(id), enabled: !!ticket, retry: false });
 
-  function startTimerHere() {
-    if (!ticket) return;
-    if (timer.running && timer.target?.ticketId !== id &&
-        !window.confirm('A timer is already running for another ticket. Attach it to this one?')) return;
-    timer.attach({ ticketId: id, ref: ticket.externalTicketId, title: ticket.title });
-    timer.start();
-  }
 
   // Time logged alongside a reply, in one send. Kept OUTSIDE the mutation's failure path: once the
   // note has posted, failing the whole mutation over a time entry would tell the user to resend —
@@ -1596,26 +1590,10 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                         className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs outline-none focus:border-brand" />
                     );
                   })()}
-                  {/* Both halves of the timer live here now: starting one was only possible from the
-                      Log time panel, so removing that panel would have taken the timer with it. */}
-                  {timer.seconds > 0 && timer.target?.ticketId === id ? (
-                    <button type="button"
-                      onClick={() => {
-                        const rounded = Math.max(0.25, Math.round((timer.seconds / 3600) / 0.25) * 0.25);
-                        setReplyHours(rounded.toFixed(2));
-                        timer.pause();
-                      }}
-                      className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] font-medium hover:bg-[var(--bg)]">
-                      Use timer ({String(Math.floor(timer.seconds / 60)).padStart(2, '0')}:{String(timer.seconds % 60).padStart(2, '0')})
-                    </button>
-                  ) : (
-                    <button type="button" onClick={startTimerHere}
-                      className={`rounded-lg border px-2 py-1 text-[11px] font-medium ${
-                        timer.running && timer.target?.ticketId === id
-                          ? 'border-brand/40 bg-brand/5 text-brand'
-                          : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--bg)]'}`}>
-                      {timer.running && timer.target?.ticketId === id ? 'Timing…' : 'Start timer'}
-                    </button>
+                  {/* The clock is a work session the server holds (Phase 6): stopping it logs the
+                      time itself, so the reply's hours stay for time typed in by hand. */}
+                  {work.enabled && !isResolvedStatus(ticket.portalStatus) && (
+                    <WorkControls session={mySession} ticketId={id} compact canStart={me?.permissions.includes('tickets.time.log') ?? false} />
                   )}
                   {!(parseFloat(replyHours) > 0) && (
                     <span className="text-[11px] text-[var(--faint)]">optional</span>
@@ -1653,7 +1631,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                         <select value={workType} onChange={(e) => setWorkType(e.target.value)}
                           className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs outline-none focus:border-brand">
                           <option value="">—</option>
-                          {timeOpts!.workTypes.map((o) => <option key={o.value} value={o.label}>{o.label}</option>)}
+                          {timeOpts!.workTypes.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       </label>
                     )}
@@ -1663,7 +1641,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                         <select value={workRole} onChange={(e) => setWorkRole(e.target.value)}
                           className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs outline-none focus:border-brand">
                           <option value="">—</option>
-                          {timeOpts!.workRoles.map((o) => <option key={o.value} value={o.label}>{o.label}</option>)}
+                          {timeOpts!.workRoles.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       </label>
                     )}
