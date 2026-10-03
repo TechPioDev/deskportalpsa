@@ -24,6 +24,8 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
     public const int MaxRangeDays = 31;
     /// <summary>The most dates one availability search may cover.</summary>
     public const int MaxSearchDays = 14;
+    /// <summary>The most dates one team plan may cover: two weeks of rows for everyone shown.</summary>
+    public const int MaxTeamRangeDays = 14;
     /// <summary>The most people one team view or search will work through; beyond it, narrow by team.</summary>
     public const int MaxPeople = 1000;
     public const int MinDurationMinutes = 5;
@@ -80,6 +82,30 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
         var offered = rows.Where(r => r.IsSchedulable).Select(r => r.Day).ToList();
         return new TeamCapacityDto(date, rows, offered.Sum(d => d.UsableMinutes), offered.Sum(d => d.ConfirmedMinutes),
             offered.Sum(d => d.TentativeMinutes), offered.Sum(d => d.RemainingConfirmedMinutes));
+    }
+
+    public async Task<TeamRangeDto> ForTeamRangeAsync(Guid callerId, TeamRangeQuery query, CancellationToken ct = default)
+    {
+        var orgZone = access.OrganizationTimeZone();
+        var today = WorkforceCalendar.LocalDate(clock.GetUtcNow(), TimeZones.Resolve(orgZone));
+        CheckRange(query.From, query.To, today, MaxTeamRangeDays);
+
+        var people = await PeopleAsync(callerId, query.TeamId, query.DepartmentId, await KnownSkillsAsync(query.SkillIds, ct), query.MatchAllSkills, null, ct);
+        var ids = people.Select(p => p.Id).ToList();
+        var calendar = await WorkforceCalendar.LoadAsync(db, allocations, callerId, orgZone, ids, query.From, query.To, null, ct);
+        var teams = await TeamsOfAsync(ids, ct);
+        var skills = await SkillsOfAsync(ids, ct);
+        var details = await access.ExceptionDetailsVisibleAsync(callerId, ids, ct);
+        var names = await NamesAsync(details.SelectMany(calendar.ExceptionsOf), ct);
+
+        var rows = people.Select(p =>
+        {
+            var days = Days(calendar, p.Id).Where(d => d.Date >= query.From && d.Date <= query.To).ToList();
+            return new TeamRangeRowDto(p.Id, p.DisplayName, p.IsSchedulable, calendar.HasSchedule(p.Id), calendar.ZoneId(p.Id, query.From),
+                teams.GetValueOrDefault(p.Id) ?? [], skills.GetValueOrDefault(p.Id) ?? [],
+                days.Select(d => DayDto(calendar, p.Id, d, names, details.Contains(p.Id))).ToList());
+        }).ToList();
+        return new TeamRangeDto(query.From, query.To, today, orgZone, rows);
     }
 
     public async Task<WorkforceGroupsDto> GroupsAsync(Guid callerId, CancellationToken ct = default)

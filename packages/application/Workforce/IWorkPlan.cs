@@ -39,6 +39,33 @@ public sealed record UnscheduledWorkDto(
 /// <summary>A person the asker may plan work for: themselves, and whoever their schedule.manage scope reaches.</summary>
 public sealed record PlannablePersonDto(Guid AppUserId, string DisplayName, bool IsSelf, string TimeZone, bool IsSchedulable);
 
+/// <summary>The team scheduler's ask: which dates, and which people (a team, a department, skills). Dates default to today.</summary>
+public sealed record TeamPlanQuery(DateOnly? From = null, DateOnly? To = null, Guid? TeamId = null, Guid? DepartmentId = null,
+    IReadOnlyList<Guid>? SkillIds = null, bool MatchAllSkills = true);
+
+/// <summary>One person on the team scheduler: who they are, each day's capacity, and what is planned in those days.</summary>
+public sealed record TeamPlanPersonDto(
+    Guid AppUserId, string DisplayName, string TimeZone, bool IsSchedulable, bool HasSchedule,
+    IReadOnlyList<string> Teams, IReadOnlyList<StaffSkillDto> Skills,
+    IReadOnlyList<DayCapacityDto> Days, IReadOnlyList<WorkAllocationDto> Allocations,
+    /// <summary>Whether the asker may put work into this person's plan.</summary>
+    bool CanPlan);
+
+/// <summary>The team scheduler: everyone the asker may see, narrowed as asked, over a run of dates. Sums are over people offered for work.</summary>
+public sealed record TeamPlanDto(
+    DateOnly From, DateOnly To, DateOnly Today, string TimeZone, IReadOnlyList<TeamPlanPersonDto> People,
+    int UsableMinutes, int ConfirmedMinutes, int RemainingConfirmedMinutes, int AllocationCount,
+    /// <summary>Whether the asker may schedule at least one of the people shown, and whether they may override conflicts.</summary>
+    bool CanScheduleOthers, bool CanOverride);
+
+/// <summary>Open work in a group's hands that is in nobody's plan: held by one of its people, or sitting with one of their teams.</summary>
+public sealed record TeamUnscheduledWorkDto(
+    Guid TicketId, string Reference, string Title, string? ClientName, string Priority, string Status, string Source,
+    DateTimeOffset? DueAt,
+    /// <summary>The holder when they are one of the group's people; a holder outside the group is only said to exist.</summary>
+    Guid? HolderId, string? HolderName, bool HeldOutside,
+    Guid? TeamId, string? TeamName, int PlannedMinutesSoFar);
+
 /// <summary>Placing work: which ticket, whose time, when, and whether it is fixed. Instants in UTC.</summary>
 public sealed record WorkAllocationInput(
     Guid TicketId, Guid AppUserId, DateTimeOffset Start, DateTimeOffset End,
@@ -74,6 +101,10 @@ public interface IWorkPlanService
     Task<IReadOnlyList<PlannablePersonDto>> PlannablePeopleAsync(Guid callerId, CancellationToken ct = default);
     /// <summary>What is planned on a ticket, for the people the caller may see.</summary>
     Task<IReadOnlyList<WorkAllocationDto>> ForTicketAsync(Guid callerId, Guid ticketId, CancellationToken ct = default);
+    /// <summary>The team scheduler: everyone the caller may see (narrowed), their capacity per day and what is planned in it.</summary>
+    Task<TeamPlanDto> TeamAsync(Guid callerId, TeamPlanQuery query, CancellationToken ct = default);
+    /// <summary>Open work in the group's hands that nobody has planned yet.</summary>
+    Task<IReadOnlyList<TeamUnscheduledWorkDto>> UnscheduledTeamAsync(Guid callerId, TeamPlanQuery query, CancellationToken ct = default);
 
     Task<WorkAllocationDto> CreateAsync(Guid callerId, WorkAllocationInput input, CancellationToken ct = default);
     Task<WorkAllocationDto> CreateInternalWorkAsync(Guid callerId, InternalWorkInput input, CancellationToken ct = default);

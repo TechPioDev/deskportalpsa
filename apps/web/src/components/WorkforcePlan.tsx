@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, CalendarPlus, ChevronLeft, ChevronRight, Lock, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
@@ -9,35 +9,18 @@ import {
 } from '@/lib/api';
 import { hours } from '@/components/Workforce';
 import { addDays, dateIn, fmtDay, fmtSlot, fmtTime } from '@/components/WorkforceCapacity';
+import { clock, dateOf, wallToIso } from '@/lib/timeline';
 
-// ---- Instants from wall-clock times ---------------------------------------------------------------
-// The server stores instants; people type a time of day in the person's zone. The browser has no
-// "wall time in zone X" primitive, so the offset is read back from Intl and corrected once (twice is
-// enough even across a clock change).
-
-function zoneOffsetMinutes(at: Date, timeZone: string): number {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(at);
-    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
-    const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
-    return Math.round((asUtc - at.getTime()) / 60_000);
-  } catch { return 0; }
-}
-/** "2026-10-05" + "14:00" in a zone → ISO instant. */
-export function wallToIso(date: string, hm: string, timeZone: string): string {
-  const [h, m] = hm.split(':').map(Number);
-  const naive = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), h, m);
-  let guess = naive - zoneOffsetMinutes(new Date(naive), timeZone) * 60_000;
-  guess = naive - zoneOffsetMinutes(new Date(guess), timeZone) * 60_000;
-  return new Date(guess).toISOString();
-}
+// Instants from wall-clock times: the server stores instants, people type a time of day in the
+// person's zone. The arithmetic (clock changes included) lives in lib/timeline.
+export { wallToIso };
 const addMinutesIso = (iso: string, minutes: number) => new Date(new Date(iso).getTime() + minutes * 60_000).toISOString();
 const minutesBetween = (a: string, b: string) => Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60_000);
 /** Instants arrive in two spellings ("…Z" from the browser, "…+00:00" from the server): compare them as moments, never as text. */
 const ms = (iso: string) => Date.parse(iso);
 
 /** A dialog closes on Escape and tells assistive technology it is modal; what is behind it waits. */
-function useDialog(onClose: () => void) {
+export function useDialog(onClose: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -48,7 +31,7 @@ function useDialog(onClose: () => void) {
 const field = 'rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm outline-none focus:border-brand disabled:opacity-60';
 const chip = 'inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium';
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
-const CONFLICT_NAMES: Record<number, string> = { 1: 'Already planned', 2: 'Tentative work', 3: 'Break', 4: 'Unavailable', 5: 'Outside working hours', 6: 'Over capacity', 7: 'Skill', 8: 'Not offered for work' };
+export const CONFLICT_NAMES: Record<number, string> = { 1: 'Already planned', 2: 'Tentative work', 3: 'Break', 4: 'Unavailable', 5: 'Outside working hours', 6: 'Over capacity', 7: 'Skill', 8: 'Not offered for work' };
 
 /** "Planned by you", "Scheduled by Lena Lead", with Fixed said plainly. */
 export function whoPlanned(a: WorkAllocation, viewerId: string | null): string {
@@ -57,14 +40,14 @@ export function whoPlanned(a: WorkAllocation, viewerId: string | null): string {
   return a.method === 1 ? `Planned by ${a.scheduledByName ?? 'them'}` : `Scheduled by ${a.scheduledByName ?? 'someone'}`;
 }
 
-function conflictProblem(error: unknown): ConflictProblem | null {
+export function conflictProblem(error: unknown): ConflictProblem | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null;
   const parsed = ConflictProblemSchema.safeParse(error.payload);
   return parsed.success ? parsed.data : null;
 }
 
 /** What a 409 said, with the conflicts listed and (where allowed) a reason box. */
-function ConflictNotice({ error, reason, onReason }: { error: unknown; reason: string; onReason: (r: string) => void }) {
+export function ConflictNotice({ error, reason, onReason }: { error: unknown; reason: string; onReason: (r: string) => void }) {
   const problem = conflictProblem(error);
   if (!problem) return error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400 sm:col-span-2">{(error as Error).message}</p> : null;
   return (
@@ -96,17 +79,31 @@ export type PlanTarget = { ticketId: string; reference: string; title: string };
  * and where in their free windows. The server checks everything again when it saves; what this
  * shows as free is what was free a moment ago.
  */
-export function PlanWorkDialog({ target, allocation, personId, lockPerson = false, viewerId, onClose, onSaved }: {
-  target?: PlanTarget; allocation?: WorkAllocation; personId: string; lockPerson?: boolean; viewerId: string | null; onClose: () => void; onSaved: (a: WorkAllocation) => void;
+export function PlanWorkDialog({ target, allocation, personId, lockPerson = false, initialStart, initialMinutes, viewerId, onClose, onSaved }: {
+  target?: PlanTarget; allocation?: WorkAllocation; personId: string; lockPerson?: boolean;
+  /** Where on the timeline the dialog was opened from: the date and start it begins with, in the person's zone. */
+  initialStart?: string | null; initialMinutes?: number | null;
+  viewerId: string | null; onClose: () => void; onSaved: (a: WorkAllocation) => void;
 }) {
   const qc = useQueryClient();
   const moving = !!allocation;
   const { data: people } = useQuery({ queryKey: ['plan-people'], queryFn: api.plannablePeople, staleTime: 60_000 });
   const [person, setPerson] = useState(allocation?.appUserId ?? personId);
   const tz = allocation?.timeZone ?? people?.find((p) => p.appUserId === person)?.timeZone ?? 'UTC';
-  const [date, setDate] = useState(allocation ? dateIn(allocation.startsAt, allocation.timeZone) : new Date().toLocaleDateString('en-CA'));
-  const [duration, setDuration] = useState(String(allocation?.plannedMinutes ?? 60));
+  const [date, setDate] = useState(allocation ? dateIn(allocation.startsAt, allocation.timeZone) : dateOf(Date.now(), 'UTC'));
+  const [duration, setDuration] = useState(String(allocation?.plannedMinutes ?? initialMinutes ?? 60));
   const [start, setStart] = useState(allocation ? fmtTime(allocation.startsAt, allocation.timeZone) : '');
+  // The person's zone arrives after the dialog opened: the default date (today in their zone) and,
+  // when opened from a point on a timeline, the start follow it - unless the user got there first.
+  const touched = useRef(false);
+  const startedFrom = useRef(false);
+  useEffect(() => {
+    if (allocation || startedFrom.current || !people) return;
+    startedFrom.current = true;
+    if (touched.current) return;
+    setDate(dateOf(initialStart ? Date.parse(initialStart) : Date.now(), tz));
+    if (initialStart) setStart(clock(Date.parse(initialStart), tz));
+  }, [initialStart, allocation, people, tz]);
   const [isFixed, setIsFixed] = useState(allocation?.isFixed ?? false);
   const [note, setNote] = useState(allocation?.note ?? '');
   const [reason, setReason] = useState('');
@@ -177,14 +174,14 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
         {!moving && !lockPerson && (people?.length ?? 0) > 1 && (
           <label className="block space-y-1 text-xs font-medium text-[var(--muted)]">
             Whose time
-            <select value={person} onChange={(e) => { setPerson(e.target.value); setStart(''); }} aria-label="Person" className={`w-full ${field}`}>
+            <select value={person} onChange={(e) => { touched.current = true; setPerson(e.target.value); setStart(''); }} aria-label="Person" className={`w-full ${field}`}>
               {people!.map((p) => <option key={p.appUserId} value={p.appUserId}>{p.displayName}{p.isSelf ? ' (you)' : ''}{p.isSchedulable ? '' : ' · not offered for work'}</option>)}
             </select>
           </label>
         )}
         <label className="block space-y-1 text-xs font-medium text-[var(--muted)]">
           Date
-          <input type="date" required value={date} onChange={(e) => { setDate(e.target.value); setStart(''); }} aria-label="Plan date" className={`w-full ${field}`} />
+          <input type="date" required value={date} onChange={(e) => { touched.current = true; setDate(e.target.value); setStart(''); }} aria-label="Plan date" className={`w-full ${field}`} />
         </label>
         <label className="block space-y-1 text-xs font-medium text-[var(--muted)]">
           Planned duration (minutes)
@@ -193,7 +190,7 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
         </label>
         <label className="block space-y-1 text-xs font-medium text-[var(--muted)]">
           Start
-          <input type="time" required step={300} value={start} onChange={(e) => setStart(e.target.value)} aria-label="Start time" className={`w-full ${field}`} />
+          <input type="time" required step={300} value={start} onChange={(e) => { touched.current = true; setStart(e.target.value); }} aria-label="Start time" className={`w-full ${field}`} />
           <span className="block text-[11px] font-normal">Times in {tz}{endIso ? ` · ends ${fmtTime(endIso, tz)}` : ''}</span>
         </label>
 
@@ -205,7 +202,7 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
             {windows.map((w) => {
               const on = !!startIso && !!endIso && ms(startIso) >= ms(w.start) && ms(endIso) <= ms(w.end);
               return (
-                <button key={w.start} type="button" aria-pressed={on} onClick={() => setStart(fmtTime(w.start, tz))}
+                <button key={w.start} type="button" aria-pressed={on} onClick={() => { touched.current = true; setStart(fmtTime(w.start, tz)); }}
                   className={`rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums ${on ? 'border-brand bg-brand text-brand-fg' : 'border-[var(--border)] hover:bg-[var(--bg)]'}`}>
                   {fmtSlot(w, tz, date)} · {hours(minutesBetween(w.start, w.end))}
                 </button>
@@ -259,7 +256,7 @@ export function PlanWorkDialog({ target, allocation, personId, lockPerson = fals
 }
 
 /** Giving work to someone else, optionally at another time. */
-function ReassignDialog({ allocation, onClose, onSaved }: { allocation: WorkAllocation; onClose: () => void; onSaved: (a: WorkAllocation) => void }) {
+export function ReassignDialog({ allocation, onClose, onSaved }: { allocation: WorkAllocation; onClose: () => void; onSaved: (a: WorkAllocation) => void }) {
   const qc = useQueryClient();
   const { data: people } = useQuery({ queryKey: ['plan-people'], queryFn: api.plannablePeople, staleTime: 60_000 });
   const others = (people ?? []).filter((p) => p.appUserId !== allocation.appUserId);
@@ -383,7 +380,7 @@ function InternalWorkDialog({ viewerId, onClose, onSaved }: { viewerId: string; 
 }
 
 /** Choosing which open work to put into someone's plan: a search over the tickets the viewer may see. */
-function TicketPickerDialog({ personName, onClose, onPick }: { personName: string; onClose: () => void; onPick: (t: PlanTarget) => void }) {
+export function TicketPickerDialog({ personName, onClose, onPick }: { personName: string; onClose: () => void; onPick: (t: PlanTarget) => void }) {
   const [q, setQ] = useState('');
   const { data, isFetching } = useQuery({
     queryKey: ['plan', 'ticket-picker', q], queryFn: () => api.searchTickets({ q: q.trim() || undefined, openness: 'open', take: 15 }), staleTime: 15_000, retry: false,

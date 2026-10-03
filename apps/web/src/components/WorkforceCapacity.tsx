@@ -67,6 +67,7 @@ export function WorkforceNav() {
     { href: '/dashboard/workforce/my-plan', label: 'My plan' },
     { href: '/dashboard/workforce/my-capacity', label: 'My capacity' },
     ...(seesOthers ? [
+      { href: '/dashboard/workforce/schedule', label: 'Team schedule' },
       { href: '/dashboard/workforce/capacity', label: 'Team capacity' },
       { href: '/dashboard/workforce/find', label: 'Find available technician' },
     ] : []),
