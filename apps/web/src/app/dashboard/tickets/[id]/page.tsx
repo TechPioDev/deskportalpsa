@@ -16,6 +16,8 @@ import { AttachmentPreview, isPreviewableImage } from '@/components/AttachmentPr
 import { TasksPanel } from '@/components/TasksPanel';
 import { EditBoardTicketForm, EditDetailsButton, ResolutionPrompt, TicketHistoryPanel, finishes } from '@/components/BoardTicketTools';
 import { RelatedTicketsPanel, ReviewBanner } from '@/components/TicketReviewAndLinks';
+import { TicketPlanPanel } from '@/components/WorkforcePlan';
+import { isResolvedStatus } from '@/lib/status';
 import { ComposerTools } from '@/components/ComposerTools';
 import { SatisfactionPanel, RATING_LABELS } from '@/components/SatisfactionPanel';
 import { ApprovalPanel } from '@/components/ApprovalPanel';
@@ -1009,6 +1011,13 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               <TasksPanel ticketId={id} canUpdate={canUpdate}
                 people={assignOpts?.portalTechnicians.map((u) => ({ id: u.id, name: u.name })) ?? []}
                 onNeedPeople={() => setNeedPeople(true)} />
+            )}
+
+            {/* Planned work: internal only. The panel exists for staff who may see schedules, with the
+                module on; a client's page never renders it and the API would refuse it anyway. */}
+            {isStaff && me?.features?.workforce === true && me.permissions.includes('schedule.view') && ticket && (
+              <TicketPlanPanel ticketId={id} reference={ticket.number ?? (ticket.externalTicketId ? `#${ticket.externalTicketId}` : 'Ticket')} title={ticket.title}
+                viewerId={me.userId ?? null} canPlan={me.permissions.includes('schedule.manage') && !isResolvedStatus(ticket.portalStatus)} />
             )}
 
             {/* Time entries (query disabled without tickets.time.log, so this stays absent for clients) */}

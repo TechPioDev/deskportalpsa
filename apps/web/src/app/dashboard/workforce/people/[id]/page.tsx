@@ -8,8 +8,9 @@ import { ArrowLeft } from 'lucide-react';
 import { api } from '@/lib/api';
 import { StaffSkillsEditor, WorkScheduleEditor } from '@/components/Workforce';
 import { CapacityPanel } from '@/components/WorkforceCapacity';
+import { PlanAgenda } from '@/components/WorkforcePlan';
 
-const TABS = [['schedule', 'Work schedule'], ['availability', 'Availability'], ['skills', 'Skills']] as const;
+const TABS = [['plan', 'Plan'], ['schedule', 'Work schedule'], ['availability', 'Availability'], ['skills', 'Skills']] as const;
 type Tab = typeof TABS[number][0];
 
 /**
@@ -30,7 +31,8 @@ function WorkforcePerson({ params }: { params: Promise<{ id: string }> }) {
   const query = useSearchParams();
   const asked = query.get('tab');
   const date = /^\d{4}-\d{2}-\d{2}$/.test(query.get('date') ?? '') ? query.get('date') : null;
-  const [tab, setTab] = useState<Tab>(TABS.some(([key]) => key === asked) ? (asked as Tab) : 'schedule');
+  const [tab, setTab] = useState<Tab>(TABS.some(([key]) => key === asked) ? (asked as Tab) : 'plan');
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
   const { data: schedule } = useQuery({ queryKey: ['work-schedule', id], queryFn: () => api.workSchedule(id), retry: false });
 
   return (
@@ -47,6 +49,7 @@ function WorkforcePerson({ params }: { params: Promise<{ id: string }> }) {
           </button>
         ))}
       </div>
+      {tab === 'plan' && <PlanAgenda userId={id} viewerId={me?.userId ?? null} initialDate={date} />}
       {tab === 'schedule' && <WorkScheduleEditor userId={id} />}
       {tab === 'availability' && <CapacityPanel userId={id} initialDate={date} />}
       {tab === 'skills' && <StaffSkillsEditor userId={id} canManage={!!schedule?.canManage} />}
