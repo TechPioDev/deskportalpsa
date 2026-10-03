@@ -250,6 +250,8 @@ public sealed class CapacityService(DeskDbContext db, WorkforceAccess access, IW
             DateOnly.FromDateTime(start.UtcDateTime).AddDays(-1), DateOnly.FromDateTime(end.UtcDateTime).AddDays(1), null, ct);
 
         var inputs = calendar.InputsFor(person.Id);
+        if (proposal.IgnoreAllocationId is { } moving)
+            inputs = inputs.Select(i => i with { Allocations = i.Allocations.Where(a => a.AllocationId != moving).ToList() }).ToList();
         var held = (await SkillsOfAsync([person.Id], ct)).GetValueOrDefault(person.Id) ?? [];
         var names = wanted.Count == 0 ? new Dictionary<Guid, string>()
             : await db.Skills.AsNoTracking().Where(s => wanted.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name, ct);

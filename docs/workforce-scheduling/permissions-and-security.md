@@ -5,11 +5,20 @@
 | `schedule.view` | Own / Team / Department / All | Technician: Own. Manager: All. Administrator: All. | See schedules, skills, capacity, free time and exceptions of the people the scope reaches; search and conflict-check among them |
 | `workforce.manage` | All | Administrator | Change schedules, breaks, time zones, "offered for planned work", the skill catalogue and who holds which skill |
 | `availability.manage` (Phase 2) | Own / Team / Department / All | Manager: All. Administrator: All. Technician: none. | Record time unavailable and additional availability for the people the scope reaches |
+| `schedule.manage` (Phase 3) | Own / Team / Department / All | Technician: **Own**. Manager: All. Administrator: All. | Put work into people's time and change or remove what is there. **Own** is planning your own work and nobody else's (and only work you can already see). A scope wider than Own makes the holder a *scheduler* for the people it reaches: place, fix, move, give away and take out their work. In the catalogue: "Plan work into people's time (Own = your own plan only)" |
+| `schedule.override` (Phase 3) | All | Manager, Administrator. Technician: none. | Place work despite an overridable conflict (a double booking, outside the working window, over a break, over capacity), giving a reason of at least 5 characters that is kept with the work. Blocks cannot be overridden by anyone. In the catalogue: "Override a scheduling conflict, with a reason" |
 
 No separate capacity permission was added: capacity is what a schedule means on a date, so it
 follows `schedule.view` and its scope. `availability.manage` is separate because recording time
 away is a different right from seeing it. To let technicians record their own, give the Technician
 role `availability.manage` at scope **Own**.
+
+Planning follows the same pattern. Reading a plan needs only `schedule.view` (and reaches the
+people its scope reaches); changing one needs `schedule.manage`, whose scope decides whose. A
+technician's default is Own: their own work, into their own time, no override. To let a team lead
+schedule their team, give their role `schedule.manage` at scope **Team** (and `schedule.override` if
+they may override conflicts). Fixing work in place, moving fixed work, taking scheduled work out and
+giving work to someone else all need a scope wider than Own ([planned-work.md](planned-work.md)).
 
 How each scope reaches people:
 - **Team** reaches people who share a team with the caller.
@@ -28,11 +37,15 @@ a client; its planning never becomes visible because of that.
 
 | Client attempt | Result | Proven by |
 |---|---|---|
-| Any `api/workforce/*` route: capacity, free slots, team capacity, the technician search, skills, exceptions, conflicts | Refused (403): no client role or client login holds `schedule.view` | `No_client_account_can_reach_any_workforce_endpoint` walks every controller under `api/workforce` by route, so a controller added later is covered |
-| A guessed person or exception id | Refused before the id is looked at | Same |
-| A workforce permission on a client role | Not possible by default | `No_client_role_or_client_login_holds_a_workforce_permission` |
-| Seeing planning through their own ticket | The ticket and client-portal response shapes carry no workforce field | `Nothing_a_client_can_receive_carries_workforce_planning` fails if one is ever added |
-| A signed-in account without the permission opening the pages by address | No menu entry; pages show an error; every endpoint answers 403 | `e2e/workforce-capacity.spec.ts` |
+| Any `api/workforce/*` route: capacity, free slots, team capacity, the technician search, skills, exceptions, conflicts, plans, unscheduled work, placing or changing planned work | Refused (403): no client role or client login holds `schedule.view` | `No_client_account_can_reach_any_workforce_endpoint` walks every controller under `api/workforce` by route (and asserts `WorkforcePlanController` is among them), so a controller added later is covered |
+| A guessed person, exception, ticket or allocation id | Refused before the id is looked at | Same |
+| A workforce permission on a client role (`schedule.manage` and `schedule.override` included) | Not possible by default | `No_client_role_or_client_login_holds_a_workforce_permission` |
+| Seeing planning through their own ticket | The ticket and client-portal response shapes carry no workforce field (`Allocat`, `Planned`, `MyPlan`, `Override`, …) | `Nothing_a_client_can_receive_carries_workforce_planning` fails if one is ever added |
+| A signed-in account without the permission opening the pages by address | No menu entry; pages show an error; every endpoint answers 403 | `e2e/workforce-capacity.spec.ts`; for My plan, a person's Plan tab, the ticket's Planned work panel and every plan endpoint, `e2e/workforce-plan.spec.ts` |
+| A sign-in that is not a staff account holding every planning claim | Every planning action refused ("Only staff accounts can use the workforce module.") | `WorkPlanTests.A_sign_in_that_is_not_a_staff_account_is_refused_by_every_planning_action` |
+
+The ten planning-specific guarantees, each with its test, are listed in
+[planned-work.md](planned-work.md#tenant-isolation-and-client-security).
 
 A second line of defence: every workforce action also requires a **staff** user id, so a principal
 that is not a staff account is refused even if it somehow held the claim.
@@ -48,6 +61,11 @@ found", the same answer as a person who doesn't exist.
   another organization is refused with the same words as one that does not exist.
 - An exception is looked up through the person it belongs to: another person's exception id on
   this person's route is "not found".
+- Another organization's plan, ticket and allocation are "not found" for reading, placing, moving,
+  giving away and cancelling, and its unscheduled list is empty; nothing is written
+  (`Another_organizations_plans_cannot_be_read_written_or_detected`). Within an organization, a
+  person outside the caller's `schedule.view` scope is "Person was not found." and a ticket outside
+  their ticket scope is "Ticket was not found.", the same words as for an id that names nothing.
 - All new tables are tenant entities with the global query filter.
 - Staff accounts aren't tenant-filtered by EF, so the organization is applied explicitly.
 - A skill from another organization isn't found.
@@ -58,9 +76,20 @@ Request bodies are explicit records, never entities (no mass assignment). A filt
 not a valid id is refused rather than ignored, so a malformed filter can never return more people
 than were asked for. Notes are plain text: stored as typed and shown as text, never as markup.
 
-**Limits against expensive requests:** 31 days of capacity, 14 days of search, 1,000 people, 200
-matches, 20 skills, work of 5 minutes to 12 hours. The API's per-user and per-organization rate
-limits apply as everywhere else. Nothing is cached, so there is no cache to leak between tenants.
+**Limits against expensive requests:** 31 days of capacity or plan, 14 days of search, 1,000 people,
+200 matches, 20 skills, work of 5 minutes to 12 hours (search) or at most 24 hours (planned work),
+100 unscheduled tickets, 50 allocations listed on a ticket. The API's per-user and per-organization
+rate limits apply as everywhere else. Nothing is cached, so there is no cache to leak between tenants.
+
+**Planned work and the ticket.** Planning never changes what the PSA says, and taking work out of a
+plan never touches the ticket. The one portal-side effect: someone scheduled by someone else on a
+ticket nobody in the portal holds becomes its holder (as "Take it" does), audited as
+`ticket.assigned.portal` with `viaPlanning`. Nobody is ever planned on a ticket they cannot open:
+the scheduler is told to hand it over first ([planned-work.md](planned-work.md#allocation-is-not-assignment)).
+
+**Concurrency.** A person's plan is changed by one request at a time (a row lock on the person on
+PostgreSQL, held across API containers), and every change to an allocation carries the version the
+screen showed; a stale one is refused ([planned-work.md](planned-work.md#concurrency)).
 
 **When, not why.** Everyone who may see a person's capacity sees *when* they are unavailable;
 planning needs that. The reason ("Sick"), the note ("Dentist") and who recorded it are personal, so
@@ -70,7 +99,9 @@ reaches them. For anyone else those fields are null on every route that carries 
 
 **Error messages** never say whether a person exists in another organization or which rule kept
 someone out of view; conflicts never carry a ticket's title, client or number
-([conflicts.md](conflicts.md)).
+([conflicts.md](conflicts.md)). A plan carries a ticket's reference, title, client and status only
+to an asker who may see that ticket; to anyone else the piece of work is "Work you cannot open" and
+only its time is known.
 
 **Audit:** every entry carries the request's correlation id. This phase made PIO fill that column for
 every audit entry; it was always empty before.
@@ -78,8 +109,9 @@ every audit entry; it was always empty before.
 | Area | Events |
 |---|---|
 | Schedules | `workforce.schedule.saved` (before and after summary), `workforce.schedule.removed`, `workforce.schedule.copied` |
-| Planned work | `workforce.schedulable.changed` |
+| Offered for planned work | `workforce.schedulable.changed` |
 | Skills | `skill.created`, `skill.updated` (before/after), `skill.assigned`, `skill.level_changed`, `skill.removed` |
 | Capacity exceptions | `workforce.exception.added`, `workforce.exception.updated` (before/after), `workforce.exception.removed` |
+| Planned work (Phase 3) | `workforce.allocation.created`, `workforce.allocation.moved` (before/after, when the time changes), `workforce.allocation.changed` (a note-only or fixed-only change), `workforce.allocation.reassigned` (from/to, before/after), `workforce.allocation.cancelled` (with the reason), `workforce.allocation.released` (the worker, when the ticket finished first; one entry per pass listing every release); `ticket.assigned.portal` with `viaPlanning: true` when planning made someone the holder. Override reasons are written; planning notes are not |
 
 View as is read-only, so it can't change a schedule.

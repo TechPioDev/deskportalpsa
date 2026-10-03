@@ -65,7 +65,9 @@ public sealed record ConflictContext(
 ///   HardConflict          Overridable  A double booking needs a deliberate override and a reason.
 ///   OutsideWorkingWindow  Overridable  Overtime is a decision, not an accident.
 ///   OverCapacity          Overridable  As above.
-///   BreakConflict         Warning      People do move a break; it should be seen, not stopped.
+///   BreakConflict         Overridable  Work placed over a break takes capacity the break does not
+///                                      offer; working through lunch is a decision too. (Phase 2
+///                                      called this a warning; placing work made it a decision.)
 ///   TentativeConflict     Warning      Pencilled-in work holds no capacity.
 ///   SkillWarning          Warning      Skills guide the choice; they do not forbid it.
 ///
@@ -102,7 +104,7 @@ public static class ConflictEvaluator
         // Breaks - where the person is not already unavailable (one reason per minute is enough).
         var breaks = Intervals.Subtract(live.SelectMany(d => d.Capacity.Breaks), unavailable);
         foreach (var piece in Intervals.Intersect(wanted, breaks))
-            conflicts.Add(new Conflict(ConflictType.BreakConflict, ConflictSeverity.Warning, piece, "Overlaps a planned break."));
+            conflicts.Add(new Conflict(ConflictType.BreakConflict, overridable, piece, "Overlaps a planned break."));
 
         // Outside the offered time: not in a working window, not extra availability, and not already
         // explained as unavailable.

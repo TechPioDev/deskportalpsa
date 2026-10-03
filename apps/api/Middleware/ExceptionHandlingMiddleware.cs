@@ -16,6 +16,12 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
         {
             await next(context);
         }
+        catch (ConflictException ex)
+        {
+            // What is in the way goes with the refusal, so a screen can show each conflict and offer
+            // an override where one is allowed.
+            await WriteProblem(context, ex.StatusCode, ex.ErrorCode, ex.Message, ex.Payload);
+        }
         catch (DeskException ex)
         {
             await WriteProblem(context, ex.StatusCode, ex.ErrorCode, ex.Message);
@@ -35,7 +41,10 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
         }
     }
 
-    private static async Task WriteProblem(HttpContext context, int status, string code, string detail)
+    // The same casing the API's own responses use, so a payload reads like any other body.
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static async Task WriteProblem(HttpContext context, int status, string code, string detail, object? payload = null)
     {
         if (context.Response.HasStarted) return;
 
@@ -50,7 +59,8 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
             status,
             detail,
             correlationId = context.Items[CorrelationIdMiddleware.HeaderName]?.ToString(),
+            payload,
         };
-        await context.Response.WriteAsync(JsonSerializer.Serialize(problem));
+        await context.Response.WriteAsync(JsonSerializer.Serialize(problem, JsonOptions));
     }
 }

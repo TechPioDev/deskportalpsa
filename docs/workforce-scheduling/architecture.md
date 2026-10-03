@@ -1,9 +1,9 @@
-# Architecture (Phases 1 and 2)
+# Architecture (Phases 1 to 3)
 
 The workforce module sits beside the unified ticket model and never copies it. Phase 1 adds who
 works when and what they know. Phase 2 adds capacity exceptions and the engine that turns schedules,
-exceptions and planned work into capacity and free time. Later phases reference tickets from work
-allocations by id.
+exceptions and planned work into capacity and free time. Phase 3 adds the planned work itself: a
+work allocation references the existing ticket by id, whatever its origin.
 
 ## Data model
 
@@ -15,7 +15,12 @@ AppUser (existing identity, +IsSchedulable)
   1-*  StaffSkill          staff_skills          tenant | SkillId | Level (1 Basic, 2 Proficient, 3 Expert)
   1-*  CapacityException   capacity_exceptions   tenant | Kind (1 unavailable, 2 additional) | AllDay | FromDate | ToDate
                                                  | StartsAt | EndsAt (instants, part-day only) | TimeZone | Reason | Note
+  1-*  WorkAllocation      work_allocations      tenant | TicketId (-> tickets) | StartsAt | EndsAt (instants) | PlannedMinutes
+                                                 | Status (1 planned, 5 cancelled) | Method (1 self, 2 authorized user, 3 automation)
+                                                 | ScheduledByUserId | IsFixed | Note | OverrideReason | OverriddenConflicts | OverriddenByUserId | OverriddenAt
+                                                 | CancelledAt | CancelledByUserId | CancelReason | UpdatedByUserId | Version
 Skill                      skills                tenant | Name | NormalizedName | Description | IsActive
+Ticket                     tickets               (existing, reused unchanged: the work an allocation points at)
 Team / Department / UserTeam / UserDepartment    (existing, reused unchanged)
 ```
 
@@ -28,7 +33,8 @@ Team / Department / UserTeam / UserDepartment    (existing, reused unchanged)
 | Time zone | Stored per schedule version as an IANA id. |
 | Skill, staff skill | **New**. Certification and expiry are deferred. |
 | Capacity exception | **New** (one table, Phase 2). Capacity planning only: no leave balances, approvals or payroll. |
-| Work allocation | **Not in Phase 2.** The engine reads planned work through `IWorkAllocationReader`; nothing can be booked yet, so the registered reader returns none. The allocation table arrives with booking. |
+| Work allocation | **New** (one table, Phase 3). WHO is planned to do WHICH work WHEN: it points at the existing `Ticket` row (board, Autotask, ConnectWise, monitoring) and carries no title, client, status or provider of its own. Planned time, never actual time. The engine reads it through `IWorkAllocationReader`, whose registration is now `WorkAllocationReader`. See [planned-work.md](planned-work.md). |
+| Planning vs assignment | An allocation never changes what the PSA says. The one bridge: someone scheduled on a ticket nobody in the portal holds becomes its portal holder (the fact "Take it" records), through the existing `TicketAssignment`. |
 | Holidays | **Reused** (`DeskHoliday`, the SLA calendar): shown on the day, not deducted. |
 | Schedule templates | **Deferred.** "Apply to others" copies one person's schedule to many from a date, which covers bulk setup without a template entity to maintain. |
 
@@ -37,10 +43,14 @@ Indexes and constraints:
 - one row per weekday per version
 - one skill name per organization (case- and space-insensitive)
 - one holding per person per skill
+- work allocations: `(AppUserId, StartsAt)`, `(TicketId)`, `(MspOrganizationId, StartsAt)`; `Version`
+  is an EF concurrency token
 
-Deleting a person removes their schedules and skill holdings (cascade). A skill can't be deleted
-while held (restrict); it is retired instead. The migration is additive, and its `Down` removes exactly
-what `Up` added. Both were verified on PostgreSQL 17 against a database with existing staff.
+Deleting a person removes their schedules, skill holdings and planned work (cascade); deleting a
+ticket removes its planned work. A skill can't be deleted while held (restrict); it is retired
+instead. Each phase's migration is additive, and its `Down` removes exactly what `Up` added. Phases 1
+and 2 were verified on PostgreSQL 17 against a database with existing staff; Phase 3's
+(`20261003033116_WorkforceWorkAllocations`) adds the one table.
 
 ## API
 
@@ -75,6 +85,24 @@ Phase 2 (`WorkforceCapacityController`, same base route, same switch):
 The search and the conflict check are **GETs**: they change nothing, and they stay usable while an
 administrator views the portal as someone (which refuses every other method).
 
+Phase 3 (`WorkforcePlanController`, same base route, same switch; details and bodies in
+[planned-work.md](planned-work.md#api)):
+
+| Route | Permission | Notes |
+|---|---|---|
+| `GET people/{id}/plan?from&to` | schedule.view | Capacity per day with planned work counted, the work itself, and what the caller may do |
+| `GET plan/unscheduled` | schedule.view | The caller's open work not yet in their plan |
+| `GET plan/people` | schedule.view | Who the caller may plan work for |
+| `GET tickets/{ticketId}/plan` | schedule.view | What is planned on a ticket, for the people the caller may see |
+| `POST plan` | + schedule.manage | Place work; scope decides whose time |
+| `POST plan/internal-work` | + schedule.manage | Raise a board ticket in the caller's name and plan it, in one step |
+| `PUT plan/{id}` | + schedule.manage | Move, resize, note, fixed; carries `version` |
+| `POST plan/{id}/reassign` | + schedule.manage | Give to someone else; carries `version` |
+| `DELETE plan/{id}?reason=` | + schedule.manage | Take out of the plan; the ticket is untouched |
+
+A refusal for a conflict or a stale version is **409** `conflict` with a `payload`
+(`ConflictProblemDto`), the one problem response in the API that carries one.
+
 `/api/me` carries `features.workforce`.
 
 ## Engine
@@ -88,7 +116,19 @@ infra       WorkforceCalendar    reads schedules, exceptions, planned work and h
                                  of dates in a fixed number of queries, and builds the calculator's inputs
             CapacityService      person / team / search / conflicts, limited to who the caller may see
             CapacityExceptionService
-application IWorkAllocationReader   where planned work comes from (none until booking exists)
+            WorkforceAccess      who the caller may see (schedule.view scope) and plan for (schedule.manage scope),
+                                 and whether they may override (schedule.override)
+            WorkAllocationReader planned work as the engine reads it: Planned allocations, confirmed, a future one on a
+                                 finished ticket left out at once; the work id only for tickets the caller may see
+            WorkPlanService      plan / unscheduled / plannable people / on a ticket; place, internal work, move,
+                                 give away, take out; holder bridging; conflicts under the gate; audit; notifications
+            PlanningGate         one person's plan changed by one request at a time: SELECT ... FOR UPDATE on the
+                                 person's app_users row (PostgreSQL), a per-person semaphore elsewhere
+            WorkAllocationReleaser / WorkAllocationReleaseRunner
+                                 finished tickets leave future plans (every organization, per tenant scope)
+application IWorkAllocationReader   where planned work comes from (the table, from Phase 3)
+            IWorkPlanService, IWorkAllocationReleaser, IWorkAllocationReleaseRunner
+worker      WorkAllocationReleaseBackgroundService   runs the release every 5 minutes
 ```
 
 ## Web
@@ -102,3 +142,9 @@ application IWorkAllocationReader   where planned work comes from (none until bo
   last two only for someone who can see more than themselves), and an **Availability** tab on a
   person (the week, the day's sums and free windows, time away). No final team scheduler yet, and
   nothing is assigned from the search.
+- Phase 3: **My plan** under Workforce (the day's agenda with capacity, planned and free figures,
+  "Unscheduled work of mine", **Add to plan**, **Internal work**); a **Plan** tab on a person under
+  Workforce (first tab; **Plan work** for a scheduler; move, give away, take out); a **Planned work**
+  panel on a ticket for staff with `schedule.view`, with **Plan this work**. The Users → person page
+  does not carry the Plan tab. Components: `WorkforcePlan.tsx` (`PlanAgenda`, `UnscheduledWorkList`,
+  `TicketPlanPanel`, the dialogs).

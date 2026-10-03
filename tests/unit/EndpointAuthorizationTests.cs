@@ -131,6 +131,17 @@ public class EndpointAuthorizationTests
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.AddException), [Permissions.AvailabilityManage] },
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.UpdateException), [Permissions.AvailabilityManage] },
         { nameof(WorkforceCapacityController), nameof(WorkforceCapacityController.RemoveException), [Permissions.AvailabilityManage] },
+        // Planned work: reading needs schedule.view; every change also needs schedule.manage, whose
+        // scope decides per person in the service (Own = your own plan only).
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Plan), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Unscheduled), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.PlannablePeople), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.ForTicket), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Create), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.CreateInternalWork), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Update), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Reassign), [Permissions.ScheduleManage] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Cancel), [Permissions.ScheduleManage] },
     };
 
     [Fact]
@@ -143,7 +154,7 @@ public class EndpointAuthorizationTests
             .Select(p => p.Key).Concat([Permissions.TicketsCreate, Permissions.TicketsAddPublicNote]).ToHashSet();
         // Every controller under api/workforce - found by route, so one added later is covered too.
         var workforce = Controllers.Where(c => (c.GetCustomAttribute<RouteAttribute>()?.Template ?? "").StartsWith("api/workforce", StringComparison.Ordinal)).ToList();
-        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController)]);
+        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController), typeof(WorkforcePlanController)]);
         foreach (var controller in workforce)
         {
             controller.GetCustomAttributes<AuthorizeAttribute>().Should().NotBeEmpty($"{controller.Name} is never anonymous");
@@ -162,7 +173,7 @@ public class EndpointAuthorizationTests
     [Fact]
     public void No_client_role_or_client_login_holds_a_workforce_permission()
     {
-        string[] workforce = [Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage];
+        string[] workforce = [Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage, Permissions.ScheduleManage, Permissions.ScheduleOverride];
         foreach (var role in new[] { Desk.Domain.Enums.RoleType.ClientAdministrator, Desk.Domain.Enums.RoleType.ClientUser })
             Permissions.ForRole(role).Select(p => p.Key).Should().NotIntersectWith(workforce, role.ToString());
     }
@@ -183,7 +194,7 @@ public class EndpointAuthorizationTests
         // A ticket a client can see does not make its planning visible. The shapes the ticket API and
         // the client portal return must not grow a field about schedules, capacity or who is planned
         // when - whatever a later phase adds to the internal side.
-        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "PlannedWork", "Tentative"];
+        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override"];
         var clientFacing = typeof(Desk.Application.Tickets.TicketDetailDto).Assembly.GetTypes().Where(t =>
             t.Namespace is "Desk.Application.Tickets" or "Desk.Application.ControlPanel" or "Desk.Application.Knowledge" or "Desk.Application.Attachments"
             && !t.IsInterface && !t.IsEnum && !t.Name.StartsWith('<')).ToList();

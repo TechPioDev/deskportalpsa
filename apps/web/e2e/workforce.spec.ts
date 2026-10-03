@@ -49,7 +49,8 @@ test('an administrator sets a day schedule with a break, and it is still there a
 
 test('a night technician works past midnight, and a break outside the window is refused', async ({ page }) => {
   const abbie = await technician(page, 'Abbie Noor');
-  await page.goto(`/dashboard/workforce/people/${abbie.id}`);
+  // The person's page opens on their plan since Phase 3; the schedule is its own tab.
+  await page.goto(`/dashboard/workforce/people/${abbie.id}?tab=schedule`);
 
   for (const day of ['Tuesday', 'Wednesday', 'Thursday', 'Friday']) await page.getByLabel(`${day} working`).uncheck();
   await page.getByLabel('Monday start').fill('18:00');

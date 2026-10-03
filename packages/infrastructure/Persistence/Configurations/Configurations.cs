@@ -431,6 +431,30 @@ public sealed class CapacityExceptionConfig : IEntityTypeConfiguration<Desk.Doma
     }
 }
 
+public sealed class WorkAllocationConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.WorkAllocation>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.WorkAllocation> b)
+    {
+        b.ToTable("work_allocations");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Note).HasMaxLength(300);
+        b.Property(x => x.OverrideReason).HasMaxLength(300);
+        b.Property(x => x.OverriddenConflicts).HasMaxLength(200);
+        b.Property(x => x.CancelReason).HasMaxLength(200);
+        b.Property(x => x.Version).IsConcurrencyToken();
+        b.Ignore(x => x.When);
+        // "This person's plan around these dates" is every read the capacity engine and My Plan
+        // make; "what is planned on this ticket" is the ticket page's.
+        b.HasIndex(x => new { x.AppUserId, x.StartsAt });
+        b.HasIndex(x => x.TicketId);
+        b.HasIndex(x => new { x.MspOrganizationId, x.StartsAt });
+        // Planned time goes with the work and with the person: a deleted ticket or account leaves
+        // no plan behind that nobody could open.
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
+        b.HasOne(x => x.AppUser).WithMany().HasForeignKey(x => x.AppUserId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedResponse>
 {
     public void Configure(EntityTypeBuilder<CannedResponse> b)

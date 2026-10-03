@@ -110,7 +110,8 @@ public sealed record AvailabilitySearchResultDto(
     int PeopleConsidered, int WithoutRequiredSkills, int NotOfferedForWork, int WithoutASchedule, int WithNoFittingSlot);
 
 /// <summary>A piece of work someone wants to place: when, whether only pencilled in, and the skills it asks for.</summary>
-public sealed record ProposedWork(DateTimeOffset Start, DateTimeOffset End, bool Tentative = false, IReadOnlyList<Guid>? SkillIds = null);
+/// <param name="IgnoreAllocationId">An allocation being moved: its current place is not in its own way.</param>
+public sealed record ProposedWork(DateTimeOffset Start, DateTimeOffset End, bool Tentative = false, IReadOnlyList<Guid>? SkillIds = null, Guid? IgnoreAllocationId = null);
 
 public sealed record ConflictDto(ConflictType Type, ConflictSeverity Severity, DateTimeOffset Start, DateTimeOffset End, string Message, Guid? BlockingWorkId);
 

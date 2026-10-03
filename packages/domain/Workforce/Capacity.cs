@@ -5,7 +5,8 @@ namespace Desk.Domain.Workforce;
 /// work takes none until it is confirmed, and is always reported separately. <see cref="WorkId"/> is
 /// null when the person asking may not see what the work is - they still learn the time is taken.
 /// </summary>
-public sealed record AllocatedSpan(Guid AppUserId, Interval When, bool Confirmed, Guid? WorkId = null);
+/// <param name="AllocationId">The allocation itself, so a move can be judged without the work's own old place in the way.</param>
+public sealed record AllocatedSpan(Guid AppUserId, Interval When, bool Confirmed, Guid? WorkId = null, Guid? AllocationId = null);
 
 /// <summary>Everything that decides one person's capacity for one shift date, as real instants.</summary>
 /// <param name="Date">The shift date: the day the working window STARTS on, in the person's zone.</param>

@@ -98,6 +98,43 @@ public sealed class WorkforceAccess(DeskDbContext db, ITenantContext tenant, IEf
         return person;
     }
 
+    /// <summary>The caller may plan their own work: schedule.manage at any scope.</summary>
+    public async Task<bool> MayPlanOwnAsync(Guid callerId, CancellationToken ct)
+        => (await permissions.ResolveAsync(callerId, Permissions.ScheduleManage, ct)).Scope is not PermissionScope.None;
+
+    /// <summary>
+    /// The caller may place, move, fix, give away and take out this person's work as someone who
+    /// schedules others: schedule.manage wider than Own, reaching the person. True for a manager on
+    /// their own plan too - the authority is theirs either way.
+    /// </summary>
+    public async Task<bool> CanScheduleOthersAsync(Guid callerId, Guid appUserId, CancellationToken ct)
+    {
+        var scope = (await permissions.ResolveAsync(callerId, Permissions.ScheduleManage, ct)).Scope;
+        if (scope is not (PermissionScope.All or PermissionScope.Department or PermissionScope.Team)) return false;
+        return await (await StaffInScopeAsync(callerId, Permissions.ScheduleManage, ct)).AnyAsync(u => u.Id == appUserId, ct);
+    }
+
+    /// <summary>Everyone the caller may put work in front of: themselves, and whoever their schedule.manage scope reaches.</summary>
+    public Task<IQueryable<AppUser>> SchedulableStaffAsync(Guid callerId, CancellationToken ct)
+        => StaffInScopeAsync(callerId, Permissions.ScheduleManage, ct);
+
+    /// <summary>
+    /// Which of these people the caller schedules as someone who schedules others (see
+    /// <see cref="CanScheduleOthersAsync"/>) - one query for a whole list, for screens that show many
+    /// people's work at once.
+    /// </summary>
+    public async Task<HashSet<Guid>> ScheduledByAsync(Guid callerId, List<Guid> appUserIds, CancellationToken ct)
+    {
+        if (appUserIds.Count == 0) return [];
+        var scope = (await permissions.ResolveAsync(callerId, Permissions.ScheduleManage, ct)).Scope;
+        if (scope is not (PermissionScope.All or PermissionScope.Department or PermissionScope.Team)) return [];
+        return (await (await StaffInScopeAsync(callerId, Permissions.ScheduleManage, ct))
+            .Where(u => appUserIds.Contains(u.Id)).Select(u => u.Id).ToListAsync(ct)).ToHashSet();
+    }
+
+    public async Task<bool> MayOverrideAsync(Guid callerId, CancellationToken ct)
+        => (await permissions.ResolveAsync(callerId, Permissions.ScheduleOverride, ct)).Scope == PermissionScope.All;
+
     /// <summary>Narrows a set of staff to a team, a department, and people holding some skills (every one, or any one).</summary>
     public IQueryable<AppUser> Narrow(IQueryable<AppUser> staff, Guid? teamId, Guid? departmentId, IReadOnlyList<Guid>? skillIds, bool matchAllSkills)
     {

@@ -97,6 +97,10 @@ public static class PermissionCatalog
         new(Permissions.AvailabilityManage, "Workforce", "Record time away and extra availability",
             [PermissionScope.All, PermissionScope.Department, PermissionScope.Team, PermissionScope.Own, PermissionScope.None],
             PermissionScope.All, IsBoardAware: false),
+        new(Permissions.ScheduleManage, "Workforce", "Plan work into people's time (Own = your own plan only)",
+            [PermissionScope.All, PermissionScope.Department, PermissionScope.Team, PermissionScope.Own, PermissionScope.None],
+            PermissionScope.All, IsBoardAware: false),
+        Admin(Permissions.ScheduleOverride, "Workforce", "Override a scheduling conflict, with a reason"),
     ];
 
     private static readonly Dictionary<string, PermissionDefinition> ByKey =

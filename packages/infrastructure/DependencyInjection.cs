@@ -133,9 +133,13 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Workforce.ISkillService, Workforce.SkillService>();
         services.AddScoped<Desk.Application.Workforce.ICapacityService, Workforce.CapacityService>();
         services.AddScoped<Desk.Application.Workforce.ICapacityExceptionService, Workforce.CapacityExceptionService>();
-        // Planned work comes from here. Nothing can be booked into people's time yet, so nothing is
-        // allocated; work allocation replaces this one registration.
-        services.AddScoped<Desk.Application.Workforce.IWorkAllocationReader, Workforce.NoWorkAllocations>();
+        // Planned work: allocations read by the capacity engine, the plan itself, and the gate that
+        // serializes changes to one person's plan.
+        services.AddScoped<Desk.Application.Workforce.IWorkAllocationReader, Workforce.WorkAllocationReader>();
+        services.AddScoped<Workforce.PlanningGate>();
+        services.AddScoped<Desk.Application.Workforce.IWorkPlanService, Workforce.WorkPlanService>();
+        services.AddScoped<Desk.Application.Workforce.IWorkAllocationReleaser, Workforce.WorkAllocationReleaser>();
+        services.AddSingleton<Desk.Application.Workforce.IWorkAllocationReleaseRunner, Workforce.WorkAllocationReleaseRunner>();
         services.AddSingleton(new Desk.Application.Workforce.WorkforceFeatureOptions
         {
             Enabled = config.GetValue("Features:Workforce", false),

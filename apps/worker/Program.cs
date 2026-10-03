@@ -36,6 +36,7 @@ builder.Services.AddHostedService<ActivityRollupBackgroundService>();
 builder.Services.AddHostedService<EnquiryRetentionBackgroundService>();
 builder.Services.AddHostedService<AuthorBackfillService>();
 builder.Services.AddHostedService<ContactBackfillService>();
+builder.Services.AddHostedService<WorkAllocationReleaseBackgroundService>();
 
 var host = builder.Build();
 
