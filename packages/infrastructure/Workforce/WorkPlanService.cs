@@ -95,6 +95,98 @@ public sealed class WorkPlanService(
             t.PortalPriority, t.PortalStatus, Source(t.Origin, t.Provider), t.SlaDueAt, t.AssignedToMe, t.TeamName, t.PlannedSoFar)).ToList();
     }
 
+    public async Task<TeamPlanDto> TeamAsync(Guid callerId, TeamPlanQuery query, CancellationToken ct = default)
+    {
+        var orgZone = access.OrganizationTimeZone();
+        var today = WorkforceCalendar.LocalDate(clock.GetUtcNow(), TimeZones.Resolve(orgZone));
+        var from = query.From ?? today;
+        var to = query.To ?? from;
+        // The rows and their days come from the capacity engine (planned work already counted);
+        // the pieces of work themselves are one more query for everyone, shaped once.
+        var range = await capacity.ForTeamRangeAsync(callerId, new TeamRangeQuery(from, to, query.TeamId, query.DepartmentId, query.SkillIds, query.MatchAllSkills), ct);
+        var ids = range.People.Select(p => p.AppUserId).ToList();
+        var byPerson = ids.Count == 0
+            ? new Dictionary<Guid, List<WorkAllocationDto>>()
+            : await AllocationsOnAsync(callerId, ids, range.People.ToDictionary(p => p.AppUserId, p => p.TimeZone), from, to, ct);
+        var scheduled = await access.ScheduledByAsync(callerId, ids, ct);
+        var mayOwn = await access.MayPlanOwnAsync(callerId, ct);
+        var people = range.People.Select(p => new TeamPlanPersonDto(p.AppUserId, p.DisplayName, p.TimeZone, p.IsSchedulable, p.HasSchedule, p.Teams, p.Skills, p.Days,
+            byPerson.GetValueOrDefault(p.AppUserId) ?? [], scheduled.Contains(p.AppUserId) || (p.AppUserId == callerId && mayOwn))).ToList();
+        // Sums are the capacity actually on offer, as Team capacity counts it.
+        var offered = people.Where(p => p.IsSchedulable).SelectMany(p => p.Days).ToList();
+        return new TeamPlanDto(from, to, range.Today, range.TimeZone, people,
+            offered.Sum(d => d.UsableMinutes), offered.Sum(d => d.ConfirmedMinutes), offered.Sum(d => d.RemainingConfirmedMinutes),
+            people.Sum(p => p.Allocations.Count), scheduled.Count > 0, await access.MayOverrideAsync(callerId, ct));
+    }
+
+    /// <summary>Planned work starting on these dates in each person's own zone - one query for everyone, shaped in one pass.</summary>
+    private async Task<Dictionary<Guid, List<WorkAllocationDto>>> AllocationsOnAsync(
+        Guid callerId, List<Guid> ids, IReadOnlyDictionary<Guid, string> zones, DateOnly from, DateOnly to, CancellationToken ct)
+    {
+        var lo = new DateTimeOffset(from.AddDays(-1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var hi = new DateTimeOffset(to.AddDays(2).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var rows = await db.WorkAllocations.AsNoTracking().Include(a => a.Ticket)
+            .Where(a => ids.Contains(a.AppUserId) && a.Status == WorkAllocationStatus.Planned && a.StartsAt < hi && a.EndsAt > lo)
+            .OrderBy(a => a.StartsAt).ToListAsync(ct);
+        var resolved = zones.ToDictionary(z => z.Key, z => TimeZones.Resolve(z.Value));
+        rows = rows.Where(a => { var d = WorkforceCalendar.LocalDate(a.StartsAt, resolved[a.AppUserId]); return d >= from && d <= to; }).ToList();
+        return (await DtosAsync(callerId, rows, ct)).GroupBy(d => d.AppUserId).ToDictionary(g => g.Key, g => g.ToList());
+    }
+
+    public async Task<IReadOnlyList<TeamUnscheduledWorkDto>> UnscheduledTeamAsync(Guid callerId, TeamPlanQuery query, CancellationToken ct = default)
+    {
+        // The people are the scheduler's rows: everyone the caller may see, narrowed as asked.
+        var skills = await KnownSkillsAsync(query.SkillIds, ct);
+        var staff = access.Narrow((await access.VisibleStaffAsync(callerId, ct)).Where(u => u.IsActive), query.TeamId, query.DepartmentId, skills, query.MatchAllSkills);
+        var people = await staff.AsNoTracking().Select(u => new { u.Id, u.DisplayName }).ToListAsync(ct);
+        if (people.Count == 0) return [];
+        var ids = people.Select(p => p.Id).ToList();
+        // Work routed to a team one of them is in sits with the group too (just the asked team, when one was asked for).
+        var teamIds = query.TeamId is { } team
+            ? new List<Guid> { team }
+            : await db.UserTeams.AsNoTracking().Where(m => ids.Contains(m.AppUserId)).Select(m => m.TeamId).Distinct().ToListAsync(ct);
+        var now = clock.GetUtcNow();
+        var open = (await tickets.VisibleAsync(db.Tickets.AsNoTracking(), callerId, Permissions.TicketsViewAll, ct))
+            .Where(TicketStatusRules.Open())
+            .Where(t => (t.AssignedAppUserId != null && ids.Contains(t.AssignedAppUserId.Value))
+                        || (t.AssignedTeamId != null && teamIds.Contains(t.AssignedTeamId.Value)))
+            // In nobody's plan: no planned work on it that is still to come, whoever it is planned for.
+            .Where(t => !db.WorkAllocations.Any(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Planned && a.EndsAt > now));
+        var rows = await open
+            .OrderBy(t => t.SlaDueAt == null).ThenBy(t => t.SlaDueAt).ThenByDescending(t => t.PsaCreatedAt ?? t.CreatedAt)
+            .Take(MaxUnscheduled)
+            .Select(t => new
+            {
+                t.Id, t.Number, t.Provider, t.ExternalTicketId, t.Title, t.PortalPriority, t.PortalStatus, t.Origin, t.SlaDueAt, t.AssignedAppUserId, t.AssignedTeamId,
+                ClientName = db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
+                TeamName = db.Teams.Where(x => x.Id == t.AssignedTeamId).Select(x => x.Name).FirstOrDefault(),
+                PlannedSoFar = db.WorkAllocations.Where(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Planned).Sum(a => (int?)a.PlannedMinutes) ?? 0,
+            })
+            .ToListAsync(ct);
+        var names = people.ToDictionary(p => p.Id, p => p.DisplayName);
+        // A holder outside the group (work routed to one of its teams but held by someone the caller
+        // may not see) is only said to exist: no id, no name.
+        return rows.Select(t =>
+        {
+            var inside = t.AssignedAppUserId is { } h && names.ContainsKey(h);
+            return new TeamUnscheduledWorkDto(t.Id, Reference(t.Number, t.Provider, t.ExternalTicketId), t.Title, t.ClientName,
+                t.PortalPriority, t.PortalStatus, Source(t.Origin, t.Provider), t.SlaDueAt,
+                inside ? t.AssignedAppUserId : null, inside ? names[t.AssignedAppUserId!.Value] : null, t.AssignedAppUserId is not null && !inside,
+                t.AssignedTeamId, t.TeamName, t.PlannedSoFar);
+        }).ToList();
+    }
+
+    /// <summary>The requested skills that exist here: the same refusal as the capacity views give, so the queue and the rows agree.</summary>
+    private async Task<List<Guid>> KnownSkillsAsync(IReadOnlyList<Guid>? skillIds, CancellationToken ct)
+    {
+        if (skillIds is not { Count: > 0 }) return [];
+        var wanted = skillIds.Distinct().ToList();
+        if (wanted.Count > 20) throw new ValidationFailedException("Ask for at most 20 skills at a time.");
+        var known = await db.Skills.AsNoTracking().CountAsync(s => wanted.Contains(s.Id), ct);
+        if (known != wanted.Count) throw new ValidationFailedException("One of the skills asked for is not in the skill catalogue.");
+        return wanted;
+    }
+
     public async Task<IReadOnlyList<PlannablePersonDto>> PlannablePeopleAsync(Guid callerId, CancellationToken ct = default)
     {
         var people = await (await access.SchedulableStaffAsync(callerId, ct)).AsNoTracking()
@@ -227,6 +319,7 @@ public sealed class WorkPlanService(
             : Verdict.Clean;
         var zone = await ZoneAsync(person.Id, start, ct);
         var before = Describe(row, zone);
+        var (beforeStart, beforeEnd) = (row.StartsAt, row.EndsAt);
         row.StartsAt = start;
         row.EndsAt = end;
         row.PlannedMinutes = Minutes(start, end);
@@ -236,7 +329,8 @@ public sealed class WorkPlanService(
         row.Version++;
         if (moved) ApplyOverride(row, verdict, callerId);
         await SaveAsync(ct);
-        await audit.WriteAsync(moved ? "workforce.allocation.moved" : "workforce.allocation.changed", "WorkAllocation", row.Id.ToString(), new
+        var action = !moved ? "workforce.allocation.changed" : start == beforeStart && end != beforeEnd ? "workforce.allocation.resized" : "workforce.allocation.moved";
+        await audit.WriteAsync(action, "WorkAllocation", row.Id.ToString(), new
         {
             person = person.DisplayName, reference = Reference(row.Ticket!), before, after = Describe(row, zone), isFixed = row.IsFixed,
             overrideReason = moved ? row.OverrideReason : null, overridden = moved ? row.OverriddenConflicts : null, warnings = verdict.Warnings,

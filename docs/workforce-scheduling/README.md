@@ -12,9 +12,9 @@ accrual, HR compliance, recruitment, appraisal, or room/vehicle/equipment schedu
 | 0 | Discovery, audit and architecture | Done |
 | 1 | Working schedules (overnight, breaks, time zones, versions) + skills | Done |
 | 2 | Capacity, availability and free-time engine: capacity exceptions, usable and remaining capacity, exact free slots, team capacity, the technician search, conflict evaluation | Done |
-| 3 | Work allocation, My plan and authorized scheduling: planning your own work, scheduling others (fixed or flexible), moving, giving away and taking out, overrides with a reason, internal work raised and planned in one step, finished work released | **This release** |
-| 4 | Team scheduler | Planned |
-| 5 | Find available technician: assigning from the search (the search itself arrived in Phase 2; the plan dialog already offers it) | Planned |
+| 3 | Work allocation, My plan and authorized scheduling: planning your own work, scheduling others (fixed or flexible), moving, giving away and taking out, overrides with a reason, internal work raised and planned in one step, finished work released | Done |
+| 4 | Team scheduler: everyone the viewer may see on one board for a day or a week, planned work as blocks on a shared time axis with free windows, breaks and time away, the group's unscheduled work beside it, drag to move or give away, resize by the edge, a conflict dialog for overrides, Find available technician inside it; no new write path and no new table | **This release** |
+| 5 | Find available technician: assigning from the search (the search itself arrived in Phase 2; the plan dialog already offers it, and the scheduler's Find panel offers **Schedule work** from a result since Phase 4) | Planned |
 | 6 | My Day / My Schedule (My plan arrived in Phase 3) | Planned |
 | 7 | Planned vs actual | Planned |
 | 8 | Capacity and utilization analytics | Planned |
@@ -41,6 +41,7 @@ set `FEATURES_WORKFORCE=true` in `.env.prod` and redeploy; `false` hides it agai
 - [availability-exceptions.md](availability-exceptions.md): time unavailable and additional availability
 - [conflicts.md](conflicts.md): conflict types, which block and which can be overridden, why availability is not a reservation
 - [planned-work.md](planned-work.md): work allocations, My plan, self-planning and authorized scheduling, fixed and flexible, holder bridging, the 409 conflict answer and overrides, concurrency, release of finished work, screens, API, client isolation, performance
+- [team-scheduler.md](team-scheduler.md): the Team schedule board, Day and Week (and why not Month), the time axis and zone rules with the clock-change cases, click / drag / drop / resize and the drawer, conflicts and overrides on the board, the unscheduled queue, Find inside the scheduler, filters, states and messages, the two reads, permissions, client isolation, performance, no added dependencies, skills deferred, accessibility, troubleshooting
 - [permissions-and-security.md](permissions-and-security.md): who sees and changes what; tenant and client isolation; audit
 - [testing.md](testing.md): what is tested and how
 - [troubleshooting.md](troubleshooting.md)

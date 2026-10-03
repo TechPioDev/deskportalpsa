@@ -137,6 +137,8 @@ public class EndpointAuthorizationTests
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Unscheduled), [Permissions.ScheduleView] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.PlannablePeople), [Permissions.ScheduleView] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.ForTicket), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Team), [Permissions.ScheduleView] },
+        { nameof(WorkforcePlanController), nameof(WorkforcePlanController.UnscheduledTeam), [Permissions.ScheduleView] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Create), [Permissions.ScheduleManage] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.CreateInternalWork), [Permissions.ScheduleManage] },
         { nameof(WorkforcePlanController), nameof(WorkforcePlanController.Update), [Permissions.ScheduleManage] },

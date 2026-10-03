@@ -70,6 +70,17 @@ public sealed record WorkforceGroupDto(Guid Id, string Name);
 public sealed record TeamCapacityQuery(DateOnly? Date = null, Guid? TeamId = null, Guid? DepartmentId = null,
     IReadOnlyList<Guid>? SkillIds = null, bool MatchAllSkills = true);
 
+/// <summary>Everyone the caller may see, narrowed as asked, over a run of dates: the team scheduler's rows.</summary>
+public sealed record TeamRangeQuery(DateOnly From, DateOnly To, Guid? TeamId = null, Guid? DepartmentId = null,
+    IReadOnlyList<Guid>? SkillIds = null, bool MatchAllSkills = true);
+
+/// <summary>One person over the run of dates: who they are, and each day's capacity.</summary>
+public sealed record TeamRangeRowDto(
+    Guid AppUserId, string DisplayName, bool IsSchedulable, bool HasSchedule, string TimeZone,
+    IReadOnlyList<string> Teams, IReadOnlyList<StaffSkillDto> Skills, IReadOnlyList<DayCapacityDto> Days);
+
+public sealed record TeamRangeDto(DateOnly From, DateOnly To, DateOnly Today, string TimeZone, IReadOnlyList<TeamRangeRowDto> People);
+
 /// <summary>
 /// "Who can take <see cref="DurationMinutes"/> of continuous work?" - on a date or a run of dates,
 /// optionally only between two times of day, in a team or department, holding some skills.
@@ -126,6 +137,8 @@ public interface ICapacityService
     /// <summary>One person's capacity for each date from <paramref name="from"/> to <paramref name="to"/> (today when omitted).</summary>
     Task<PersonCapacityDto> ForPersonAsync(Guid callerId, Guid appUserId, DateOnly? from, DateOnly? to, CancellationToken ct = default);
     Task<TeamCapacityDto> ForTeamAsync(Guid callerId, TeamCapacityQuery query, CancellationToken ct = default);
+    /// <summary>The same people over a run of dates (at most two weeks): what the team scheduler draws its rows from.</summary>
+    Task<TeamRangeDto> ForTeamRangeAsync(Guid callerId, TeamRangeQuery query, CancellationToken ct = default);
     Task<WorkforceGroupsDto> GroupsAsync(Guid callerId, CancellationToken ct = default);
     Task<AvailabilitySearchResultDto> FindAsync(Guid callerId, AvailabilitySearch search, CancellationToken ct = default);
     /// <summary>

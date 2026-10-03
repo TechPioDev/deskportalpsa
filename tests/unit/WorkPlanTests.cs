@@ -427,6 +427,112 @@ public class WorkPlanTests
         (await w.Db.WorkAllocations.AsNoTracking().SingleAsync()).Should().Match<WorkAllocation>(a => a.Status == WorkAllocationStatus.Cancelled && a.StartsAt == At(Monday, "10:00"));
     }
 
+    // ---- Phase 4: the team scheduler's data ---------------------------------------------------------
+
+    [Fact]
+    public async Task The_team_scheduler_lists_the_people_the_asker_may_see_with_their_days_and_what_is_planned()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        var placed = await lead.Plans.CreateAsync(w.Lead.Id, Place(w.JasonsTicket, w.Jason, Monday, "09:00", "11:00", fixedWork: true));
+        await lead.Plans.CreateAsync(w.Lead.Id, Place(w.OpenTicket, w.Abbie, Tuesday, "14:00", "15:00"));
+
+        // The lead's reach is the NOC: Jason and Abbie (and the lead, who has no schedule), never Sam.
+        var day = await lead.Plans.TeamAsync(w.Lead.Id, new TeamPlanQuery(Monday, Monday));
+        day.People.Select(p => p.DisplayName).Should().BeEquivalentTo("Jason Carter", "Abbie Noor", "Lena Lead");
+        day.People.Should().NotContain(p => p.AppUserId == w.Sam.Id);
+        var jason = day.People.Single(p => p.AppUserId == w.Jason.Id);
+        jason.Days.Should().ContainSingle().Which.ConfirmedMinutes.Should().Be(120);
+        jason.Allocations.Should().ContainSingle().Which.Should().Match<WorkAllocationDto>(a => a.Id == placed.Id && a.IsFixed && a.Reference == "INT-000001" && a.CanEdit && a.CanReassign);
+        jason.CanPlan.Should().BeTrue("the lead schedules the NOC");
+        day.People.Single(p => p.AppUserId == w.Abbie.Id).Allocations.Should().BeEmpty("her work is on Tuesday");
+        (day.UsableMinutes, day.ConfirmedMinutes, day.RemainingConfirmedMinutes, day.AllocationCount).Should().Be((2 * 480, 120, 2 * 480 - 120, 1), "sums are over people offered for work");
+        (day.CanScheduleOthers, day.CanOverride).Should().Be((true, false));
+
+        // A week: both pieces of work, each on its own day.
+        var week = await lead.Plans.TeamAsync(w.Lead.Id, new TeamPlanQuery(Monday, Monday.AddDays(6)));
+        week.People.Single(p => p.AppUserId == w.Jason.Id).Days.Should().HaveCount(7);
+        week.AllocationCount.Should().Be(2);
+        week.People.Single(p => p.AppUserId == w.Abbie.Id).Allocations.Should().ContainSingle().Which.Reference.Should().Be("INT-000002");
+
+        // Narrowed to a team the lead cannot see: nobody, not Sam.
+        var security = await w.Db.Teams.SingleAsync(t => t.Name == "Security");
+        (await lead.Plans.TeamAsync(w.Lead.Id, new TeamPlanQuery(Monday, Monday, TeamId: security.Id))).People.Should().BeEmpty();
+        (await lead.Plans.TeamAsync(w.Lead.Id, new TeamPlanQuery(Monday, Monday, TeamId: Guid.NewGuid()))).People.Should().BeEmpty();
+
+        // A technician's team scheduler is themselves: the Own scope reaches nobody else.
+        var mine = await w.As(w.Jason).Plans.TeamAsync(w.Jason.Id, new TeamPlanQuery(Monday, Monday));
+        mine.People.Should().ContainSingle().Which.AppUserId.Should().Be(w.Jason.Id);
+        mine.People.Single().CanPlan.Should().BeTrue("their own plan");
+        mine.CanScheduleOthers.Should().BeFalse();
+        mine.People.Single().Allocations.Single().Should().Match<WorkAllocationDto>(a => !a.CanEdit && !a.CanCancel && !a.CanReassign, "fixed work scheduled for them");
+
+        // Limits: at most two weeks, and within a year.
+        var wide = () => lead.Plans.TeamAsync(w.Lead.Id, new TeamPlanQuery(Monday, Monday.AddDays(14)));
+        (await wide.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Be("Ask for at most 14 days at a time.");
+        var far = () => lead.Plans.TeamAsync(w.Lead.Id, new TeamPlanQuery(Monday.AddYears(2), Monday.AddYears(2)));
+        await far.Should().ThrowAsync<ValidationFailedException>();
+    }
+
+    [Fact]
+    public async Task Team_unscheduled_work_is_what_the_group_holds_or_is_routed_and_nobody_has_planned()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+
+        // Jason holds his ticket and the Autotask one; the NAS ticket is held by nobody and routed nowhere yet.
+        var before = await lead.Plans.UnscheduledTeamAsync(w.Lead.Id, new TeamPlanQuery());
+        before.Select(t => t.Reference).Should().BeEquivalentTo("INT-000001", "Autotask 43829");
+        before.Single(t => t.Reference == "INT-000001").Should().Match<TeamUnscheduledWorkDto>(t => t.HolderId == w.Jason.Id && t.HolderName == "Jason Carter" && t.TeamName == null);
+        before.Should().NotContain(t => t.Reference == "Autotask 777", "Sam is outside the lead's reach");
+
+        // Routed to the NOC, the NAS ticket sits with the group.
+        var nas = await w.Db.Tickets.SingleAsync(t => t.Id == w.OpenTicket.Id);
+        nas.AssignedTeamId = w.Noc.Id;
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        var routed = await lead.Plans.UnscheduledTeamAsync(w.Lead.Id, new TeamPlanQuery(TeamId: w.Noc.Id));
+        routed.Single(t => t.Reference == "INT-000002").Should().Match<TeamUnscheduledWorkDto>(t => t.HolderId == null && !t.HeldOutside && t.TeamId == w.Noc.Id && t.TeamName == "NOC");
+        // Routed to the NOC but held by Sam, whom the lead may not see: said to be held, by nobody named.
+        nas = await w.Db.Tickets.SingleAsync(t => t.Id == w.OpenTicket.Id);
+        nas.AssignedAppUserId = w.Sam.Id;
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        (await lead.Plans.UnscheduledTeamAsync(w.Lead.Id, new TeamPlanQuery(TeamId: w.Noc.Id))).Single(t => t.Reference == "INT-000002")
+            .Should().Match<TeamUnscheduledWorkDto>(t => t.HolderId == null && t.HolderName == null && t.HeldOutside);
+        var unknownSkill = () => lead.Plans.UnscheduledTeamAsync(w.Lead.Id, new TeamPlanQuery(SkillIds: [Guid.NewGuid()]));
+        (await unknownSkill.Should().ThrowAsync<ValidationFailedException>()).Which.Message.Should().Be("One of the skills asked for is not in the skill catalogue.");
+
+        // Planned - for anyone - it leaves the list; planned only in the past, it is back.
+        var placed = await lead.Plans.CreateAsync(w.Lead.Id, Place(w.JasonsTicket, w.Abbie, Monday, "09:00", "10:00"));
+        (await lead.Plans.UnscheduledTeamAsync(w.Lead.Id, new TeamPlanQuery())).Should().NotContain(t => t.Reference == "INT-000001");
+        await lead.Plans.CancelAsync(w.Lead.Id, placed.Id, null);
+        (await lead.Plans.UnscheduledTeamAsync(w.Lead.Id, new TeamPlanQuery())).Should().Contain(t => t.Reference == "INT-000001");
+
+        // A technician sees only the work in their own hands; a team they are not in adds nothing.
+        var mine = await w.As(w.Jason).Plans.UnscheduledTeamAsync(w.Jason.Id, new TeamPlanQuery());
+        mine.Select(t => t.Reference).Should().BeEquivalentTo("INT-000001", "Autotask 43829", "INT-000002");
+        (await w.As(w.Jason).Plans.UnscheduledTeamAsync(w.Jason.Id, new TeamPlanQuery(TeamId: Guid.NewGuid()))).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_resize_keeps_the_start_changes_the_planned_duration_and_is_audited_as_a_resize()
+    {
+        var w = await WorldAsync();
+        var jason = w.As(w.Jason);
+        var planned = await jason.Plans.CreateAsync(w.Jason.Id, Place(w.JasonsTicket, w.Jason, Monday, "14:00", "15:00"));
+        var longer = await jason.Plans.UpdateAsync(w.Jason.Id, planned.Id, new WorkAllocationUpdate(At(Monday, "14:00"), At(Monday, "16:00"), planned.Version));
+        (longer.StartsAt, longer.PlannedMinutes).Should().Be((At(Monday, "14:00"), 120));
+        (await DayAsync(w, w.Jason, w.Jason, Monday)).ConfirmedMinutes.Should().Be(120);
+        (await w.Db.AuditLog.CountAsync(a => a.Action == "workforce.allocation.resized")).Should().Be(1);
+        (await w.Db.AuditLog.CountAsync(a => a.Action == "workforce.allocation.moved")).Should().Be(0);
+        // Into the break it cannot grow without an override, and the technician has none.
+        var tooLong = () => jason.Plans.UpdateAsync(w.Jason.Id, planned.Id, new WorkAllocationUpdate(At(Monday, "14:00"), At(Monday, "17:00"), longer.Version));
+        await tooLong.Should().NotThrowAsync("17:00 is still inside the window");
+        var past = () => jason.Plans.UpdateAsync(w.Jason.Id, planned.Id, new WorkAllocationUpdate(At(Monday, "14:00"), At(Monday, "18:00"), longer.Version + 1));
+        (await past.Should().ThrowAsync<ConflictException>()).Which.Message.Should().StartWith("This time is no longer available");
+    }
+
     [Fact]
     public async Task Time_away_blocks_everyone_and_exact_boundaries_are_fine()
     {
@@ -646,6 +752,7 @@ public class WorkPlanTests
             () => notStaff.CreateInternalWork(new InternalWorkInput(id, "x", null, null, At(Monday, "09:00"), At(Monday, "10:00")), default),
             () => notStaff.Update(id, new WorkAllocationUpdate(At(Monday, "09:00"), At(Monday, "10:00"), 0), default),
             () => notStaff.Reassign(id, new WorkAllocationReassign(id, 0), default), () => notStaff.Cancel(id, null, default),
+            () => notStaff.Team(new Desk.Api.Controllers.WorkforcePlanController.TeamPlanRequest(), default), () => notStaff.UnscheduledTeam(new Desk.Api.Controllers.WorkforcePlanController.TeamPlanRequest(), default),
         ];
         foreach (var call in calls)
             (await call.Should().ThrowAsync<ForbiddenException>()).WithMessage("Only staff accounts can use the workforce module.");
@@ -689,6 +796,12 @@ public class WorkPlanTests
         var onTicket = () => b.ForTicketAsync(adminB.Id, w.OpenTicket.Id);
         (await onTicket.Should().ThrowAsync<NotFoundException>()).WithMessage("Ticket was not found.");
         (await b.UnscheduledAsync(adminB.Id)).Should().BeEmpty();
+        // The team scheduler of B shows B's own people only, and A's team id narrows it to nobody.
+        var theirs = (await b.TeamAsync(adminB.Id, new TeamPlanQuery(Monday, Monday))).People.Select(p => p.AppUserId).ToList();
+        theirs.Should().Contain(adminB.Id).And.NotContain(new[] { w.Jason.Id, w.Abbie.Id, w.Lead.Id, w.Sam.Id, w.Admin.Id });
+        (await b.TeamAsync(adminB.Id, new TeamPlanQuery(Monday, Monday, TeamId: w.Noc.Id))).People.Should().BeEmpty();
+        (await b.UnscheduledTeamAsync(adminB.Id, new TeamPlanQuery())).Should().BeEmpty();
+        (await b.UnscheduledTeamAsync(adminB.Id, new TeamPlanQuery(TeamId: w.Noc.Id))).Should().BeEmpty();
         (await w.Db.WorkAllocations.AsNoTracking().SingleAsync()).Should().Match<WorkAllocation>(a => a.Id == planned.Id && a.Status == WorkAllocationStatus.Planned && a.Version == 0);
     }
 }

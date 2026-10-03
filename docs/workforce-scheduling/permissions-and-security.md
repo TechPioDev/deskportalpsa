@@ -42,10 +42,12 @@ a client; its planning never becomes visible because of that.
 | A workforce permission on a client role (`schedule.manage` and `schedule.override` included) | Not possible by default | `No_client_role_or_client_login_holds_a_workforce_permission` |
 | Seeing planning through their own ticket | The ticket and client-portal response shapes carry no workforce field (`Allocat`, `Planned`, `MyPlan`, `Override`, …) | `Nothing_a_client_can_receive_carries_workforce_planning` fails if one is ever added |
 | A signed-in account without the permission opening the pages by address | No menu entry; pages show an error; every endpoint answers 403 | `e2e/workforce-capacity.spec.ts`; for My plan, a person's Plan tab, the ticket's Planned work panel and every plan endpoint, `e2e/workforce-plan.spec.ts` |
-| A sign-in that is not a staff account holding every planning claim | Every planning action refused ("Only staff accounts can use the workforce module.") | `WorkPlanTests.A_sign_in_that_is_not_a_staff_account_is_refused_by_every_planning_action` |
+| A sign-in that is not a staff account holding every planning claim | Every planning action refused ("Only staff accounts can use the workforce module.") | `WorkPlanTests.A_sign_in_that_is_not_a_staff_account_is_refused_by_every_planning_action` (the nine Phase 3 actions; the two Phase 4 reads share the same `Caller()` guard in code) |
+| The team scheduler (Phase 4) by address, or its two reads `plan/team` and `plan/unscheduled/team`, with or without a `teamId` | Refused (403): the page shows an alert and no row, name or reference; both endpoints answer 403. For a staff account the rows are only the people its `schedule.view` reaches, so a technician gets one row, their own | `EndpointAuthorizationTests.Sensitive_endpoints_require_exactly_these_permissions` (the `Team` and `UnscheduledTeam` rows); `e2e/workforce-schedule.spec.ts`: "an account without the scheduling permission is refused the scheduler and its endpoints", "a technician has no team schedule entry and the page shows only themselves"; `WorkPlanTests.The_team_scheduler_lists_the_people_the_asker_may_see_with_their_days_and_what_is_planned` |
 
 The ten planning-specific guarantees, each with its test, are listed in
-[planned-work.md](planned-work.md#tenant-isolation-and-client-security).
+[planned-work.md](planned-work.md#tenant-isolation-and-client-security), and the scheduler's six in
+[team-scheduler.md](team-scheduler.md#tenant-isolation-and-client-security).
 
 A second line of defence: every workforce action also requires a **staff** user id, so a principal
 that is not a staff account is refused even if it somehow held the claim.
@@ -76,9 +78,10 @@ Request bodies are explicit records, never entities (no mass assignment). A filt
 not a valid id is refused rather than ignored, so a malformed filter can never return more people
 than were asked for. Notes are plain text: stored as typed and shown as text, never as markup.
 
-**Limits against expensive requests:** 31 days of capacity or plan, 14 days of search, 1,000 people,
-200 matches, 20 skills, work of 5 minutes to 12 hours (search) or at most 24 hours (planned work),
-100 unscheduled tickets, 50 allocations listed on a ticket. The API's per-user and per-organization
+**Limits against expensive requests:** 31 days of capacity or plan, 14 days of search or of the
+team scheduler, 1,000 people, 200 matches, 20 skills, work of 5 minutes to 12 hours (search) or at
+most 24 hours (planned work), 100 unscheduled tickets (own or the group's), 50 allocations listed on
+a ticket. The API's per-user and per-organization
 rate limits apply as everywhere else. Nothing is cached, so there is no cache to leak between tenants.
 
 **Planned work and the ticket.** Planning never changes what the PSA says, and taking work out of a
@@ -112,6 +115,6 @@ every audit entry; it was always empty before.
 | Offered for planned work | `workforce.schedulable.changed` |
 | Skills | `skill.created`, `skill.updated` (before/after), `skill.assigned`, `skill.level_changed`, `skill.removed` |
 | Capacity exceptions | `workforce.exception.added`, `workforce.exception.updated` (before/after), `workforce.exception.removed` |
-| Planned work (Phase 3) | `workforce.allocation.created`, `workforce.allocation.moved` (before/after, when the time changes), `workforce.allocation.changed` (a note-only or fixed-only change), `workforce.allocation.reassigned` (from/to, before/after), `workforce.allocation.cancelled` (with the reason), `workforce.allocation.released` (the worker, when the ticket finished first; one entry per pass listing every release); `ticket.assigned.portal` with `viaPlanning: true` when planning made someone the holder. Override reasons are written; planning notes are not |
+| Planned work (Phase 3, Phase 4) | `workforce.allocation.created`, `workforce.allocation.moved` (before/after, when the start changes), `workforce.allocation.resized` (Phase 4: before/after, when the start is kept and only the end changes, as dragging a block's edge on the team scheduler does), `workforce.allocation.changed` (a note-only or fixed-only change), `workforce.allocation.reassigned` (from/to, before/after), `workforce.allocation.cancelled` (with the reason), `workforce.allocation.released` (the worker, when the ticket finished first; one entry per pass listing every release); `ticket.assigned.portal` with `viaPlanning: true` when planning made someone the holder. Override reasons are written; planning notes are not. The team scheduler adds no event of its own: a drop within a row is a `moved`, on another row a `reassigned`, a resize a `resized` |
 
 View as is read-only, so it can't change a schedule.

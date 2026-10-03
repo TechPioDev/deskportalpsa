@@ -40,6 +40,16 @@ public sealed class WorkforcePlanController(IWorkPlanService plans, ICurrentUser
     public async Task<IActionResult> ForTicket(Guid ticketId, CancellationToken ct)
         => Ok(await plans.ForTicketAsync(Caller(), ticketId, ct));
 
+    /// <summary>The team scheduler: the people the caller may see (narrowed), their days and what is planned in them.</summary>
+    [HttpGet("plan/team")]
+    public async Task<IActionResult> Team([FromQuery] TeamPlanRequest q, CancellationToken ct)
+        => Ok(await plans.TeamAsync(Caller(), q.ToQuery(), ct));
+
+    /// <summary>Open work in the group's hands that nobody has planned yet.</summary>
+    [HttpGet("plan/unscheduled/team")]
+    public async Task<IActionResult> UnscheduledTeam([FromQuery] TeamPlanRequest q, CancellationToken ct)
+        => Ok(await plans.UnscheduledTeamAsync(Caller(), q.ToQuery(), ct));
+
     [HttpPost("plan")]
     [RequirePermission(Permissions.ScheduleManage)]
     public async Task<IActionResult> Create([FromBody] WorkAllocationInput input, CancellationToken ct)
@@ -66,6 +76,16 @@ public sealed class WorkforcePlanController(IWorkPlanService plans, ICurrentUser
     [RequirePermission(Permissions.ScheduleManage)]
     public async Task<IActionResult> Cancel(Guid allocationId, [FromQuery] string? reason, CancellationToken ct)
         => Ok(await plans.CancelAsync(Caller(), allocationId, reason, ct));
+
+    public sealed record TeamPlanRequest(DateOnly? From = null, DateOnly? To = null, Guid? TeamId = null, Guid? DepartmentId = null, string? Skills = null, bool? MatchAll = null)
+    {
+        public TeamPlanQuery ToQuery() => new(From, To, TeamId, DepartmentId, Ids(Skills), MatchAll ?? true);
+
+        private static List<Guid> Ids(string? csv)
+            => (csv ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => Guid.TryParse(s, out var g) ? g : throw new ValidationFailedException("One of the values in a filter is not a valid id."))
+                .ToList();
+    }
 
     /// <summary>The signed-in staff member - and the module switched on. Off, it is "not found" throughout.</summary>
     private Guid Caller()

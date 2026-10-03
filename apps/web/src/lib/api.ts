@@ -297,6 +297,26 @@ export const ConflictProblemSchema = z.object({
   conflicts: z.array(z.object({ type: z.number(), severity: z.number(), start: z.string(), end: z.string(), message: z.string(), blockingWorkId: z.string().nullable() })),
 });
 export type ConflictProblem = z.infer<typeof ConflictProblemSchema>;
+// ---- Workforce: the team scheduler (internal only) ---------------------------------------------
+export const TeamPlanPersonSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), timeZone: z.string(), isSchedulable: z.boolean(), hasSchedule: z.boolean(),
+  teams: z.array(z.string()), skills: z.array(StaffSkillSchema), days: z.array(DayCapacitySchema), allocations: z.array(WorkAllocationSchema),
+  canPlan: z.boolean(),
+});
+export type TeamPlanPerson = z.infer<typeof TeamPlanPersonSchema>;
+export const TeamPlanSchema = z.object({
+  from: z.string(), to: z.string(), today: z.string(), timeZone: z.string(), people: z.array(TeamPlanPersonSchema),
+  usableMinutes: z.number(), confirmedMinutes: z.number(), remainingConfirmedMinutes: z.number(), allocationCount: z.number(),
+  canScheduleOthers: z.boolean(), canOverride: z.boolean(),
+});
+export type TeamPlan = z.infer<typeof TeamPlanSchema>;
+export const TeamUnscheduledWorkSchema = z.object({
+  ticketId: z.string(), reference: z.string(), title: z.string(), clientName: z.string().nullable(), priority: z.string(), status: z.string(), source: z.string(),
+  dueAt: z.string().nullable(), holderId: z.string().nullable(), holderName: z.string().nullable(), heldOutside: z.boolean().default(false),
+  teamId: z.string().nullable(), teamName: z.string().nullable(), plannedMinutesSoFar: z.number(),
+});
+export type TeamUnscheduledWork = z.infer<typeof TeamUnscheduledWorkSchema>;
+export type TeamPlanQuery = { from?: string | null; to?: string | null; teamId?: string | null; departmentId?: string | null; skills?: string[]; matchAll?: boolean };
 export type WorkAllocationInput = { ticketId: string; appUserId: string; start: string; end: string; isFixed?: boolean; note?: string | null; overrideReason?: string | null };
 export type WorkAllocationUpdate = { start: string; end: string; version: number; isFixed?: boolean | null; note?: string | null; overrideReason?: string | null };
 export type WorkAllocationReassign = { appUserId: string; version: number; start?: string | null; end?: string | null; overrideReason?: string | null };
@@ -328,6 +348,17 @@ export const ConnectionSettingsSchema = z.object({
   defaultTimeEntryRoleId: z.string().nullable(),
 });
 export type ConnectionSettings = z.infer<typeof ConnectionSettingsSchema>;
+
+function teamPlanQs(q: TeamPlanQuery): string {
+  const qs = new URLSearchParams();
+  if (q.from) qs.set('from', q.from);
+  if (q.to) qs.set('to', q.to);
+  if (q.teamId) qs.set('teamId', q.teamId);
+  if (q.departmentId) qs.set('departmentId', q.departmentId);
+  if (q.skills?.length) qs.set('skills', q.skills.join(','));
+  if (q.matchAll === false) qs.set('matchAll', 'false');
+  return qs.toString();
+}
 
 export const api = {
   listTickets: () => request('/api/tickets', z.array(TicketListItemSchema)) as Promise<TicketListItem[]>,
@@ -613,6 +644,9 @@ export const api = {
     request(`/api/workforce/plan/${id}`, WorkAllocationSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
   reassignPlannedWork: (id: string, body: WorkAllocationReassign) =>
     request(`/api/workforce/plan/${id}/reassign`, WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
+  // ── Team scheduler ── everyone the viewer may see, their days and what is planned; the group's unscheduled work.
+  teamPlan: (q: TeamPlanQuery) => request(`/api/workforce/plan/team?${teamPlanQs(q)}`, TeamPlanSchema) as Promise<TeamPlan>,
+  teamUnscheduled: (q: TeamPlanQuery) => request(`/api/workforce/plan/unscheduled/team?${teamPlanQs(q)}`, z.array(TeamUnscheduledWorkSchema)) as Promise<TeamUnscheduledWork[]>,
   cancelPlannedWork: (id: string, reason?: string | null) =>
     request(`/api/workforce/plan/${id}${reason ? `?reason=${encodeURIComponent(reason)}` : ''}`, WorkAllocationSchema, { method: 'DELETE' }) as Promise<WorkAllocation>,
   capacityExceptions: (userId: string, from?: string | null, to?: string | null) => {

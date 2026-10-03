@@ -17,7 +17,7 @@
 | Two free hours but a 2-hour task finds nothing | The hours are not continuous | Expected: one piece of work needs one slot |
 | "Those dates have passed in ..." | The search date is before today in the organization's time zone | Search from the date the message names |
 | A technician cannot add their own time away | `availability.manage` is not on the Technician role by default | Give the role that permission at scope Own |
-| Team capacity and Find are not in the menu bar | The viewer can see only themselves | Expected for scope Own |
+| Team schedule, Team capacity and Find are not in the menu bar | The viewer can see only themselves | Expected for scope Own; Team schedule still opens by address, with one row |
 | A holiday shows but capacity is unchanged | Holidays are shown, not deducted | Record time away for whoever is off |
 | "That is more than 1000 people..." | The request would work through too many people | Choose a team or a department |
 | "This plan changed since you opened it. Reload and try again." | The version sent with a move or reassignment is stale: someone changed that piece of work since the screen loaded | Reload and make the change again |
@@ -30,5 +30,16 @@
 | A technician cannot plan for a colleague, fix work, take scheduled work out or give it away | `schedule.manage` is Own | A wider scope (Team, Department or All) on their role |
 | "Work can be planned from yesterday onwards, not earlier." | The start is more than 24 hours in the past | Plan from yesterday on; past time is logged on the ticket |
 | The Plan tab is not on the Users → person page | Only the Workforce → person page carries it | Open the person from Workforce |
+| Team schedule: blocks cannot be dragged, or have no resize handle | The viewer may neither move nor give away that work (`canEdit` and `canReassign` false): a technician's fixed or other people's work, or a person outside the `schedule.manage` scope; resizing also needs `canEdit`; phones never drag | Open the block: the drawer offers what is allowed, or says "You cannot change this work. Ask whoever planned it." |
+| Team schedule: a block jumped back after a drop | The server refused the move: a conflict, a stale version or a rule; the notice or the "Conflict detected" dialog says which | Pick another time, give a reason of 5+ characters if the dialog is offered, or reload |
+| "This plan changed since the screen loaded. Reloading it." | A drop or resize carried a stale version; the board reloads itself | Make the change again |
+| "Only someone who schedules others can give work to someone else." (on a drop) | A block was dropped on another person's row by someone whose `schedule.manage` is Own | Move it within your own row, or ask a scheduler |
+| "This work is fixed in place. Ask whoever planned it to move it." (on a drop) | The person it is planned for tried to move fixed work | Ask whoever planned it |
+| "Ask for at most 14 days at a time." | A request for more than two weeks of the team scheduler (`MaxTeamRangeDays`); the screen asks for one day or seven | Stay within 14 days |
+| "Nobody matches these filters. Choose another team or clear the skills." | No visible person in the team, department or skills asked for; a team the viewer cannot see answers the same | Clear the filters |
+| Unscheduled work is empty on the team schedule | Nothing open is held by, or routed to a team of, the people shown, or all of it is in someone's future plan | "Nothing is waiting: everything open is planned." is the normal state; clear the team and skill filters |
+| A person is not a row on the team schedule | Outside the `schedule.view` scope, inactive, excluded by the team / department / skill filter, or hidden by the search | Widen the scope, reactivate, clear the filters |
+| A block's time in its panel is not where it sits on the axis | The person works in another zone: the axis is in the organization's zone, the panel in theirs (named) | Expected; the row shows "· {zone}" |
 
-More in [planned-work.md](planned-work.md#troubleshooting).
+More in [planned-work.md](planned-work.md#troubleshooting) and
+[team-scheduler.md](team-scheduler.md#troubleshooting).

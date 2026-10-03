@@ -1,9 +1,12 @@
-# Architecture (Phases 1 to 3)
+# Architecture (Phases 1 to 4)
 
 The workforce module sits beside the unified ticket model and never copies it. Phase 1 adds who
 works when and what they know. Phase 2 adds capacity exceptions and the engine that turns schedules,
 exceptions and planned work into capacity and free time. Phase 3 adds the planned work itself: a
-work allocation references the existing ticket by id, whatever its origin.
+work allocation references the existing ticket by id, whatever its origin. Phase 4 adds **no table
+and no write**: the team scheduler is a second screen over the same model, with two reads (the
+people the caller may see with their days and their work; the group's unscheduled work) and a pure
+timeline module in the web app ([team-scheduler.md](team-scheduler.md)).
 
 ## Data model
 
@@ -103,6 +106,17 @@ Phase 3 (`WorkforcePlanController`, same base route, same switch; details and bo
 A refusal for a conflict or a stale version is **409** `conflict` with a `payload`
 (`ConflictProblemDto`), the one problem response in the API that carries one.
 
+Phase 4 (two more reads on `WorkforcePlanController`; details in [team-scheduler.md](team-scheduler.md#api)):
+
+| Route | Permission | Notes |
+|---|---|---|
+| `GET plan/team?from&to&teamId&departmentId&skills=a,b&matchAll` | schedule.view | The team scheduler: everyone the caller's scope reaches (narrowed), each day's capacity with planned work counted, the work itself with what the caller may do to it, the sums; today when no dates are given; at most 14 days |
+| `GET plan/unscheduled/team?teamId&departmentId&skills&matchAll` | schedule.view | Open work held by those people or routed to their teams that is in nobody's future plan; at most 100 |
+
+Both are GETs. The board's drags, drops and resizes call the Phase 3 `PUT plan/{id}` and
+`POST plan/{id}/reassign`; a `PUT` that keeps the start and changes only the end is audited as
+`workforce.allocation.resized`.
+
 `/api/me` carries `features.workforce`.
 
 ## Engine
@@ -114,14 +128,20 @@ domain      Intervals            set arithmetic over half-open stretches of real
             (pure: no database, no clock - safe to call again inside the transaction that books work)
 infra       WorkforceCalendar    reads schedules, exceptions, planned work and holidays for N people over a run
                                  of dates in a fixed number of queries, and builds the calculator's inputs
-            CapacityService      person / team / search / conflicts, limited to who the caller may see
+            CapacityService      person / team / search / conflicts, limited to who the caller may see; from Phase 4
+                                 also team over a run of dates (ForTeamRangeAsync, TeamRangeQuery -> TeamRangeDto,
+                                 MaxTeamRangeDays = 14): the scheduler's rows and their days
             CapacityExceptionService
             WorkforceAccess      who the caller may see (schedule.view scope) and plan for (schedule.manage scope),
-                                 and whether they may override (schedule.override)
+                                 and whether they may override (schedule.override); ScheduledByAsync (Phase 4): which of
+                                 a list of people the caller schedules as a scheduler, in one query
             WorkAllocationReader planned work as the engine reads it: Planned allocations, confirmed, a future one on a
                                  finished ticket left out at once; the work id only for tickets the caller may see
             WorkPlanService      plan / unscheduled / plannable people / on a ticket; place, internal work, move,
-                                 give away, take out; holder bridging; conflicts under the gate; audit; notifications
+                                 give away, take out; holder bridging; conflicts under the gate; audit; notifications;
+                                 from Phase 4 team (TeamAsync: the rows from ForTeamRangeAsync plus ONE query for
+                                 everyone's planned work in the window, AllocationsOnAsync, shaped once) and
+                                 team unscheduled (UnscheduledTeamAsync: held or routed, open, in nobody's future plan)
             PlanningGate         one person's plan changed by one request at a time: SELECT ... FOR UPDATE on the
                                  person's app_users row (PostgreSQL), a per-person semaphore elsewhere
             WorkAllocationReleaser / WorkAllocationReleaseRunner
@@ -129,6 +149,10 @@ infra       WorkforceCalendar    reads schedules, exceptions, planned work and h
 application IWorkAllocationReader   where planned work comes from (the table, from Phase 3)
             IWorkPlanService, IWorkAllocationReleaser, IWorkAllocationReleaseRunner
 worker      WorkAllocationReleaseBackgroundService   runs the release every 5 minutes
+web         lib/timeline.ts      the scheduler's arithmetic (Phase 4): a wall time in a zone as an instant (clock
+                                 changes included), the day's axis on whole hours widened to the work, where a block
+                                 sits, where a pointer lands (snapped to 15 minutes), lanes for overlapping blocks;
+                                 pure, unit-tested in Node (timeline.unit.ts, `npm run test:unit`)
 ```
 
 ## Web
@@ -140,11 +164,23 @@ worker      WorkAllocationReleaseBackgroundService   runs the release every 5 mi
 - **Users → person** gets the same tabs when the module is on.
 - Phase 2: **My capacity**, **Team capacity** and **Find available technician** under Workforce (the
   last two only for someone who can see more than themselves), and an **Availability** tab on a
-  person (the week, the day's sums and free windows, time away). No final team scheduler yet, and
-  nothing is assigned from the search.
+  person (the week, the day's sums and free windows, time away). The team scheduler arrived in
+  Phase 4; the search's **Schedule work** inside it is the first step towards Phase 5.
 - Phase 3: **My plan** under Workforce (the day's agenda with capacity, planned and free figures,
   "Unscheduled work of mine", **Add to plan**, **Internal work**); a **Plan** tab on a person under
   Workforce (first tab; **Plan work** for a scheduler; move, give away, take out); a **Planned work**
   panel on a ticket for staff with `schedule.view`, with **Plan this work**. The Users → person page
   does not carry the Plan tab. Components: `WorkforcePlan.tsx` (`PlanAgenda`, `UnscheduledWorkList`,
   `TicketPlanPanel`, the dialogs).
+- Phase 4: **Team schedule** under Workforce (`/dashboard/workforce/schedule?date=&view=`, shown in
+  the sub-navigation only to someone who can see more than themselves, beside Team capacity and
+  Find): the day board (people down the side, the organization's day across the top, free windows,
+  breaks, time away and planned work as blocks; drag to move or give away, resize by the edge, a
+  drop preview, an optimistic move undone on refusal, a conflict dialog for overrides), the week
+  grid, person cards on phones, the **Unscheduled work** queue (a drag source and **Plan**), **Find
+  available technician** as a panel, a detail drawer with every action. Components:
+  `WorkforceSchedule.tsx` (`TeamScheduleWorkspace`, `DayBoard`, `PersonRow`, `Block`,
+  `CapacityBar`, `WeekGrid`, `PersonCards`, `UnscheduledQueue`, `AllocationDrawer`,
+  `DragConflictDialog`, `FindPanel`), reusing `WorkforcePlan.tsx`'s `PlanWorkDialog` (now taking
+  `initialStart` and `initialMinutes`), `ReassignDialog`, `TicketPickerDialog` and `ConflictNotice`;
+  the arithmetic in `lib/timeline.ts`. No dependency was added ([team-scheduler.md](team-scheduler.md#dependencies)).
