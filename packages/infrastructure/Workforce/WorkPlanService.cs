@@ -1012,7 +1012,7 @@ public sealed class WorkPlanService(
     /// <summary>"INT-000123" for the team's own work; "Autotask 12345" for a provider's.</summary>
     public static string Reference(Ticket t) => Reference(t.Number, t.Provider, t.ExternalTicketId);
 
-    private static string Reference(string? number, Desk.Domain.Enums.ProviderType? provider, string? externalId)
+    internal static string Reference(string? number, Desk.Domain.Enums.ProviderType? provider, string? externalId)
         => number ?? (provider is { } p ? $"{ProviderName(p)} {externalId}" : externalId ?? "Ticket");
 
     private static string ProviderName(Desk.Domain.Enums.ProviderType p) => p switch
@@ -1022,7 +1022,7 @@ public sealed class WorkPlanService(
         _ => p.ToString(),
     };
 
-    private static string Source(TicketOrigin origin, Desk.Domain.Enums.ProviderType? provider) => origin switch
+    internal static string Source(TicketOrigin origin, Desk.Domain.Enums.ProviderType? provider) => origin switch
     {
         TicketOrigin.Internal => "Team board",
         TicketOrigin.Rmm => "Monitoring",
