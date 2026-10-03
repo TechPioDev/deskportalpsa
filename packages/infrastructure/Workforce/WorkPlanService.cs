@@ -11,6 +11,8 @@ using Desk.Domain.Identity;
 using Desk.Domain.Notifications;
 using Desk.Domain.Tickets;
 using Desk.Domain.Workforce;
+using System.Security.Cryptography;
+using System.Text;
 using Desk.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -41,6 +43,10 @@ public sealed class WorkPlanService(
     public const int NoteMax = 300;
     public const int ReasonMax = 300;
     private const int MaxUnscheduled = 100;
+    /// <summary>The most effort one piece of work may ask for, the most pieces one preview proposes, and the longest planning window.</summary>
+    public const int MaxRequiredMinutes = 100 * 60;
+    public const int MaxPreviewPieces = 20;
+    public const int MaxWindowDays = 31;
 
     // ---- reading ----------------------------------------------------------------------------
 
@@ -56,7 +62,7 @@ public sealed class WorkPlanService(
         var hi = new DateTimeOffset(last.AddDays(2).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var zone = TimeZones.Resolve(days.TimeZone);
         var rows = await db.WorkAllocations.AsNoTracking().Include(a => a.Ticket)
-            .Where(a => a.AppUserId == person.Id && a.StartsAt < hi && a.EndsAt > lo && a.Status == WorkAllocationStatus.Planned)
+            .Where(a => a.AppUserId == person.Id && a.StartsAt < hi && a.EndsAt > lo && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative))
             .OrderBy(a => a.StartsAt).ToListAsync(ct);
         rows = rows.Where(a => { var d = WorkforceCalendar.LocalDate(a.StartsAt, zone); return d >= first && d <= last; }).ToList();
 
@@ -78,7 +84,7 @@ public sealed class WorkPlanService(
         var mine = (await tickets.VisibleAsync(db.Tickets.AsNoTracking(), callerId, Permissions.TicketsViewAll, ct))
             .Where(TicketStatusRules.Open())
             .Where(t => t.AssignedAppUserId == callerId || (t.AssignedTeamId != null && myTeams.Contains(t.AssignedTeamId.Value)))
-            .Where(t => !db.WorkAllocations.Any(a => a.TicketId == t.Id && a.AppUserId == callerId && a.Status == WorkAllocationStatus.Planned && a.EndsAt > now));
+            .Where(t => !db.WorkAllocations.Any(a => a.TicketId == t.Id && a.AppUserId == callerId && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative) && a.EndsAt > now));
         var rows = await mine
             .OrderBy(t => t.SlaDueAt == null).ThenBy(t => t.SlaDueAt).ThenByDescending(t => t.PsaCreatedAt ?? t.CreatedAt)
             .Take(MaxUnscheduled)
@@ -115,7 +121,7 @@ public sealed class WorkPlanService(
         // Sums are the capacity actually on offer, as Team capacity counts it.
         var offered = people.Where(p => p.IsSchedulable).SelectMany(p => p.Days).ToList();
         return new TeamPlanDto(from, to, range.Today, range.TimeZone, people,
-            offered.Sum(d => d.UsableMinutes), offered.Sum(d => d.ConfirmedMinutes), offered.Sum(d => d.RemainingConfirmedMinutes),
+            offered.Sum(d => d.UsableMinutes), offered.Sum(d => d.ConfirmedMinutes), offered.Sum(d => d.TentativeMinutes), offered.Sum(d => d.RemainingConfirmedMinutes), offered.Sum(d => d.ProjectedRemainingMinutes),
             people.Sum(p => p.Allocations.Count), scheduled.Count > 0, await access.MayOverrideAsync(callerId, ct));
     }
 
@@ -126,7 +132,7 @@ public sealed class WorkPlanService(
         var lo = new DateTimeOffset(from.AddDays(-1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var hi = new DateTimeOffset(to.AddDays(2).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var rows = await db.WorkAllocations.AsNoTracking().Include(a => a.Ticket)
-            .Where(a => ids.Contains(a.AppUserId) && a.Status == WorkAllocationStatus.Planned && a.StartsAt < hi && a.EndsAt > lo)
+            .Where(a => ids.Contains(a.AppUserId) && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative) && a.StartsAt < hi && a.EndsAt > lo)
             .OrderBy(a => a.StartsAt).ToListAsync(ct);
         var resolved = zones.ToDictionary(z => z.Key, z => TimeZones.Resolve(z.Value));
         rows = rows.Where(a => { var d = WorkforceCalendar.LocalDate(a.StartsAt, resolved[a.AppUserId]); return d >= from && d <= to; }).ToList();
@@ -150,14 +156,14 @@ public sealed class WorkPlanService(
             .Where(TicketStatusRules.Open())
             .Where(t => (t.AssignedAppUserId != null && ids.Contains(t.AssignedAppUserId.Value))
                         || (t.AssignedTeamId != null && teamIds.Contains(t.AssignedTeamId.Value)))
-            // In nobody's plan: no planned work on it that is still to come, whoever it is planned for.
-            .Where(t => !db.WorkAllocations.Any(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Planned && a.EndsAt > now));
+            // In nobody's plan: no planned or pencilled-in work on it that is still to come, whoever it is planned for.
+            .Where(t => !db.WorkAllocations.Any(a => a.TicketId == t.Id && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative) && a.EndsAt > now));
         var rows = await open
             .OrderBy(t => t.SlaDueAt == null).ThenBy(t => t.SlaDueAt).ThenByDescending(t => t.PsaCreatedAt ?? t.CreatedAt)
             .Take(MaxUnscheduled)
             .Select(t => new
             {
-                t.Id, t.Number, t.Provider, t.ExternalTicketId, t.Title, t.PortalPriority, t.PortalStatus, t.Origin, t.SlaDueAt, t.AssignedAppUserId, t.AssignedTeamId,
+                t.Id, t.Number, t.Provider, t.ExternalTicketId, t.Title, t.PortalPriority, t.PortalStatus, t.Origin, t.SlaDueAt, t.AssignedAppUserId, t.AssignedTeamId, Raised = t.PsaCreatedAt ?? t.CreatedAt,
                 ClientName = db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                 TeamName = db.Teams.Where(x => x.Id == t.AssignedTeamId).Select(x => x.Name).FirstOrDefault(),
                 PlannedSoFar = db.WorkAllocations.Where(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Planned).Sum(a => (int?)a.PlannedMinutes) ?? 0,
@@ -172,7 +178,7 @@ public sealed class WorkPlanService(
             return new TeamUnscheduledWorkDto(t.Id, Reference(t.Number, t.Provider, t.ExternalTicketId), t.Title, t.ClientName,
                 t.PortalPriority, t.PortalStatus, Source(t.Origin, t.Provider), t.SlaDueAt,
                 inside ? t.AssignedAppUserId : null, inside ? names[t.AssignedAppUserId!.Value] : null, t.AssignedAppUserId is not null && !inside,
-                t.AssignedTeamId, t.TeamName, t.PlannedSoFar);
+                t.AssignedTeamId, t.TeamName, t.PlannedSoFar, t.Raised);
         }).ToList();
     }
 
@@ -208,7 +214,7 @@ public sealed class WorkPlanService(
         var visible = (await access.VisibleStaffAsync(callerId, ct)).Select(u => u.Id);
         var rows = await db.WorkAllocations.AsNoTracking().Include(a => a.Ticket)
             .Where(a => a.TicketId == ticketId && visible.Contains(a.AppUserId))
-            .OrderByDescending(a => a.Status == WorkAllocationStatus.Planned).ThenBy(a => a.StartsAt).Take(50).ToListAsync(ct);
+            .OrderByDescending(a => a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative).ThenBy(a => a.StartsAt).Take(50).ToListAsync(ct);
         return await DtosAsync(callerId, rows, ct);
     }
 
@@ -231,12 +237,13 @@ public sealed class WorkPlanService(
         if (TicketStatusRules.Finished(ticket.PortalStatus))
             throw new ValidationFailedException("This ticket is finished; there is nothing left to plan.");
         var bridge = !self && await BridgeNeededAsync(person, ticket, ct);
+        var planning = await PlanningOfAsync(ticket.Id, ct);
 
         // Everything that changes anything happens under the person's gate, after the conflict check,
         // in one transaction: a refused placement leaves the ticket exactly as it was.
         await using var hold = await gate.HoldAsync(person.Id, ct);
-        var verdict = await CheckAsync(callerId, person.Id, start, end, null, input.OverrideReason, ct);
-        var row = await PlaceAsync(callerId, person, self, ticket, start, end, !self && input.IsFixed, note, verdict, bridge, ct);
+        var verdict = await CheckAsync(callerId, person.Id, start, end, null, input.OverrideReason, ct, input.Tentative, SkillsOf(planning), ticket.SlaDueAt);
+        var row = await PlaceAsync(callerId, person, self, ticket, start, end, !self && input.IsFixed, note, verdict, bridge, ct, input.Tentative);
         await hold.CommitAsync(ct);
         return (await DtosAsync(callerId, [row], ct)).Single();
     }
@@ -267,13 +274,14 @@ public sealed class WorkPlanService(
     /// audits it and tells the person. The conflict verdict is already in.
     /// </summary>
     private async Task<WorkAllocation> PlaceAsync(Guid callerId, AppUser person, bool self, Ticket ticket, DateTimeOffset start, DateTimeOffset end,
-        bool isFixed, string? note, Verdict verdict, bool bridge, CancellationToken ct)
+        bool isFixed, string? note, Verdict verdict, bool bridge, CancellationToken ct, bool tentative = false, bool notify = true)
     {
         if (bridge) Bridge(callerId, person, ticket);
         var row = new WorkAllocation
         {
             MspOrganizationId = person.MspOrganizationId ?? Guid.Empty, TicketId = ticket.Id, Ticket = ticket, AppUserId = person.Id,
             StartsAt = start, EndsAt = end, PlannedMinutes = Minutes(start, end),
+            Status = tentative ? WorkAllocationStatus.Tentative : WorkAllocationStatus.Planned,
             Method = self ? SchedulingMethod.Self : SchedulingMethod.AuthorizedUser, ScheduledByUserId = callerId,
             IsFixed = isFixed, Note = note, UpdatedByUserId = callerId,
         };
@@ -284,11 +292,11 @@ public sealed class WorkPlanService(
         var zone = await ZoneAsync(person.Id, start, ct);
         await audit.WriteAsync("workforce.allocation.created", "WorkAllocation", row.Id.ToString(), new
         {
-            person = person.DisplayName, ticketId = ticket.Id, reference = Reference(ticket), method = row.Method.ToString(),
+            person = person.DisplayName, ticketId = ticket.Id, reference = Reference(ticket), method = row.Method.ToString(), status = row.Status.ToString(),
             when = Describe(row, zone), isFixed = row.IsFixed, overrideReason = row.OverrideReason, overridden = row.OverriddenConflicts,
             warnings = verdict.Warnings, holderSet = bridge,
         }, ct);
-        if (!self) await NotifyAsync(person.Id, row, zone, $"Work planned for you: {Reference(ticket)}", $"{ticket.Title} · {Describe(row, zone)}", ct);
+        if (!self && notify) await NotifyAsync(person.Id, row, zone, $"{(tentative ? "Work pencilled in for you" : "Work planned for you")}: {Reference(ticket)}", $"{ticket.Title} · {Describe(row, zone)}", ct);
         return row;
     }
 
@@ -298,7 +306,7 @@ public sealed class WorkPlanService(
         var person = await access.VisiblePersonAsync(callerId, row.AppUserId, ct);
         var self = person.Id == callerId;
         var others = await access.CanScheduleOthersAsync(callerId, person.Id, ct);
-        if (row.Status != WorkAllocationStatus.Planned) throw new ValidationFailedException("This work is no longer in the plan.");
+        if (!InPlan(row.Status)) throw new ValidationFailedException("This work is no longer in the plan.");
         if (!others)
         {
             if (!self || !await access.MayPlanOwnAsync(callerId, ct)) throw new ForbiddenException("You can't change this person's plan.");
@@ -311,11 +319,12 @@ public sealed class WorkPlanService(
         var (start, end) = CheckPeriod(input.Start, input.End);
         var note = input.Note is null ? row.Note : CheckText(input.Note, NoteMax, "note");
 
+        var planning = await PlanningOfAsync(row.TicketId, ct);
         await using var hold = await gate.HoldAsync(person.Id, ct);
         await FreshAsync(row, input.Version, ct);
         var moved = start != row.StartsAt || end != row.EndsAt;
         var verdict = moved
-            ? await CheckAsync(callerId, person.Id, start, end, row.Id, input.OverrideReason, ct)
+            ? await CheckAsync(callerId, person.Id, start, end, row.Id, input.OverrideReason, ct, row.Status == WorkAllocationStatus.Tentative, SkillsOf(planning), row.Ticket!.SlaDueAt)
             : Verdict.Clean;
         var zone = await ZoneAsync(person.Id, start, ct);
         var before = Describe(row, zone);
@@ -344,7 +353,7 @@ public sealed class WorkPlanService(
     {
         var row = await LoadAsync(allocationId, ct);
         var from = await access.VisiblePersonAsync(callerId, row.AppUserId, ct);
-        if (row.Status != WorkAllocationStatus.Planned) throw new ValidationFailedException("This work is no longer in the plan.");
+        if (!InPlan(row.Status)) throw new ValidationFailedException("This work is no longer in the plan.");
         if (!await access.CanScheduleOthersAsync(callerId, from.Id, ct)) throw new ForbiddenException("Only someone who schedules others can give work to someone else.");
         // The new person: in the caller's reach, or "not found" - the same answer as a person who does
         // not exist or belongs to another organization.
@@ -356,9 +365,10 @@ public sealed class WorkPlanService(
         var ticket = row.Ticket!;
         var bridge = await BridgeNeededAsync(to, ticket, ct, handOverFrom: from.Id);
 
+        var planning = await PlanningOfAsync(row.TicketId, ct);
         await using var hold = await gate.HoldAsync(to.Id, ct);
         await FreshAsync(row, input.Version, ct);
-        var verdict = await CheckAsync(callerId, to.Id, start, end, row.Id, input.OverrideReason, ct);
+        var verdict = await CheckAsync(callerId, to.Id, start, end, row.Id, input.OverrideReason, ct, row.Status == WorkAllocationStatus.Tentative, SkillsOf(planning), ticket.SlaDueAt);
         var before = $"{from.DisplayName}, {Describe(row, await ZoneAsync(from.Id, row.StartsAt, ct))}";
         var zone = await ZoneAsync(to.Id, start, ct);
         if (bridge) Bridge(callerId, to, ticket);
@@ -389,7 +399,7 @@ public sealed class WorkPlanService(
         var row = await LoadAsync(allocationId, ct);
         var person = await access.VisiblePersonAsync(callerId, row.AppUserId, ct);
         var self = person.Id == callerId;
-        if (row.Status != WorkAllocationStatus.Planned) throw new ValidationFailedException("This work is already out of the plan.");
+        if (!InPlan(row.Status)) throw new ValidationFailedException("This work is already out of the plan.");
         if (!await access.CanScheduleOthersAsync(callerId, person.Id, ct))
         {
             if (!self || !await access.MayPlanOwnAsync(callerId, ct)) throw new ForbiddenException("You can't change this person's plan.");
@@ -400,8 +410,9 @@ public sealed class WorkPlanService(
 
         await using var hold = await gate.HoldAsync(person.Id, ct);
         await FreshAsync(row, null, ct);
-        if (row.Status != WorkAllocationStatus.Planned) throw new ValidationFailedException("This work is already out of the plan.");
+        if (!InPlan(row.Status)) throw new ValidationFailedException("This work is already out of the plan.");
         var zone = await ZoneAsync(person.Id, row.StartsAt, ct);
+        var was = row.Status;
         row.Status = WorkAllocationStatus.Cancelled;
         row.CancelledAt = clock.GetUtcNow();
         row.CancelledByUserId = callerId;
@@ -411,7 +422,7 @@ public sealed class WorkPlanService(
         await SaveAsync(ct);
         // The ticket is untouched: taking work out of a plan is not closing it.
         await audit.WriteAsync("workforce.allocation.cancelled", "WorkAllocation", row.Id.ToString(),
-            new { person = person.DisplayName, reference = Reference(row.Ticket!), was = Describe(row, zone), reason = row.CancelReason }, ct);
+            new { person = person.DisplayName, reference = Reference(row.Ticket!), was = Describe(row, zone), status = was.ToString(), reason = row.CancelReason }, ct);
         if (!self) await NotifyAsync(person.Id, row, zone, $"Planned work taken out: {Reference(row.Ticket!)}", $"{row.Ticket!.Title} · was {Describe(row, zone)}", ct);
         await hold.CommitAsync(ct);
         return (await DtosAsync(callerId, [row], ct)).Single();
@@ -445,10 +456,14 @@ public sealed class WorkPlanService(
     /// Conflicts against what is in the plan NOW (under the person's gate): blocks refuse, overridable
     /// conflicts refuse unless the caller may override and gave a reason, warnings pass and are kept.
     /// </summary>
-    private async Task<Verdict> CheckAsync(Guid callerId, Guid appUserId, DateTimeOffset start, DateTimeOffset end, Guid? ignore, string? overrideReason, CancellationToken ct)
+    private async Task<Verdict> CheckAsync(Guid callerId, Guid appUserId, DateTimeOffset start, DateTimeOffset end, Guid? ignore, string? overrideReason, CancellationToken ct,
+        bool tentative = false, IReadOnlyList<Guid>? skillIds = null, DateTimeOffset? dueAt = null)
     {
-        var result = await capacity.EvaluateAsync(callerId, appUserId, new ProposedWork(start, end, IgnoreAllocationId: ignore), ct);
+        var result = await capacity.EvaluateAsync(callerId, appUserId, new ProposedWork(start, end, tentative, skillIds, ignore), ct);
         var warnings = result.Conflicts.Where(c => c.Severity == ConflictSeverity.Warning).Select(c => c.Message).Distinct().ToList();
+        // The due date is never moved by planning; ending after it is worth saying.
+        if (dueAt is { } due && end > due)
+            warnings.Add(DueMessage(due));
         if (result.CanSchedule) return new Verdict([], warnings, null);
 
         var mayOverride = result.CanOverride && await access.MayOverrideAsync(callerId, ct);
@@ -462,7 +477,373 @@ public sealed class WorkPlanService(
                 ? $"This time has a conflict: {first.Message} Give a reason to override it."
                 : $"This time is no longer available: {first.Message}"
             : $"This time cannot be used: {first.Message}";
-        throw new ConflictException(message, new ConflictProblemDto(result.CanOverride, mayOverride, result.Conflicts));
+        var conflicts = dueAt is { } d && end > d
+            ? [.. result.Conflicts, new ConflictDto(ConflictType.DueDateRisk, ConflictSeverity.Warning, start, end, DueMessage(d), null)]
+            : result.Conflicts;
+        throw new ConflictException(message, new ConflictProblemDto(result.CanOverride, mayOverride, conflicts));
+    }
+
+    private static string DueMessage(DateTimeOffset due) => $"Ends after the due date ({due:d MMM yyyy HH\\:mm} UTC).";
+    private static bool InPlan(WorkAllocationStatus s) => s is WorkAllocationStatus.Planned or WorkAllocationStatus.Tentative;
+    private static IReadOnlyList<Guid>? SkillsOf(WorkPlanning? planning) => planning?.RequiredSkillId is { } s ? [s] : null;
+    private Task<WorkPlanning?> PlanningOfAsync(Guid ticketId, CancellationToken ct)
+        => db.WorkPlannings.AsNoTracking().FirstOrDefaultAsync(p => p.TicketId == ticketId, ct);
+
+    // ---- tentative work -----------------------------------------------------------------------
+
+    public async Task<WorkAllocationDto> ConfirmAsync(Guid callerId, Guid allocationId, WorkAllocationStateInput input, CancellationToken ct = default)
+    {
+        var row = await LoadAsync(allocationId, ct);
+        var person = await access.VisiblePersonAsync(callerId, row.AppUserId, ct);
+        var self = person.Id == callerId;
+        var others = await access.CanScheduleOthersAsync(callerId, person.Id, ct);
+        if (!others && !(self && await access.MayPlanOwnAsync(callerId, ct))) throw new ForbiddenException("You can't change this person's plan.");
+        if (!others && row.Method != SchedulingMethod.Self && row.IsFixed)
+            throw new ForbiddenException("This work was scheduled for you and is fixed in place. Ask whoever planned it to confirm it.");
+        if (row.Status != WorkAllocationStatus.Tentative) throw new ValidationFailedException("This work is not pencilled in.");
+        if (TicketStatusRules.Finished(row.Ticket!.PortalStatus)) throw new ValidationFailedException("This ticket is finished; there is nothing left to plan.");
+        if (input.Version != row.Version) throw Stale();
+        var planning = await PlanningOfAsync(row.TicketId, ct);
+
+        await using var hold = await gate.HoldAsync(person.Id, ct);
+        await FreshAsync(row, input.Version, ct);
+        if (row.Status != WorkAllocationStatus.Tentative) throw new ValidationFailedException("This work is not pencilled in.");
+        // Everything again, as committed work: what fitted when it was pencilled in may not fit now.
+        var verdict = await CheckAsync(callerId, person.Id, row.StartsAt, row.EndsAt, row.Id, input.OverrideReason, ct, false, SkillsOf(planning), row.Ticket!.SlaDueAt);
+        var zone = await ZoneAsync(person.Id, row.StartsAt, ct);
+        row.Status = WorkAllocationStatus.Planned;
+        row.UpdatedByUserId = callerId;
+        row.Version++;
+        ApplyOverride(row, verdict, callerId);
+        await SaveAsync(ct);
+        await audit.WriteAsync("workforce.allocation.confirmed", "WorkAllocation", row.Id.ToString(), new
+        {
+            person = person.DisplayName, reference = Reference(row.Ticket!), when = Describe(row, zone), from = "Tentative", to = "Planned",
+            overrideReason = row.OverrideReason, overridden = row.OverriddenConflicts, warnings = verdict.Warnings,
+        }, ct);
+        if (!self) await NotifyAsync(person.Id, row, zone, $"Planned work confirmed: {Reference(row.Ticket!)}", $"{row.Ticket!.Title} · {Describe(row, zone)}", ct);
+        await hold.CommitAsync(ct);
+        return (await DtosAsync(callerId, [row], ct)).Single();
+    }
+
+    public async Task<WorkAllocationDto> MakeTentativeAsync(Guid callerId, Guid allocationId, WorkAllocationStateInput input, CancellationToken ct = default)
+    {
+        var row = await LoadAsync(allocationId, ct);
+        var person = await access.VisiblePersonAsync(callerId, row.AppUserId, ct);
+        // Committed work is a promise; only someone who schedules others may take it back to pencil.
+        if (!await access.CanScheduleOthersAsync(callerId, person.Id, ct)) throw new ForbiddenException("Only someone who schedules others can pencil committed work back in.");
+        if (row.Status != WorkAllocationStatus.Planned) throw new ValidationFailedException("This work is not committed.");
+        if (input.Version != row.Version) throw Stale();
+
+        await using var hold = await gate.HoldAsync(person.Id, ct);
+        await FreshAsync(row, input.Version, ct);
+        if (row.Status != WorkAllocationStatus.Planned) throw new ValidationFailedException("This work is not committed.");
+        var zone = await ZoneAsync(person.Id, row.StartsAt, ct);
+        row.Status = WorkAllocationStatus.Tentative;
+        row.UpdatedByUserId = callerId;
+        row.Version++;
+        await SaveAsync(ct);
+        await audit.WriteAsync("workforce.allocation.made_tentative", "WorkAllocation", row.Id.ToString(),
+            new { person = person.DisplayName, reference = Reference(row.Ticket!), when = Describe(row, zone), from = "Planned", to = "Tentative" }, ct);
+        if (person.Id != callerId) await NotifyAsync(person.Id, row, zone, $"Planned work is now tentative: {Reference(row.Ticket!)}", $"{row.Ticket!.Title} · {Describe(row, zone)}", ct);
+        await hold.CommitAsync(ct);
+        return (await DtosAsync(callerId, [row], ct)).Single();
+    }
+
+    // ---- what the work needs -------------------------------------------------------------------
+
+    public async Task<PlanningRequirementDto> RequirementAsync(Guid callerId, Guid ticketId, CancellationToken ct = default)
+    {
+        var ticket = await tickets.FindAsync(db.Tickets.AsNoTracking(), ticketId, callerId, Permissions.TicketsViewAll, ct)
+                     ?? throw new NotFoundException("Ticket");
+        return await RequirementDtoAsync(ticket.Id, await PlanningOfAsync(ticket.Id, ct), ct);
+    }
+
+    public async Task<PlanningRequirementDto> SetRequirementAsync(Guid callerId, Guid ticketId, PlanningRequirementInput input, CancellationToken ct = default)
+    {
+        if (!await access.MayPlanOwnAsync(callerId, ct)) throw new ForbiddenException("You can't plan work.");
+        var ticket = await tickets.FindAsync(db.Tickets.AsNoTracking(), ticketId, callerId, Permissions.TicketsViewAll, ct)
+                     ?? throw new NotFoundException("Ticket");
+        if (TicketStatusRules.Finished(ticket.PortalStatus)) throw new ValidationFailedException("This ticket is finished; there is nothing left to plan.");
+        // Whose work it is: the holder, their team, or someone who schedules others. What the work
+        // needs steers the group's demand and shortage, so not anyone who can merely see the ticket.
+        var theirs = ticket.AssignedAppUserId == callerId
+            || (ticket.AssignedTeamId is { } team && await db.UserTeams.AnyAsync(ut => ut.AppUserId == callerId && ut.TeamId == team, ct))
+            || await access.SchedulesOthersAsync(callerId, ct);
+        if (!theirs) throw new ForbiddenException("Only whoever holds this work, their team, or someone who schedules others can say what it needs.");
+        var problems = new List<string>();
+        if (input.RequiredMinutes is { } r && (r < 5 || r > MaxRequiredMinutes || r % 5 != 0)) problems.Add("Effort is between 5 minutes and 100 hours, in whole five-minute steps.");
+        if (input.EarliestStart is { } e0 && input.LatestEnd is { } l0)
+        {
+            if (l0 <= e0) problems.Add("The window must end after it starts.");
+            else if (l0 - e0 > TimeSpan.FromDays(MaxWindowDays)) problems.Add($"The planning window is at most {MaxWindowDays} days.");
+        }
+        if (input.RequiredSkillId is { } sid && !await db.Skills.AsNoTracking().AnyAsync(s => s.Id == sid, ct)) problems.Add("That skill is not in the skill catalogue.");
+        if (problems.Count > 0) throw new ValidationFailedException(string.Join(" ", problems));
+        var note = CheckText(input.Note, NoteMax, "note");
+
+        var row = await db.WorkPlannings.FirstOrDefaultAsync(p => p.TicketId == ticket.Id, ct);
+        var before = row is null ? null : new { row.RequiredMinutes, row.EarliestStart, row.LatestEnd, row.Splittable, row.RequiredSkillId };
+        if (row is null)
+        {
+            row = new WorkPlanning { MspOrganizationId = ticket.MspOrganizationId, TicketId = ticket.Id };
+            db.WorkPlannings.Add(row);
+        }
+        row.RequiredMinutes = input.RequiredMinutes;
+        row.EarliestStart = input.EarliestStart?.ToUniversalTime();
+        row.LatestEnd = input.LatestEnd?.ToUniversalTime();
+        row.Splittable = input.Splittable;
+        row.RequiredSkillId = input.RequiredSkillId;
+        row.Note = note;
+        row.UpdatedByUserId = callerId;
+        row.UpdatedAt = clock.GetUtcNow();
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("workforce.planning.requirement_set", "Ticket", ticket.Id.ToString(), new
+        {
+            reference = Reference(ticket), before, after = new { row.RequiredMinutes, row.EarliestStart, row.LatestEnd, row.Splittable, row.RequiredSkillId },
+        }, ct);
+        return await RequirementDtoAsync(ticket.Id, row, ct);
+    }
+
+    private async Task<PlanningRequirementDto> RequirementDtoAsync(Guid ticketId, WorkPlanning? p, CancellationToken ct)
+    {
+        var sums = await db.WorkAllocations.AsNoTracking()
+            .Where(a => a.TicketId == ticketId && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative))
+            .GroupBy(a => a.Status).Select(g => new { Status = g.Key, Minutes = g.Sum(a => a.PlannedMinutes) }).ToListAsync(ct);
+        var confirmed = sums.Where(s => s.Status == WorkAllocationStatus.Planned).Sum(s => s.Minutes);
+        var tentative = sums.Where(s => s.Status == WorkAllocationStatus.Tentative).Sum(s => s.Minutes);
+        var skill = p?.RequiredSkillId is { } sid ? await db.Skills.AsNoTracking().Where(s => s.Id == sid).Select(s => s.Name).FirstOrDefaultAsync(ct) : null;
+        var by = p is null ? null : await db.AppUsers.AsNoTracking().Where(u => u.Id == p.UpdatedByUserId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct);
+        return new PlanningRequirementDto(ticketId, p?.RequiredMinutes, p?.EarliestStart, p?.LatestEnd, p?.Splittable ?? false, p?.RequiredSkillId, skill, p?.Note,
+            confirmed, tentative, p?.RequiredMinutes is { } r ? Math.Max(0, r - confirmed) : null, by, p?.UpdatedAt);
+    }
+
+    // ---- the planning queue --------------------------------------------------------------------
+
+    public async Task<PlanningQueueDto> QueueAsync(Guid callerId, TeamPlanQuery query, int horizonDays, CancellationToken ct = default)
+    {
+        horizonDays = Math.Clamp(horizonDays, 1, CapacityService.MaxTeamRangeDays);
+        var zone = TimeZones.Resolve(access.OrganizationTimeZone());
+        var now = clock.GetUtcNow();
+        var today = WorkforceCalendar.LocalDate(now, zone);
+        var to = today.AddDays(horizonDays - 1);
+
+        var work = await UnscheduledTeamAsync(callerId, query, ct);
+        var ticketIds = work.Select(w => w.TicketId).ToList();
+        var plannings = ticketIds.Count == 0 ? new Dictionary<Guid, WorkPlanning>()
+            : await db.WorkPlannings.AsNoTracking().Where(p => ticketIds.Contains(p.TicketId)).ToDictionaryAsync(p => p.TicketId, ct);
+        var sums = ticketIds.Count == 0 ? []
+            : await db.WorkAllocations.AsNoTracking()
+                .Where(a => ticketIds.Contains(a.TicketId) && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative))
+                .GroupBy(a => new { a.TicketId, a.Status }).Select(g => new { g.Key.TicketId, g.Key.Status, Minutes = g.Sum(a => a.PlannedMinutes) }).ToListAsync(ct);
+        var skillIds = plannings.Values.Where(p => p.RequiredSkillId != null).Select(p => p.RequiredSkillId!.Value).Distinct().ToList();
+        var skillNames = skillIds.Count == 0 ? new Dictionary<Guid, string>()
+            : await db.Skills.AsNoTracking().Where(s => skillIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name, ct);
+        // The group's capacity over the horizon: the same rows the scheduler shows.
+        var range = await capacity.ForTeamRangeAsync(callerId, new TeamRangeQuery(today, to, query.TeamId, query.DepartmentId, query.SkillIds, query.MatchAllSkills), ct);
+        var byPerson = range.People.ToDictionary(p => p.AppUserId);
+
+        var items = work.Select(w =>
+        {
+            plannings.TryGetValue(w.TicketId, out var p);
+            var confirmed = sums.Where(s => s.TicketId == w.TicketId && s.Status == WorkAllocationStatus.Planned).Sum(s => s.Minutes);
+            var tentative = sums.Where(s => s.TicketId == w.TicketId && s.Status == WorkAllocationStatus.Tentative).Sum(s => s.Minutes);
+            int? remaining = p?.RequiredMinutes is { } r ? Math.Max(0, r - confirmed) : null;
+            // The holder's confirmed free time before the due date, when the due date is inside the horizon.
+            int? freeBeforeDue = null;
+            if (w.DueAt is { } due && w.HolderId is { } h && byPerson.TryGetValue(h, out var holder))
+            {
+                var dueDate = WorkforceCalendar.LocalDate(due, TimeZones.Resolve(holder.TimeZone));
+                // Only a due date still ahead has time "before" it; an overdue item is marked overdue and simply waits.
+                if (dueDate >= today && dueDate <= to) freeBeforeDue = holder.Days.Where(d => d.Date <= dueDate).Sum(d => d.RemainingConfirmedMinutes);
+            }
+            var reason = w.HolderId is null ? WaitingReason.NoTechnicianAssigned
+                : remaining is { } rem && freeBeforeDue is { } f && f < rem ? WaitingReason.InsufficientCapacityBeforeDue
+                : WaitingReason.AwaitingPlanning;
+            var risk = w.DueAt is not { } d ? DueRisk.None
+                : d < now ? DueRisk.Overdue
+                : WorkforceCalendar.LocalDate(d, zone) == today ? DueRisk.DueToday
+                : WorkforceCalendar.LocalDate(d, zone) == today.AddDays(1) ? DueRisk.DueTomorrow
+                : DueRisk.None;
+            return new PlanningQueueItemDto(w, p?.RequiredMinutes, p?.Splittable ?? false, p?.EarliestStart, p?.LatestEnd,
+                p?.RequiredSkillId is { } sid ? skillNames.GetValueOrDefault(sid) : null,
+                confirmed, tentative, remaining, reason, risk, freeBeforeDue, Math.Max(0, (int)(now - w.CreatedAt).TotalDays));
+        })
+        .OrderByDescending(i => i.Due).ThenBy(i => i.Work.DueAt == null).ThenBy(i => i.Work.DueAt).ThenByDescending(i => i.AgeDays).ToList();
+
+        var demand = items.Sum(i => i.RemainingMinutes ?? 0);
+        var offered = range.People.Where(p => p.IsSchedulable).ToList();
+        var available = offered.SelectMany(p => p.Days).Sum(d => d.RemainingConfirmedMinutes);
+        return new PlanningQueueDto(today, to, items, demand, items.Count(i => i.RequiredMinutes is null), available, Math.Max(0, demand - available), offered.Count);
+    }
+
+    // ---- planning previews ---------------------------------------------------------------------
+
+    public async Task<PlanPreviewDto> PreviewAsync(Guid callerId, PlanPreviewInput input, CancellationToken ct = default)
+    {
+        var (person, _, ticket, planning) = await PreviewContextAsync(callerId, input, ct);
+        var frame = await FrameAsync(callerId, person, input, ct);
+        return await ProposeAsync(person, ticket, planning, input, frame, ct);
+    }
+
+    public async Task<PlanConfirmedDto> ConfirmPreviewAsync(Guid callerId, PlanConfirmInput input, CancellationToken ct = default)
+    {
+        var request = input.Request;
+        var (person, self, ticket, planning) = await PreviewContextAsync(callerId, request, ct);
+        if (input.Pieces.Count is 0 or > MaxPreviewPieces) throw new ValidationFailedException($"A plan has between 1 and {MaxPreviewPieces} pieces.");
+        var pieces = input.Pieces.OrderBy(p => p.Start).Select(p => CheckPeriod(p.Start, p.End)).ToList();
+        for (var i = 0; i < pieces.Count; i++)
+        {
+            if (pieces[i].Start < request.EarliestStart || pieces[i].End > request.LatestEnd) throw new ValidationFailedException("Every piece must lie inside the planning window.");
+            if (i > 0 && pieces[i].Start < pieces[i - 1].End) throw new ValidationFailedException("The pieces overlap each other.");
+        }
+        if (pieces.Any(p => Minutes(p.Start, p.End) < 5)) throw new ValidationFailedException("Pieces are at least 5 minutes.");
+        if (pieces.Sum(p => Minutes(p.Start, p.End)) > request.RequiredMinutes) throw new ValidationFailedException("The pieces add up to more than the required effort.");
+        var note = CheckText(input.Note, NoteMax, "note");
+        var bridge = !self && await BridgeNeededAsync(person, ticket, ct);
+
+        await using var hold = await gate.HoldAsync(person.Id, ct);
+        // The plan the preview saw, or a fresh one to review: nothing stale is ever written.
+        var frame = await FrameAsync(callerId, person, request, ct);
+        if (!string.Equals(frame.Token, input.PlanToken, StringComparison.Ordinal))
+            throw new ConflictException("The plan changed since the preview. Review the new proposal.", new PlanChangedDto(true, await ProposeAsync(person, ticket, planning, request, frame, ct)));
+        var rows = new List<WorkAllocation>();
+        foreach (var (start, end) in pieces)
+        {
+            var verdict = await CheckAsync(callerId, person.Id, start, end, null, input.OverrideReason, ct, request.Tentative, SkillsOf(planning), ticket.SlaDueAt);
+            rows.Add(await PlaceAsync(callerId, person, self, ticket, start, end, false, note, verdict, bridge && rows.Count == 0, ct, request.Tentative, notify: false));
+        }
+        var zone = await ZoneAsync(person.Id, pieces[0].Start, ct);
+        // One notification for the whole plan, not one per piece.
+        if (!self) await NotifyAsync(person.Id, rows[0], zone, $"{(request.Tentative ? "Work pencilled in for you" : "Work planned for you")}: {Reference(ticket)}",
+            rows.Count == 1 ? $"{ticket.Title} · {Describe(rows[0], zone)}" : $"{ticket.Title} · {rows.Count} pieces, from {Describe(rows[0], zone)}", ct);
+        await audit.WriteAsync("workforce.allocation.plan_confirmed", "Ticket", ticket.Id.ToString(), new
+        {
+            person = person.DisplayName, reference = Reference(ticket), tentative = request.Tentative, required = request.RequiredMinutes, splittable = request.Splittable,
+            pieces = rows.Select(r => new { r.Id, when = Describe(r, zone) }).ToList(), allocated = rows.Sum(r => r.PlannedMinutes), token = input.PlanToken,
+        }, ct);
+        await hold.CommitAsync(ct);
+        var dtos = await DtosAsync(callerId, rows, ct);
+        var requirement = await RequirementDtoAsync(ticket.Id, planning, ct);
+        return new PlanConfirmedDto(dtos, rows.Sum(r => r.PlannedMinutes), requirement.RemainingMinutes);
+    }
+
+    private async Task<(AppUser Person, bool Self, Ticket Ticket, WorkPlanning? Planning)> PreviewContextAsync(Guid callerId, PlanPreviewInput input, CancellationToken ct)
+    {
+        // The limits first: they need nothing read.
+        var problems = new List<string>();
+        if (input.RequiredMinutes < 5 || input.RequiredMinutes > MaxRequiredMinutes) problems.Add("Effort is between 5 minutes and 100 hours.");
+        if (input.MinChunkMinutes < 15) problems.Add("Pieces are at least 15 minutes.");
+        if (input.LatestEnd <= input.EarliestStart) problems.Add("The window must end after it starts.");
+        else if (input.LatestEnd - input.EarliestStart > TimeSpan.FromDays(CapacityService.MaxTeamRangeDays)) problems.Add($"A preview covers at most {CapacityService.MaxTeamRangeDays} days.");
+        var now = clock.GetUtcNow();
+        if (input.LatestEnd < now.AddDays(-1)) problems.Add("The window is in the past.");
+        if (input.EarliestStart > now.AddYears(1)) problems.Add("Work can be planned at most a year ahead.");
+        if (problems.Count > 0) throw new ValidationFailedException(string.Join(" ", problems));
+
+        var person = await access.VisiblePersonAsync(callerId, input.AppUserId, ct);
+        var self = person.Id == callerId;
+        var others = await access.CanScheduleOthersAsync(callerId, person.Id, ct);
+        if (!others && !(self && await access.MayPlanOwnAsync(callerId, ct)))
+            throw new ForbiddenException(self ? "You can't plan your own work." : "You can't plan work for this person.");
+        // Confirming would be blocked (NotSchedulable); say so before proposing anything.
+        if (!person.IsSchedulable || !person.IsActive) throw new ValidationFailedException("This person is not offered for planned work.");
+        var ticket = await tickets.FindAsync(db.Tickets, input.TicketId, callerId, Permissions.TicketsViewAll, ct) ?? throw new NotFoundException("Ticket");
+        if (TicketStatusRules.Finished(ticket.PortalStatus)) throw new ValidationFailedException("This ticket is finished; there is nothing left to plan.");
+        return (person, self, ticket, await PlanningOfAsync(ticket.Id, ct));
+    }
+
+    /// <summary>The person's free time inside the window, and a token for exactly that: what a preview is computed from, and what a confirmation must still see.</summary>
+    private sealed record Frame(string TimeZone, IReadOnlyList<Interval> Free, IReadOnlyList<Interval> ProjectedFree, string Token, DateTimeOffset From);
+
+    private async Task<Frame> FrameAsync(Guid callerId, AppUser person, PlanPreviewInput input, CancellationToken ct)
+    {
+        var zone = TimeZones.Resolve(access.OrganizationTimeZone());
+        var from = WorkforceCalendar.LocalDate(input.EarliestStart, zone).AddDays(-1);
+        var to = WorkforceCalendar.LocalDate(input.LatestEnd, zone).AddDays(1);
+        var cap = await capacity.ForPersonAsync(callerId, person.Id, from, to, ct);
+        // Time that has passed is never proposed: the window starts no earlier than now, rounded up to
+        // the next quarter hour so the token does not change every minute while someone reads the preview.
+        var now = clock.GetUtcNow();
+        var soonest = new DateTimeOffset(now.Ticks - now.Ticks % TimeSpan.FromMinutes(15).Ticks, TimeSpan.Zero);
+        if (soonest < now) soonest = soonest.AddMinutes(15);
+        var start = input.EarliestStart.ToUniversalTime() < soonest ? soonest : input.EarliestStart.ToUniversalTime();
+        var end = input.LatestEnd.ToUniversalTime();
+        var window = start < end ? new Interval(start, end) : (Interval?)null;
+        IReadOnlyList<Interval> Clip(IEnumerable<SlotDto> slots) => window is not { } w ? Intervals.None : slots
+            .Select(s => new Interval(s.Start, s.End)).Where(i => i.Overlaps(w)).Select(i => i.Intersect(w))
+            .Where(i => !i.IsEmpty).OrderBy(i => i.Start).ToList();
+        var free = Clip(cap.Days.SelectMany(d => d.FreeSlots));
+        var projected = Clip(cap.Days.SelectMany(d => d.ProjectedFreeSlots));
+        var fingerprint = string.Join("|",
+            person.Id, input.TicketId, start.ToString("O"), input.LatestEnd.ToUniversalTime().ToString("O"),
+            input.RequiredMinutes, input.Splittable, input.Tentative, input.MinChunkMinutes,
+            string.Join(",", free.Select(i => $"{i.Start:O}/{i.End:O}")), string.Join(",", projected.Select(i => $"{i.Start:O}/{i.End:O}")),
+            string.Join(",", cap.Days.Select(d => $"{d.Date}:{d.UsableMinutes}:{d.ConfirmedMinutes}:{d.TentativeMinutes}")));
+        var token = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint)))[..32];
+        return new Frame(cap.TimeZone, free, projected, token, start);
+    }
+
+    private async Task<PlanPreviewDto> ProposeAsync(AppUser person, Ticket ticket, WorkPlanning? planning, PlanPreviewInput input, Frame frame, CancellationToken ct)
+    {
+        var required = input.RequiredMinutes;
+        var pieces = new List<PlanPieceDto>();
+        var warnings = new List<string>();
+        var remaining = required;
+        var longest = frame.Free.Count == 0 ? 0 : frame.Free.Max(IntervalMinutes);
+        if (frame.From > input.EarliestStart.ToUniversalTime())
+            warnings.Add($"The window started before now; proposing from {TimeZoneInfo.ConvertTime(frame.From, TimeZones.Resolve(frame.TimeZone)).ToString("d MMM HH:mm", System.Globalization.CultureInfo.InvariantCulture)}.");
+        if (!input.Splittable)
+        {
+            // One sitting: the first free period long enough, and nothing if there is none.
+            var slot = frame.Free.Where(f => IntervalMinutes(f) >= required).Select(f => (Interval?)f).FirstOrDefault();
+            if (slot is { } s)
+            {
+                pieces.Add(new PlanPieceDto(s.Start, s.Start.AddMinutes(required), required));
+                remaining = 0;
+            }
+            else warnings.Add($"No single free period of {Duration(required)} in the window; the longest is {Duration(longest)}.");
+        }
+        else
+        {
+            foreach (var f in frame.Free)
+            {
+                if (remaining <= 0 || pieces.Count >= MaxPreviewPieces) break;
+                var take = Math.Min(IntervalMinutes(f), remaining);
+                // A scrap shorter than the smallest useful piece is skipped, unless it finishes the work.
+                if (take < input.MinChunkMinutes && take < remaining) continue;
+                pieces.Add(new PlanPieceDto(f.Start, f.Start.AddMinutes(take), take));
+                remaining -= take;
+            }
+            if (remaining > 0) warnings.Add($"Only {Duration(required - remaining)} of {Duration(required)} fits in the window; {Duration(remaining)} remains unallocated.");
+        }
+        // Pencilled-in work in the way: free for confirmed capacity, not for projected.
+        foreach (var piece in pieces)
+        {
+            var span = new Interval(piece.Start, piece.End);
+            if (!frame.ProjectedFree.Any(p => p.Start <= span.Start && p.End >= span.End))
+                warnings.Add($"{Describe(piece.Start, piece.End, frame.TimeZone)} overlaps tentative work.");
+        }
+        if (ticket.SlaDueAt is { } due && pieces.Count > 0 && pieces.Max(p => p.End) > due) warnings.Add(DueMessage(due));
+        if (planning?.RequiredSkillId is { } skillId && !await db.StaffSkills.AsNoTracking().AnyAsync(s => s.AppUserId == person.Id && s.SkillId == skillId, ct))
+        {
+            var name = await db.Skills.AsNoTracking().Where(s => s.Id == skillId).Select(s => s.Name).FirstOrDefaultAsync(ct);
+            warnings.Add($"Does not hold the skill \"{name}\".");
+        }
+        return new PlanPreviewDto(ticket.Id, person.Id, person.DisplayName, frame.TimeZone, input.EarliestStart.ToUniversalTime(), input.LatestEnd.ToUniversalTime(),
+            required, input.Splittable, input.Tentative, pieces, required - remaining, remaining, warnings,
+            frame.Free.Sum(IntervalMinutes), longest, frame.Token);
+    }
+
+    private static int IntervalMinutes(Interval i) => (int)Math.Round(i.Length.TotalMinutes);
+    private static string Duration(int minutes)
+        => minutes % 60 == 0 ? $"{minutes / 60}h" : minutes < 60 ? $"{minutes}m" : $"{minutes / 60}h {minutes % 60:00}m";
+    private static string Describe(DateTimeOffset start, DateTimeOffset end, string zoneId)
+    {
+        var zone = TimeZones.Resolve(zoneId);
+        var s = TimeZoneInfo.ConvertTime(start, zone);
+        var e = TimeZoneInfo.ConvertTime(end, zone);
+        return $"{s:d MMM HH\\:mm}–{e:HH\\:mm}";
     }
 
     /// <summary>What was overridden, why, by whom and when - kept with the work; cleared when it is placed cleanly.</summary>
@@ -605,7 +986,7 @@ public sealed class WorkPlanService(
         {
             var others = scheduled.Contains(r.AppUserId);
             var self = r.AppUserId == callerId;
-            var live = r.Status == WorkAllocationStatus.Planned;
+            var live = InPlan(r.Status);
             var canEdit = live && (others || (self && mayOwn && (r.Method == SchedulingMethod.Self || !r.IsFixed)));
             var canCancel = live && (others || (self && mayOwn && r.Method == SchedulingMethod.Self));
             var sees = visible.Contains(r.TicketId);
@@ -623,7 +1004,7 @@ public sealed class WorkPlanService(
                 (r.OverriddenConflicts ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(s => Enum.Parse<ConflictType>(s)).ToList(),
                 r.OverriddenByUserId is { } ob ? names.GetValueOrDefault(ob) : null,
                 r.CancelledAt, r.CancelledByUserId is { } cb ? names.GetValueOrDefault(cb) : null, r.CancelReason,
-                r.Version, canEdit, canCancel, live && others));
+                r.Version, canEdit, canCancel, live && others, r.Status == WorkAllocationStatus.Tentative && canEdit && !(t is not null && TicketStatusRules.Finished(t.PortalStatus))));
         }
         return result;
     }

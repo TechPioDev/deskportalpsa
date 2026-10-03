@@ -19,8 +19,8 @@ public sealed record WorkAllocationDto(
     string? OverrideReason, IReadOnlyList<ConflictType> OverriddenConflicts, string? OverriddenByName,
     DateTimeOffset? CancelledAt, string? CancelledByName, string? CancelReason,
     int Version,
-    /// <summary>What the asker may do with it: move or resize it, take it out of the plan, give it to someone else.</summary>
-    bool CanEdit, bool CanCancel, bool CanReassign);
+    /// <summary>What the asker may do with it: move or resize it, take it out of the plan, give it to someone else, confirm it when tentative.</summary>
+    bool CanEdit, bool CanCancel, bool CanReassign, bool CanConfirm);
 
 /// <summary>Someone's plan over a run of dates: their capacity per day (planned work already counted) and the work itself.</summary>
 public sealed record PersonPlanDto(
@@ -54,7 +54,7 @@ public sealed record TeamPlanPersonDto(
 /// <summary>The team scheduler: everyone the asker may see, narrowed as asked, over a run of dates. Sums are over people offered for work.</summary>
 public sealed record TeamPlanDto(
     DateOnly From, DateOnly To, DateOnly Today, string TimeZone, IReadOnlyList<TeamPlanPersonDto> People,
-    int UsableMinutes, int ConfirmedMinutes, int RemainingConfirmedMinutes, int AllocationCount,
+    int UsableMinutes, int ConfirmedMinutes, int TentativeMinutes, int RemainingConfirmedMinutes, int ProjectedRemainingMinutes, int AllocationCount,
     /// <summary>Whether the asker may schedule at least one of the people shown, and whether they may override conflicts.</summary>
     bool CanScheduleOthers, bool CanOverride);
 
@@ -64,14 +64,84 @@ public sealed record TeamUnscheduledWorkDto(
     DateTimeOffset? DueAt,
     /// <summary>The holder when they are one of the group's people; a holder outside the group is only said to exist.</summary>
     Guid? HolderId, string? HolderName, bool HeldOutside,
-    Guid? TeamId, string? TeamName, int PlannedMinutesSoFar);
+    Guid? TeamId, string? TeamName, int PlannedMinutesSoFar, DateTimeOffset CreatedAt);
 
 /// <summary>Placing work: which ticket, whose time, when, and whether it is fixed. Instants in UTC.</summary>
 public sealed record WorkAllocationInput(
     Guid TicketId, Guid AppUserId, DateTimeOffset Start, DateTimeOffset End,
     bool IsFixed = false, string? Note = null,
     /// <summary>Given only when an overridable conflict is to be overridden; needs schedule.override.</summary>
-    string? OverrideReason = null);
+    string? OverrideReason = null,
+    /// <summary>Pencil it in rather than commit: takes tentative capacity only, and is confirmed later with a fresh check.</summary>
+    bool Tentative = false);
+
+/// <summary>Confirming pencilled-in work, or pencilling committed work back in: the version the screen showed, and a reason when a clash is overridden on confirmation.</summary>
+public sealed record WorkAllocationStateInput(int Version, string? OverrideReason = null);
+
+/// <summary>What planning a piece of work needs to know, with what has been allocated so far derived from the plans.</summary>
+public sealed record PlanningRequirementDto(
+    Guid TicketId, int? RequiredMinutes, DateTimeOffset? EarliestStart, DateTimeOffset? LatestEnd, bool Splittable,
+    Guid? RequiredSkillId, string? RequiredSkillName, string? Note,
+    /// <summary>Minutes in confirmed plans and in tentative plans (any person), and what is left of the required effort after the confirmed ones.</summary>
+    int ConfirmedMinutes, int TentativeMinutes, int? RemainingMinutes,
+    string? UpdatedByName, DateTimeOffset? UpdatedAt);
+
+public sealed record PlanningRequirementInput(
+    int? RequiredMinutes, DateTimeOffset? EarliestStart, DateTimeOffset? LatestEnd, bool Splittable = false, Guid? RequiredSkillId = null, string? Note = null);
+
+/// <summary>Why a piece of work is waiting, derived from what is there - nothing is stored.</summary>
+public enum WaitingReason
+{
+    /// <summary>Held by someone; nobody has planned it yet.</summary>
+    AwaitingPlanning = 1,
+    /// <summary>Routed to a team; nobody holds it, so nobody's plan can take it yet.</summary>
+    NoTechnicianAssigned = 2,
+    /// <summary>The holder has less confirmed free time before the due date than the work needs.</summary>
+    InsufficientCapacityBeforeDue = 3,
+}
+
+public enum DueRisk { None = 0, DueTomorrow = 1, DueToday = 2, Overdue = 3 }
+
+/// <summary>One row of the planning queue: the work, its requirement, what is allocated, why it waits, and how urgent it is.</summary>
+public sealed record PlanningQueueItemDto(
+    TeamUnscheduledWorkDto Work,
+    int? RequiredMinutes, bool Splittable, DateTimeOffset? EarliestStart, DateTimeOffset? LatestEnd, string? RequiredSkillName,
+    int ConfirmedMinutes, int TentativeMinutes, int? RemainingMinutes,
+    WaitingReason Reason, DueRisk Due,
+    /// <summary>The holder's confirmed free time before the due date, when both are known.</summary>
+    int? FreeBeforeDueMinutes,
+    int AgeDays);
+
+/// <summary>The queue and the sums behind it: demand against what the group has free over the horizon. Facts, not a score.</summary>
+public sealed record PlanningQueueDto(
+    DateOnly From, DateOnly To, IReadOnlyList<PlanningQueueItemDto> Items,
+    int DemandMinutes, int ItemsWithoutEstimate, int AvailableMinutes, int ShortageMinutes, int PeopleCounted);
+
+/// <summary>A proposal to place effort in a window: continuous (one sitting) or split across the person's free time.</summary>
+public sealed record PlanPreviewInput(
+    Guid TicketId, Guid AppUserId, DateTimeOffset EarliestStart, DateTimeOffset LatestEnd, int RequiredMinutes,
+    bool Splittable = false, bool Tentative = false, int MinChunkMinutes = 30);
+
+public sealed record PlanPieceDto(DateTimeOffset Start, DateTimeOffset End, int Minutes);
+
+/// <summary>
+/// What would be placed, what would not fit, and a token for the state it was computed from: a
+/// confirmation carries the token back and is refused with a fresh preview if anything changed.
+/// </summary>
+public sealed record PlanPreviewDto(
+    Guid TicketId, Guid AppUserId, string PersonName, string TimeZone,
+    DateTimeOffset EarliestStart, DateTimeOffset LatestEnd, int RequiredMinutes, bool Splittable, bool Tentative,
+    IReadOnlyList<PlanPieceDto> Pieces, int AllocatedMinutes, int UnallocatedMinutes,
+    IReadOnlyList<string> Warnings, int FreeMinutesInWindow, int LongestFreeMinutes, string PlanToken);
+
+/// <summary>The preview's request, the pieces to write (all of them, or fewer), and the token the preview carried.</summary>
+public sealed record PlanConfirmInput(
+    PlanPreviewInput Request, IReadOnlyList<PlanPieceDto> Pieces, string PlanToken, string? OverrideReason = null, string? Note = null);
+
+public sealed record PlanConfirmedDto(IReadOnlyList<WorkAllocationDto> Allocations, int AllocatedMinutes, int? RemainingMinutes);
+
+/// <summary>The 409 payload when the plan changed between the preview and its confirmation: the fresh preview to review.</summary>
+public sealed record PlanChangedDto(bool Stale, PlanPreviewDto Preview);
 
 /// <summary>Moving or resizing work, or changing its note or fixedness. <see cref="Version"/> is the version the screen showed.</summary>
 public sealed record WorkAllocationUpdate(
@@ -111,6 +181,22 @@ public interface IWorkPlanService
     Task<WorkAllocationDto> UpdateAsync(Guid callerId, Guid allocationId, WorkAllocationUpdate input, CancellationToken ct = default);
     Task<WorkAllocationDto> ReassignAsync(Guid callerId, Guid allocationId, WorkAllocationReassign input, CancellationToken ct = default);
     Task<WorkAllocationDto> CancelAsync(Guid callerId, Guid allocationId, string? reason, CancellationToken ct = default);
+
+    /// <summary>Pencilled-in work becomes committed, after a fresh check of everything; a clash is refused or overridden with a reason.</summary>
+    Task<WorkAllocationDto> ConfirmAsync(Guid callerId, Guid allocationId, WorkAllocationStateInput input, CancellationToken ct = default);
+    /// <summary>Committed work becomes pencilled in. Only someone who schedules others; audited.</summary>
+    Task<WorkAllocationDto> MakeTentativeAsync(Guid callerId, Guid allocationId, WorkAllocationStateInput input, CancellationToken ct = default);
+
+    Task<PlanningRequirementDto> RequirementAsync(Guid callerId, Guid ticketId, CancellationToken ct = default);
+    Task<PlanningRequirementDto> SetRequirementAsync(Guid callerId, Guid ticketId, PlanningRequirementInput input, CancellationToken ct = default);
+
+    /// <summary>The planning queue: the group's unscheduled work with its requirements, why it waits, and demand against free capacity over the horizon.</summary>
+    Task<PlanningQueueDto> QueueAsync(Guid callerId, TeamPlanQuery query, int horizonDays, CancellationToken ct = default);
+
+    /// <summary>What placing this effort in this window would look like. Nothing is written.</summary>
+    Task<PlanPreviewDto> PreviewAsync(Guid callerId, PlanPreviewInput input, CancellationToken ct = default);
+    /// <summary>Writes a preview's pieces, if the plan is still what the preview saw; otherwise refuses with a fresh preview.</summary>
+    Task<PlanConfirmedDto> ConfirmPreviewAsync(Guid callerId, PlanConfirmInput input, CancellationToken ct = default);
 }
 
 /// <summary>
