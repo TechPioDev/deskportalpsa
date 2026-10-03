@@ -37,6 +37,9 @@ public sealed class TicketTimeController(
     /// <summary>How far back a board ticket's time may be dated. Further than this is a correction, not a log.</summary>
     public const int MaxBackdateDays = 30;
 
+    /// <summary>The one way the portal writes an hour (row, push, totals, audit); a stopped work session logs through the same writer.</summary>
+    private TicketTimeWriter Writer => new(db, admin, audit);
+
     [HttpGet("{id:guid}/time-options")]
     [RequirePermission(Permissions.TicketsLogTime)]
     public async Task<IActionResult> TimeOptions(Guid id, CancellationToken ct)
@@ -153,6 +156,21 @@ public sealed class TicketTimeController(
             throw new ForbiddenException("Someone else logged this time. Ask them, or a board lead, to change it.");
     }
 
+    /// <summary>
+    /// Whose hour it is decides whether a reason is owed: a person corrects their own time freely; a
+    /// board lead changing someone else's says why, and the reason is kept with the change. Nobody
+    /// silently rewrites another person's recorded work.
+    /// </summary>
+    private async Task<string?> AdjustmentReasonAsync(Ticket ticket, TicketTimeEntry? mirror, string? technicianId, string? reason, CancellationToken ct)
+    {
+        var mine = ticket.PsaConnectionId is { } c ? await MyTechnicianIdAsync(c, ct) : null;
+        var own = MayChangeEntry(mirror, technicianId, mine, lead: false);
+        var trimmed = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        if (!own && (trimmed is null || trimmed.Length < 5))
+            throw new ValidationFailedException("Say why the time is being changed (at least 5 characters).");
+        return trimmed;
+    }
+
     private Task AuditAsync(Ticket ticket, string action, object detail, CancellationToken ct)
         => audit is null ? Task.CompletedTask : audit.WriteAsync(action, "Ticket", ticket.Id.ToString(), detail, ct);
 
@@ -174,53 +192,18 @@ public sealed class TicketTimeController(
                 throw new ValidationFailedException($"Time can be dated up to {MaxBackdateDays} days back.");
         }
 
-        // Written before the push, not after: a rejected entry used to disappear with the 400, taking
-        // the technician's logged work with it and leaving nothing to retry from.
-        var record = new TicketTimeEntry
-        {
-            MspOrganizationId = ticket.MspOrganizationId,
-            TicketId = ticket.Id,
-            NoteId = req.NoteId is { } nid && await db.TicketNotes.AnyAsync(n => n.Id == nid && n.TicketId == id, ct)
-                ? nid : null,
-            Hours = req.Hours,
-            Billable = billable == BillableOption.Billable,
-            Notes = req.Notes,
-            WorkTypeId = Blank(req.WorkType),
-            WorkTypeLabel = await WorkTypeLabelAsync(ticket, Blank(req.WorkType), ct),
-            WorkRoleId = Blank(req.WorkRole),
-            Source = TimeEntrySource.Portal,
-            SyncStatus = TimeEntrySyncStatus.Pending,
-            EntryDate = req.WorkedAt ?? now,
-            // Stamped at CREATION, not read again at push time: a retry can happen days later and
-            // by a different person, and the hour belongs to whoever did the work. Null when this
-            // user has no identity on this connection — the connector then falls back to the
-            // connection's default resource, which is the behaviour every entry had before.
-            TechnicianExternalId = ticket.PsaConnectionId is { } tc ? await MyTechnicianIdAsync(tc, ct) : null,
-            // Who logged it HERE, which is the only attribution that survives for a technician the
-            // PSA has never heard of. Stamped at creation for the same reason as the line above: a
-            // retry days later by someone else must not rewrite whose hour it was.
-            AppUserId = user.UserId,
-        };
-        db.TicketTimeEntries.Add(record);
-        await db.SaveChangesAsync(ct);
-
+        // Written before the push, not after (a rejected entry used to disappear with the 400), the
+        // technician's identity and portal authorship stamped at creation: all inside the writer,
+        // which a stopped work session (Phase 6) logs through as well.
+        var noteId = req.NoteId is { } nid && await db.TicketNotes.AnyAsync(n => n.Id == nid && n.TicketId == id, ct) ? nid : (Guid?)null;
+        var logged = await Writer.LogAsync(ticket, connector, user.UserId, req.Hours, billable == BillableOption.Billable, req.Notes,
+            Blank(req.WorkType), Blank(req.WorkRole), noteId, req.WorkedAt ?? now, null, ct);
         if (connector is null)
-        {
-            // Recorded, not pending: there is no provider for it to be waiting on, and "not
-            // recorded" on a ticket that will never be pushed reads as a failure that never happened.
-            record.SyncStatus = TimeEntrySyncStatus.Synced;
-            await db.SaveChangesAsync(ct);
-            await AuditAsync(ticket, "ticket.time.logged", new { entryId = record.Id, record.Hours, record.Billable, workedAt = record.EntryDate }, ct);
-            return Ok(await RecomputeLocalAsync(ticket, ct));
-        }
-
-        var pushed = await PushAsync(record, ticket, connector, ct);
+            return Ok(logged.Totals ?? await RecomputeLocalAsync(ticket, ct));
         // Recorded either way: a rejected entry is still logged work, kept here for a retry.
-        await AuditAsync(ticket, "ticket.time.logged", new { entryId = record.Id, record.Hours, record.Billable, pushed }, ct);
-        if (!pushed)
-            throw new ValidationFailedException(record.SyncError ?? "The PSA rejected the time entry.");
-
-        return Ok(await RecomputeAsync(ticket, connector, ct));
+        if (logged.Entry.SyncStatus != TimeEntrySyncStatus.Synced)
+            throw new ValidationFailedException(logged.Entry.SyncError ?? "The PSA rejected the time entry.");
+        return Ok(logged.Totals ?? await RecomputeAsync(ticket, connector, ct));
     }
 
     /// <summary>
@@ -250,60 +233,11 @@ public sealed class TicketTimeController(
     /// This user's identity in the given PSA, or null when they have none. Null is the ordinary
     /// case for an unmapped user and means "fall back to the connection default" — not an error.
     /// </summary>
-    private async Task<string?> MyTechnicianIdAsync(Guid psaConnectionId, CancellationToken ct)
-        => user.UserId is not { } uid ? null
-            : await db.UserPsaIdentities.AsNoTracking()
-                .Where(i => i.AppUserId == uid && i.PsaConnectionId == psaConnectionId)
-                .Select(i => i.ExternalTechnicianId)
-                .FirstOrDefaultAsync(ct);
+    private Task<string?> MyTechnicianIdAsync(Guid psaConnectionId, CancellationToken ct) => Writer.TechnicianIdAsync(user.UserId, psaConnectionId, ct);
 
     /// <summary>Pushes a portal record to the PSA and stamps the outcome on it either way.</summary>
-    private async Task<bool> PushAsync(TicketTimeEntry record, Ticket ticket, IServiceManagementConnector connector, CancellationToken ct)
-    {
-        CreateTimeEntryResult result;
-        try
-        {
-            result = await connector.AddTimeEntryAsync(ticket.ExternalTicketId!,
-                new UnifiedTimeEntryCreateRequest(record.Hours, record.WorkTypeId, record.WorkRoleId,
-                    record.Billable ? BillableOption.Billable : BillableOption.DoNotBill,
-                    record.Notes, MemberIdentifier: record.TechnicianExternalId), ct);
-        }
-        catch (ConnectorException ex)
-        {
-            // A provider REJECTION is a failed push, not an unhandled fault. Letting it propagate
-            // left the row carrying whatever error it failed with last time, so a retry that failed
-            // for a NEW reason still displayed the old one — which is how an admin ends up "fixing"
-            // a setting that was already correct. Store what the provider actually said, now.
-            result = new CreateTimeEntryResult(false, null, ex.Message);
-        }
-
-        if (!result.Success)
-        {
-            record.SyncStatus = TimeEntrySyncStatus.Failed;
-            record.SyncError = result.Error;
-            await db.SaveChangesAsync(ct);
-            return false;
-        }
-
-        record.ExternalEntryId = result.ExternalId;
-        record.SyncStatus = TimeEntrySyncStatus.Synced;
-        record.SyncError = null;
-        await db.SaveChangesAsync(ct);
-        return true;
-    }
-
-    /// <summary>Resolves a work-type id to its label once, so the row stays readable later.</summary>
-    private async Task<string?> WorkTypeLabelAsync(Ticket ticket, string? workTypeId, CancellationToken ct)
-    {
-        if (workTypeId is null) return null;
-        try
-        {
-            if (ticket.PsaConnectionId is not { } labelConnectionId) return null;
-            var fields = await admin.GetFieldsAsync(labelConnectionId, ct);
-            return fields.WorkTypes.FirstOrDefault(o => o.Value == workTypeId)?.Label;
-        }
-        catch (Exception) { return null; } // a label is cosmetic; never fail a time log over it
-    }
+    private Task<bool> PushAsync(TicketTimeEntry record, Ticket ticket, IServiceManagementConnector connector, CancellationToken ct)
+        => Writer.PushAsync(record, ticket, connector, ct);
 
     [HttpPut("{id:guid}/time/{entryId}")]
     [RequirePermission(Permissions.TicketsLogTime)]
@@ -315,6 +249,7 @@ public sealed class TicketTimeController(
         var existing = await EnsureEntryBelongsToTicketAsync(ticket, connector, entryId, ct);
         var mirror = await db.TicketTimeEntries.FirstOrDefaultAsync(t => t.TicketId == id && t.ExternalEntryId == entryId, ct);
         await EnsureMayChangeAsync(ticket, mirror, existing.TechnicianExternalId, ct);
+        var reason = await AdjustmentReasonAsync(ticket, mirror, existing.TechnicianExternalId, req.Reason, ct);
         var result = await connector.UpdateTimeEntryAsync(entryId,
             new UnifiedTimeEntryUpdate(req.Hours, req.Billable is null ? null : ParseBillable(req.Billable), req.Notes), ct);
         if (!result.Success)
@@ -332,6 +267,7 @@ public sealed class TicketTimeController(
             entryId,
             from = new { existing.Hours, existing.Billable },
             to = new { hours = req.Hours ?? existing.Hours, billable = req.Billable is null ? existing.Billable : ParseBillable(req.Billable) == BillableOption.Billable },
+            reason, byUserId = user.UserId, forUserId = mirror?.AppUserId,
         }, ct);
         return Ok(await RecomputeAsync(ticket, connector, ct));
     }
@@ -422,44 +358,11 @@ public sealed class TicketTimeController(
 
     // Re-read the ticket's entries from the PSA (source of truth) and rewrite the portal aggregates.
     private async Task<object> RecomputeAsync(Ticket ticket, IServiceManagementConnector connector, CancellationToken ct)
-    {
-        var entries = await connector.GetTimeEntriesAsync(ticket.ExternalTicketId!, ct);
-        ticket.TimeWorkedHours = entries.Sum(e => e.Hours);
-        ticket.BillableHours = entries.Where(e => e.Billable).Sum(e => e.Hours);
-        ticket.NonBillableHours = entries.Where(e => !e.Billable).Sum(e => e.Hours);
-        await db.SaveChangesAsync(ct);
-        return new
-        {
-            count = entries.Count,
-            timeWorkedHours = ticket.TimeWorkedHours,
-            billableHours = ticket.BillableHours,
-            nonBillableHours = ticket.NonBillableHours,
-        };
-    }
+        => await Writer.RecomputeAsync(ticket, connector, ct);
 
-    /// <summary>
-    /// The same aggregates for a ticket with no provider, summed from the rows held here — which are
-    /// the whole truth for such a ticket. Technician productivity reads these totals, so an internal
-    /// ticket's hours count exactly as a client ticket's do.
-    /// </summary>
+    /// <summary>The same aggregates for a ticket with no provider, summed from the rows held here, the whole truth for such a ticket.</summary>
     private async Task<object> RecomputeLocalAsync(Ticket ticket, CancellationToken ct)
-    {
-        var entries = await db.TicketTimeEntries.AsNoTracking()
-            .Where(t => t.TicketId == ticket.Id)
-            .Select(t => new { t.Hours, t.Billable })
-            .ToListAsync(ct);
-        ticket.TimeWorkedHours = entries.Sum(e => e.Hours);
-        ticket.BillableHours = entries.Where(e => e.Billable).Sum(e => e.Hours);
-        ticket.NonBillableHours = entries.Where(e => !e.Billable).Sum(e => e.Hours);
-        await db.SaveChangesAsync(ct);
-        return new
-        {
-            count = entries.Count,
-            timeWorkedHours = ticket.TimeWorkedHours,
-            billableHours = ticket.BillableHours,
-            nonBillableHours = ticket.NonBillableHours,
-        };
-    }
+        => await Writer.RecomputeLocalAsync(ticket, ct);
 
     /// <summary>Editing an hour that lives only here: no provider holds a copy to keep in step.</summary>
     private async Task<object> UpdateLocalEntryAsync(Ticket ticket, string entryId, UpdateTimeRequest req, CancellationToken ct)
@@ -468,12 +371,13 @@ public sealed class TicketTimeController(
         var entry = await db.TicketTimeEntries.FirstOrDefaultAsync(t => t.Id == localId && t.TicketId == ticket.Id, ct)
             ?? throw new NotFoundException("Time entry");
         await EnsureMayChangeAsync(ticket, entry, entry.TechnicianExternalId, ct);
+        var reason = await AdjustmentReasonAsync(ticket, entry, entry.TechnicianExternalId, req.Reason, ct);
         var from = new { entry.Hours, entry.Billable };
         if (req.Hours is { } hours) entry.Hours = hours;
         if (req.Billable is not null) entry.Billable = ParseBillable(req.Billable) == BillableOption.Billable;
         if (req.Notes is not null) entry.Notes = req.Notes;
         await db.SaveChangesAsync(ct);
-        await AuditAsync(ticket, "ticket.time.edited", new { entryId, from, to = new { entry.Hours, entry.Billable } }, ct);
+        await AuditAsync(ticket, "ticket.time.edited", new { entryId, from, to = new { entry.Hours, entry.Billable }, reason, byUserId = user.UserId, forUserId = entry.AppUserId }, ct);
         return await RecomputeLocalAsync(ticket, ct);
     }
 
@@ -502,5 +406,7 @@ public sealed class TicketTimeController(
     public sealed record UpdateTimeRequest(
         [Range(0.01, 1000)] decimal? Hours,
         string? Billable,
-        [StringLength(2000)] string? Notes);
+        [StringLength(2000)] string? Notes,
+        /// <summary>Why the time is being changed. Required when it is someone else's (a board lead correcting a technician's hour).</summary>
+        [StringLength(300)] string? Reason = null);
 }
