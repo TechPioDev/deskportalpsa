@@ -103,8 +103,9 @@ async function narrowTo(page: Page, tag: string, rows: number) {
 }
 
 test('a manager sees the team for a day: rows, capacity, free time and planned work, and opens a block', async ({ page }) => {
-  const jason = await technician(page, 'Jason Carter');
-  const abbie = await technician(page, 'Abbie Noor');
+  const tag = stamp();
+  const jason = await technician(page, 'Jason Carter', tag);
+  const abbie = await technician(page, 'Abbie Noor', tag);
   const work = await ticket(page, (await board(page)).id, 'Rebuild backup job', jason.id);
   const date = isoDate(2);
   await plan(page, work.id, jason.id, date, '09:00', '11:00', { isFixed: true, note: 'Change window' });
@@ -114,6 +115,7 @@ test('a manager sees the team for a day: rows, capacity, free time and planned w
   await expect(grid(page)).toBeVisible();
   await expect(page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Day' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByText('Times in UTC')).toBeVisible();
+  await narrowTo(page, tag, 2);
 
   // Jason's row: two hours planned of eight, the block, the break and the free time around it.
   const jasonRow = row(page, jason.displayName);
@@ -142,7 +144,8 @@ test('a manager sees the team for a day: rows, capacity, free time and planned w
 });
 
 test('work is scheduled from a free slot and from the unscheduled queue without dragging', async ({ page }) => {
-  const abbie = await technician(page, 'Abbie Noor');
+  const tag = stamp();
+  const abbie = await technician(page, 'Abbie Noor', tag);
   const b = await board(page);
   const first = await ticket(page, b.id, 'Onboard the new starters', abbie.id);
   const second = await ticket(page, b.id, 'Patch the NAS', abbie.id);
@@ -150,6 +153,7 @@ test('work is scheduled from a free slot and from the unscheduled queue without 
 
   await go(page, `/dashboard/workforce/schedule?date=${date}`);
   await expect(grid(page)).toBeVisible();
+  await narrowTo(page, tag, 1);
   // The queue lists what Abbie holds and nobody has planned.
   const queue = page.getByRole('complementary', { name: /^Unscheduled work/ });
   await expect(queue.getByRole('listitem').filter({ hasText: first.number })).toContainText(`Held by ${abbie.displayName}`);
@@ -264,7 +268,8 @@ test('a block is resized by its edge, and the planned time follows', async ({ pa
 });
 
 test('the week view shows planned against usable per day and opens a day', async ({ page }) => {
-  const jason = await technician(page, 'Jason Carter');
+  const tag = stamp();
+  const jason = await technician(page, 'Jason Carter', tag);
   const work = await ticket(page, (await board(page)).id, 'Weekly review', jason.id);
   const date = isoDate(6);
   await plan(page, work.id, jason.id, date, '10:00', '11:00');
@@ -272,6 +277,8 @@ test('the week view shows planned against usable per day and opens a day', async
   await go(page, `/dashboard/workforce/schedule?date=${date}&view=week`);
   const table = page.getByRole('table', { name: 'Planned and usable time per person per day' });
   await expect(table).toBeVisible();
+  await page.getByLabel('Search people and work').fill(tag);
+  await expect(table.getByRole('row').filter({ hasText: jason.displayName })).toHaveCount(1);
   await expect(table.getByRole('columnheader')).toHaveCount(8);
   const cell = table.getByRole('row').filter({ hasText: jason.displayName }).getByRole('button').first();
   await expect(cell).toContainText('1h planned / 8h');
@@ -279,6 +286,7 @@ test('the week view shows planned against usable per day and opens a day', async
   await cell.click();
   await expect(page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Day' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('Date')).toHaveValue(date);
+  await narrowTo(page, tag, 1);
   await expect(block(page, work.number)).toBeVisible();
 });
 
@@ -354,6 +362,7 @@ test.describe('on a phone', () => {
     await go(page, `/dashboard/workforce/schedule?date=${date}`);
     const cards = page.getByRole('list', { name: 'People' });
     await expect(cards).toBeVisible();
+    await page.getByLabel('Search people and work').fill(jason.displayName);
     const card = cards.getByRole('listitem').filter({ hasText: jason.displayName });
     await expect(card).toContainText('1h planned / 8h');
     await expect(card.getByRole('button', { name: new RegExp(work.number) })).toContainText('09:00–10:00');
