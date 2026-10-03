@@ -714,8 +714,9 @@ public class WorkPlanTests
         (await others.Should().ThrowAsync<NotFoundException>()).WithMessage("Person was not found.");
         var hidden = () => w.As(w.Jason).Plans.PreviewAsync(w.Jason.Id, new PlanPreviewInput(w.SamsTicket.Id, w.Jason.Id, window.From, window.To, 60));
         (await hidden.Should().ThrowAsync<NotFoundException>()).WithMessage("Ticket was not found.");
-        // Time that has passed is never proposed: at 10:00 on Monday a window from 08:30 proposes from 10:00, and says so.
-        w.Clock.Advance(Monday.ToDateTime(new TimeOnly(10, 0)) - Today.ToDateTime(TimeOnly.MinValue));
+        // Time that has passed is never proposed: at 10:00 on Monday (in the organization's zone, which
+        // on Linux is not UTC) a window from 08:30 proposes from 10:00, and says so.
+        w.Clock.Advance(At(Monday, "10:00") - w.Clock.GetUtcNow());
         var late = await lead.Plans.PreviewAsync(w.Lead.Id, new PlanPreviewInput(w.OpenTicket.Id, w.Jason.Id, window.From, window.To, 240));
         late.Pieces.Should().ContainSingle().Which.Start.Should().Be(At(Monday, "13:30"), "what is left of the morning after 10:00 is too short for four hours");
         late.Warnings.Should().Contain("The window started before now; proposing from 5 Jan 10:00.");
