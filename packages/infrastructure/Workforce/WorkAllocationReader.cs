@@ -9,8 +9,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Desk.Infrastructure.Workforce;
 
 /// <summary>
-/// Planned work, as the capacity engine reads it. Every allocation is confirmed work: there is no
-/// pencilled-in state yet. An allocation counts while it is in the plan and the work is still open;
+/// Planned work, as the capacity engine reads it. Committed work is confirmed capacity; pencilled-in
+/// (tentative) work is tentative capacity. An allocation counts while it is in the plan and the work is still open;
 /// work that finished before its planned time releases that time at once, whether or not the worker
 /// has got round to cancelling the allocation.
 ///
@@ -28,12 +28,12 @@ public sealed class WorkAllocationReader(DeskDbContext db, ITicketScopeQuery sco
         // range cannot reach into it: the index on (person, start) answers this without a scan.
         var earliest = from.AddDays(-1);
         var rows = await db.WorkAllocations.AsNoTracking()
-            .Where(a => appUserIds.Contains(a.AppUserId) && a.Status == WorkAllocationStatus.Planned
+            .Where(a => appUserIds.Contains(a.AppUserId) && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative)
                         && a.StartsAt >= earliest && a.StartsAt < to && a.EndsAt > from
                         && (a.StartsAt <= now
                             || (!a.Ticket!.PortalStatus.ToUpper().Contains(TicketStatusRules.ResolvedMarker)
                                 && !a.Ticket.PortalStatus.ToUpper().Contains(TicketStatusRules.ClosedMarker))))
-            .Select(a => new { a.Id, a.AppUserId, a.TicketId, a.StartsAt, a.EndsAt })
+            .Select(a => new { a.Id, a.AppUserId, a.TicketId, a.StartsAt, a.EndsAt, a.Status })
             .ToListAsync(ct);
         if (rows.Count == 0) return [];
 
@@ -41,7 +41,7 @@ public sealed class WorkAllocationReader(DeskDbContext db, ITicketScopeQuery sco
         var visible = (await (await scope.VisibleAsync(db.Tickets.AsNoTracking().Where(t => ticketIds.Contains(t.Id)), callerId, Permissions.TicketsViewAll, ct))
             .Select(t => t.Id).ToListAsync(ct)).ToHashSet();
 
-        return rows.Select(r => new AllocatedSpan(r.AppUserId, new Interval(r.StartsAt, r.EndsAt), Confirmed: true,
+        return rows.Select(r => new AllocatedSpan(r.AppUserId, new Interval(r.StartsAt, r.EndsAt), Confirmed: r.Status == WorkAllocationStatus.Planned,
             visible.Contains(r.TicketId) ? r.TicketId : null, r.Id)).ToList();
     }
 }

@@ -25,7 +25,7 @@ public sealed class WorkAllocationReleaser(DeskDbContext db, IAuditWriter audit,
     {
         var now = clock.GetUtcNow();
         var rows = await db.WorkAllocations.Include(a => a.Ticket)
-            .Where(a => a.Status == WorkAllocationStatus.Planned && a.StartsAt > now
+            .Where(a => (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative) && a.StartsAt > now
                         && (a.Ticket!.PortalStatus.ToUpper().Contains(TicketStatusRules.ResolvedMarker)
                             || a.Ticket.PortalStatus.ToUpper().Contains(TicketStatusRules.ClosedMarker)))
             .OrderBy(a => a.StartsAt).Take(500).ToListAsync(ct);
@@ -64,7 +64,7 @@ public sealed class WorkAllocationReleaseRunner(IServiceScopeFactory scopes, ILo
             var db = scope.ServiceProvider.GetRequiredService<DeskDbContext>();
             var now = scope.ServiceProvider.GetRequiredService<TimeProvider>().GetUtcNow();
             orgs = await db.WorkAllocations.AsNoTracking()
-                .Where(a => a.Status == WorkAllocationStatus.Planned && a.StartsAt > now)
+                .Where(a => (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative) && a.StartsAt > now)
                 .Select(a => a.MspOrganizationId).Distinct().ToListAsync(ct);
         }
         foreach (var org in orgs)

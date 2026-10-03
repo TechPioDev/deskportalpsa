@@ -98,6 +98,10 @@ public sealed class WorkforceAccess(DeskDbContext db, ITenantContext tenant, IEf
         return person;
     }
 
+    /// <summary>The caller schedules other people at all: schedule.manage wider than Own (Team, Department or All).</summary>
+    public async Task<bool> SchedulesOthersAsync(Guid callerId, CancellationToken ct)
+        => (await permissions.ResolveAsync(callerId, Permissions.ScheduleManage, ct)).Scope is PermissionScope.All or PermissionScope.Department or PermissionScope.Team;
+
     /// <summary>The caller may plan their own work: schedule.manage at any scope.</summary>
     public async Task<bool> MayPlanOwnAsync(Guid callerId, CancellationToken ct)
         => (await permissions.ResolveAsync(callerId, Permissions.ScheduleManage, ct)).Scope is not PermissionScope.None;
