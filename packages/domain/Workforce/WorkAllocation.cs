@@ -7,8 +7,14 @@ namespace Desk.Domain.Workforce;
 /// <summary>Where a planned piece of work stands. Deliberately few states: a plan, or not a plan any more.</summary>
 public enum WorkAllocationStatus
 {
-    /// <summary>In the person's plan. It takes capacity.</summary>
+    /// <summary>In the person's plan and committed. It takes confirmed capacity.</summary>
     Planned = 1,
+    /// <summary>
+    /// Pencilled in: the work is expected to take this time but nobody has committed to it. It takes
+    /// tentative capacity only - confirmed free time is unchanged, projected free time is not - and
+    /// confirming it re-checks everything, since what fitted yesterday may not fit today.
+    /// </summary>
+    Tentative = 2,
     /// <summary>Taken out of the plan - by a person, or because the work finished first. Takes nothing.</summary>
     Cancelled = 5,
 }

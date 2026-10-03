@@ -455,6 +455,20 @@ public sealed class WorkAllocationConfig : IEntityTypeConfiguration<Desk.Domain.
     }
 }
 
+public sealed class WorkPlanningConfig : IEntityTypeConfiguration<Desk.Domain.Workforce.WorkPlanning>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Workforce.WorkPlanning> b)
+    {
+        b.ToTable("work_planning");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Note).HasMaxLength(300);
+        // One planning row per piece of work; the ticket is the system of record and takes the row with it.
+        b.HasIndex(x => x.TicketId).IsUnique();
+        b.HasIndex(x => x.MspOrganizationId);
+        b.HasOne(x => x.Ticket).WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedResponse>
 {
     public void Configure(EntityTypeBuilder<CannedResponse> b)
