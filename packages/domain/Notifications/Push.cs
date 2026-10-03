@@ -16,6 +16,9 @@ public enum PushKind
 
     /// <summary>Sent from their Profile page to check a device works; never switched off.</summary>
     Test = 3,
+
+    /// <summary>Someone else put work into your plan, moved it, or took it out.</summary>
+    WorkPlanned = 4,
 }
 
 /// <summary>
@@ -54,6 +57,9 @@ public class PushPreference : TenantEntity
         PushKind.Assigned => Assigned,
         PushKind.ClientReplied => ClientReplied,
         PushKind.SlaAtRisk => SlaAtRisk,
+        // Work planned for you by someone else is the same kind of news as work assigned to you,
+        // and follows the same choice.
+        PushKind.WorkPlanned => Assigned,
         _ => true,
     };
 }

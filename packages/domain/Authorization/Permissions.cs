@@ -86,6 +86,21 @@ public static class Permissions
     /// </summary>
     public const string AvailabilityManage = "availability.manage";
 
+    /// <summary>
+    /// Put work into people's time and change or remove what is there. Scoped: Own is planning
+    /// your own work (and nobody else's); Team and Department reach the people you share one with;
+    /// All reaches everyone. Scheduling someone else, moving fixed work and reassigning need a scope
+    /// wider than Own. Staff only.
+    /// </summary>
+    public const string ScheduleManage = "schedule.manage";
+
+    /// <summary>
+    /// Place work despite an overridable conflict (a double booking, work outside the working window,
+    /// over a break, over capacity), giving a reason that is kept with the work. Blocks cannot be
+    /// overridden by anyone. Staff only.
+    /// </summary>
+    public const string ScheduleOverride = "schedule.override";
+
     /// <summary>Every claim, used to grant the full set to super-administrators.</summary>
     public static readonly IReadOnlyList<string> All = new[]
     {
@@ -97,7 +112,7 @@ public static class Permissions
         ReportsView, ProductivityViewTeam, ProductivityViewOwn,
         IntegrationHealthView, JobsManage, AuditView, SecurityConfigView, EnquiriesView,
         BoardsManage,
-        ScheduleView, WorkforceManage, AvailabilityManage,
+        ScheduleView, WorkforceManage, AvailabilityManage, ScheduleManage, ScheduleOverride,
     };
 
     /// <summary>
@@ -130,7 +145,7 @@ public static class Permissions
             (SecurityConfigView, PermissionScope.All), (EnquiriesView, PermissionScope.All),
             (BoardsManage, PermissionScope.All),
             (ScheduleView, PermissionScope.All), (WorkforceManage, PermissionScope.All),
-            (AvailabilityManage, PermissionScope.All),
+            (AvailabilityManage, PermissionScope.All), (ScheduleManage, PermissionScope.All), (ScheduleOverride, PermissionScope.All),
         ],
 
         RoleType.Manager =>
@@ -144,6 +159,8 @@ public static class Permissions
             // Managers record their people's time away; technicians do not by default (an
             // administrator can give the Technician role this claim at scope Own).
             (AvailabilityManage, PermissionScope.All),
+            // Managers put work into anyone's time, and may override a conflict with a reason.
+            (ScheduleManage, PermissionScope.All), (ScheduleOverride, PermissionScope.All),
         ],
 
         RoleType.Technician =>
@@ -159,6 +176,8 @@ public static class Permissions
             (ProductivityViewOwn, PermissionScope.Own),
             // Their own working schedule and skills.
             (ScheduleView, PermissionScope.Own),
+            // And their own plan: work they may already see, into their own time. No override.
+            (ScheduleManage, PermissionScope.Own),
         ],
 
         RoleType.ClientAdministrator =>
