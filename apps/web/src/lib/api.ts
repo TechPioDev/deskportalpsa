@@ -319,6 +319,46 @@ export const TeamUnscheduledWorkSchema = z.object({
 });
 export type TeamUnscheduledWork = z.infer<typeof TeamUnscheduledWorkSchema>;
 export type TeamPlanQuery = { from?: string | null; to?: string | null; teamId?: string | null; departmentId?: string | null; skills?: string[]; matchAll?: boolean };
+// ---- Workforce: work execution, My Day and Team Today (Phase 6, internal only) ------------------
+/** Session status: 1 active, 2 paused, 3 completed, 4 cancelled. Pause reason: 0 none, 1 client, 2 vendor, 3 reboot, 4 third party, 9 other. */
+export const WorkSessionSchema = z.object({
+  id: z.string(), appUserId: z.string(), ticketId: z.string(), ticketVisible: z.boolean(), reference: z.string().nullable(), title: z.string().nullable(), clientName: z.string().nullable(), ticketFinished: z.boolean(),
+  allocationId: z.string().nullable(), status: z.number(), pauseReason: z.number(), startedAt: z.string(), endedAt: z.string().nullable(),
+  activeSeconds: z.number(), runningSince: z.string().nullable(),
+  timeEntryId: z.string().nullable(), timeEntrySyncStatus: z.number().nullable(), timeEntrySyncError: z.string().nullable(), note: z.string().nullable(),
+  outsideSchedule: z.boolean(), version: z.number(), canControl: z.boolean(),
+});
+export type WorkSession = z.infer<typeof WorkSessionSchema>;
+export const ActiveWorkProblemSchema = z.object({ current: WorkSessionSchema, canPauseCurrent: z.boolean(), canStopCurrent: z.boolean() });
+/** What to do with running work when other work starts: 0 refuse (ask), 1 pause it, 2 stop it. */
+export type ActiveWorkSwitch = 0 | 1 | 2;
+export const MyDaySlotSchema = z.object({ allocationId: z.string(), startsAt: z.string(), endsAt: z.string(), plannedMinutes: z.number(), tentative: z.boolean(), isFixed: z.boolean() });
+/** Item state: 1 planned, 2 active, 3 paused, 4 in progress, 5 completed. */
+export const MyDayItemSchema = z.object({
+  ticketId: z.string(), ticketVisible: z.boolean(), reference: z.string().nullable(), title: z.string().nullable(), clientName: z.string().nullable(), source: z.string(), ticketStatus: z.string().nullable(), ticketFinished: z.boolean(), priority: z.string().nullable(), dueAt: z.string().nullable(),
+  slots: z.array(MyDaySlotSchema), plannedMinutes: z.number(), tentativeMinutes: z.number(), actualSeconds: z.number(),
+  varianceMinutes: z.number().nullable(), variancePercent: z.number().nullable(), planned: z.boolean(), state: z.number(), session: WorkSessionSchema.nullable(),
+  overPlannedEnd: z.boolean(), entriesNotSynced: z.number(), orderAt: z.string(),
+});
+export type MyDayItem = z.infer<typeof MyDayItemSchema>;
+export const MyDaySummarySchema = z.object({
+  plannedMinutes: z.number(), tentativeMinutes: z.number(), actualSeconds: z.number(), unplannedActualSeconds: z.number(),
+  completed: z.number(), inProgress: z.number(), notStarted: z.number(), remainingPlannedMinutes: z.number(),
+});
+export const MyDaySchema = z.object({
+  appUserId: z.string(), displayName: z.string(), timeZone: z.string(), date: z.string(), today: z.string(),
+  day: DayCapacitySchema.nullable(), items: z.array(MyDayItemSchema), unscheduled: z.array(UnscheduledWorkSchema),
+  current: WorkSessionSchema.nullable(), paused: z.array(WorkSessionSchema), summary: MyDaySummarySchema, canWork: z.boolean(),
+});
+export type MyDay = z.infer<typeof MyDaySchema>;
+export const TeamTodayPersonSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), timeZone: z.string(), isSchedulable: z.boolean(), hasSchedule: z.boolean(),
+  current: WorkSessionSchema.nullable(), pausedCount: z.number(),
+  usableMinutes: z.number(), plannedMinutes: z.number(), actualSeconds: z.number(), completed: z.number(), inProgress: z.number(), notStarted: z.number(),
+});
+export const TeamTodaySchema = z.object({ date: z.string(), timeZone: z.string(), people: z.array(TeamTodayPersonSchema), plannedMinutes: z.number(), actualSeconds: z.number(), working: z.number(), paused: z.number() });
+export type TeamToday = z.infer<typeof TeamTodaySchema>;
+
 // ---- Workforce: advanced planning (internal only) ----------------------------------------------
 export const PlanningRequirementSchema = z.object({
   ticketId: z.string(), requiredMinutes: z.number().nullable(), earliestStart: z.string().nullable(), latestEnd: z.string().nullable(), splittable: z.boolean(),
@@ -682,6 +722,31 @@ export const api = {
   // ── Team scheduler ── everyone the viewer may see, their days and what is planned; the group's unscheduled work.
   teamPlan: (q: TeamPlanQuery) => request(`/api/workforce/plan/team?${teamPlanQs(q)}`, TeamPlanSchema) as Promise<TeamPlan>,
   teamUnscheduled: (q: TeamPlanQuery) => request(`/api/workforce/plan/unscheduled/team?${teamPlanQs(q)}`, z.array(TeamUnscheduledWorkSchema)) as Promise<TeamUnscheduledWork[]>,
+  // ── Work execution ── the clock on a piece of work, My Day, Team Today. Server timestamps are the truth.
+  activeWork: () => request('/api/workforce/work/active', z.array(WorkSessionSchema)) as Promise<WorkSession[]>,
+  startWork: (body: { ticketId: string; allocationId?: string | null; switch?: ActiveWorkSwitch; currentId?: string | null }) =>
+    request('/api/workforce/work/start', WorkSessionSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkSession>,
+  pauseWork: (id: string, body: { version: number; pauseReason?: number }) =>
+    request(`/api/workforce/work/${id}/pause`, WorkSessionSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkSession>,
+  resumeWork: (id: string, body: { version: number; switch?: ActiveWorkSwitch; currentId?: string | null }) =>
+    request(`/api/workforce/work/${id}/resume`, WorkSessionSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkSession>,
+  stopWork: (id: string, body: { version: number; note?: string | null; billable?: boolean; workType?: string | null; workRole?: string | null; discard?: boolean }) =>
+    request(`/api/workforce/work/${id}/stop`, WorkSessionSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkSession>,
+  myDay: (q: { appUserId?: string | null; date?: string | null } = {}) => {
+    const qs = new URLSearchParams();
+    if (q.appUserId) qs.set('appUserId', q.appUserId);
+    if (q.date) qs.set('date', q.date);
+    return request(`/api/workforce/my-day?${qs}`, MyDaySchema) as Promise<MyDay>;
+  },
+  teamToday: (q: { date?: string | null; teamId?: string; departmentId?: string; skills?: string[]; matchAll?: boolean } = {}) => {
+    const qs = new URLSearchParams();
+    if (q.date) qs.set('date', q.date);
+    if (q.teamId) qs.set('teamId', q.teamId);
+    if (q.departmentId) qs.set('departmentId', q.departmentId);
+    if (q.skills?.length) qs.set('skills', q.skills.join(','));
+    if (q.matchAll === false) qs.set('matchAll', 'false');
+    return request(`/api/workforce/team-today?${qs}`, TeamTodaySchema) as Promise<TeamToday>;
+  },
   // ── Advanced planning ── tentative work, what the work needs, the queue, previews.
   confirmPlannedWork: (id: string, body: { version: number; overrideReason?: string | null }) =>
     request(`/api/workforce/plan/${id}/confirm`, WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
