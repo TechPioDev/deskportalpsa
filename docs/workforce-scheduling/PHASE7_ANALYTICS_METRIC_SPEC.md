@@ -258,6 +258,10 @@ Variance %      = (Actual − Planned) / Planned × 100     only when Planned > 
 Positive is not bad and negative is not good: an estimate can be wrong, a client can be slow, a
 reboot can take an hour. The screen shows the sign and the value and nothing else.
 
+**With the kind-of-work filter** (planned only / reactive only) the *actual* figures narrow to that
+kind; variance and estimate variance do not: they always compare the plan with **all** the recorded
+time in the filter context, because "reactive time minus planned time" is not a fact about anything.
+
 **Example.** Jason: Planned 32 h, Actual 35 h → Variance **+3 h (+9.4 %)**.
 
 ## 10. Estimate variance (absolute)
@@ -364,7 +368,7 @@ same filtered set, so a table's rows add up to the cards.
 | By | Grouping | Capacity | Notes |
 |---|---|---|---|
 | Technician | person | yes | sortable by any column; no default "best" order (name order) |
-| Team | the person's teams | yes (members' capacity) | a person in two teams appears in both; the organization total counts them once (said on screen) |
+| Team | the person's teams | yes (members' capacity) | a person in two teams appears in both; the organization total counts them once (said on screen); with a team filter, that team's row only |
 | Client | the ticket's client company | no | tickets the caller may not open are one row, "Work you cannot open"; tickets with no client (boards) are "No client" |
 | Source | the ticket's PSA connection name, "Team boards", "Monitoring" | no | |
 | Priority | `PortalPriority`; blank is "Not set" | no | |

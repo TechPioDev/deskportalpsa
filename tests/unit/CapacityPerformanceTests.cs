@@ -333,6 +333,40 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         export.Commands.Should().BeLessThanOrEqualTo(29);
         filters.Commands.Should().BeLessThanOrEqualTo(18);
         foreach (var ms in new[] { overviewWeek.Ms, overviewMonth.Ms, teamWeek.Ms, person.Ms, drill.Ms, export.Ms, filters.Ms }) ms.Should().BeLessThan(30_000);
+
+        // The filters through the real translator too (the in-memory provider would not notice one no database can run):
+        // a client, a PSA connection, a priority and a kind of work, on a client's ticket finished and worked in the week.
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        var connection = new PsaConnection { MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://psa.example.test", CredentialSecretRef = "ref" };
+        var client = new ClientCompany { MspOrganizationId = Org, PsaConnectionId = connection.Id, Name = "ABC Company", ExternalCompanyId = "abc" };
+        var finishedAt = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(16, 0)), zone, true);
+        var psaTicket = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection.Id, ExternalTicketId = "9001",
+            RequesterName = "ABC", RequesterEmail = "it@abc.test", Title = "Client work", PortalStatus = "CLOSED", PortalPriority = "HIGH",
+            AssignedAppUserId = ids[1], ClientCompanyId = client.Id, SyncStatus = TicketSyncStatus.Synced, ResolvedAt = finishedAt, ClosedAt = finishedAt,
+        };
+        db.AddRange(connection, client, psaTicket);
+        db.Add(new TicketTimeEntry
+        {
+            MspOrganizationId = Org, TicketId = psaTicket.Id, AppUserId = ids[1], Hours = 2m, Billable = true, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Pending,
+            EntryDate = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(14, 0)), zone, true),
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var narrowed = await MeasureAsync(() => analytics.OverviewAsync(admin, week with { ClientId = client.Id, Source = "psa:" + connection.Id, Priority = "high", Kind = ActualKindFilter.Reactive }));
+        (narrowed.Result.Totals.ActualSeconds, narrowed.Result.Totals.ReactiveActualSeconds, narrowed.Result.Totals.PlannedMinutes, narrowed.Result.Totals.CompletedWork).Should().Be((7200, 7200, 0, 1));
+        narrowed.Result.Clients.Should().ContainSingle().Which.Name.Should().Be("ABC Company");
+        narrowed.Result.Sources.Should().ContainSingle().Which.Name.Should().Be("Autotask");
+        narrowed.Result.Sync.Should().ContainSingle().Which.Connection.Should().Be("Autotask");
+        (await analytics.OverviewAsync(admin, week with { Source = "internal" })).Totals.ActualSeconds.Should().Be(people * perPerson * 45 * 60 * 5, "the client's two hours are not the team's own work");
+        (await analytics.OverviewAsync(admin, week with { Source = "client" })).Totals.ActualSeconds.Should().Be(7200);
+        (await analytics.OverviewAsync(admin, week with { Source = "monitoring" })).Totals.ActualSeconds.Should().Be(0);
+        (await analytics.WorkAsync(admin, week with { ClientId = client.Id }, AnalyticsWorkKind.Completed, 0, 50)).Rows.Should().ContainSingle().Which.Reference.Should().Be("Autotask 9001");
+        (await analytics.FiltersAsync(admin)).Should().Match<AnalyticsFilterOptionsDto>(o => o.Clients.Count == 1 && o.Priorities.Contains("HIGH") && o.Sources.Any(s => s.Key == "psa:" + connection.Id));
+        // The filters add the two existence checks and nothing that grows.
+        narrowed.Commands.Should().BeLessThanOrEqualTo(30);
+        output.WriteLine($"{people} people | filtered overview (client + connection + priority + kind): {narrowed.Commands} queries, {narrowed.Ms} ms");
     }
 
     private async Task<(int Commands, long Ms, T Result)> MeasureAsync<T>(Func<Task<T>> work)

@@ -18,8 +18,8 @@ accrual, HR compliance, recruitment, appraisal, or room/vehicle/equipment schedu
 | 5b | Find available technician: assigning from the search (the search itself arrived in Phase 2; the plan dialog offers it, the scheduler's Find panel offers **Schedule work** from a result, and the queue's **Find technician** opens it with the remaining effort) | Done along the way |
 | 6 | My Day and actual work time: a technician's day as planned against actual, a server-held clock on a piece of work (start, pause, resume, stop; one running clock per person; a reload, a second tab or another device all see the same clock), the clock becoming an ordinary ticket time entry (pushed to the PSA once, retried without duplicates), time typed in by hand, corrections with a reason, unplanned and after-hours work recorded as it was, Team today for managers; two new tables, no new permission; never attendance | Done |
 | 7 | Workforce analytics and the management dashboard: capacity, planned and recorded work, scheduled and capacity utilization, planned against actual and estimate variance, reactive against planned, completed work counted once, by technician / team / client / source / priority / work type / day, capacity against demand, a capacity heatmap, every card opening its records, My analytics for the person themselves, a CSV export with its own permission; every metric specified before it was drawn; no table, no cache, no score | **This release** |
-| 8 | Capacity and utilization analytics | Planned |
-| 9 | Heatmap and advanced reporting | Planned |
+| 8 | Management insights, capacity forecasting, work quality signals and operational reporting (trends and forecasts over the Phase 7 facts; quality signals only where the source data is reliable; scheduled reports) | Planned |
+| 9 | Advanced reporting (a daily rollup if volumes ask for it; emailed analytics) | Planned |
 | 10 | Security, performance and final QA | Planned |
 
 **Internal only.** Scheduling, capacity, availability and planned work are for staff. No client

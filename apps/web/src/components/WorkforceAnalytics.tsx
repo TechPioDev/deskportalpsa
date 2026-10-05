@@ -163,18 +163,29 @@ function Panel({ title, hint, children, right }: { title: string; hint?: string;
   );
 }
 
-/** One figure. A card that opens its records is a button. */
+/** One figure. Where a card opens its records, the value itself is the button. */
 function Figure({ label, value, sub, title, onOpen }: { label: string; value: string; sub?: string; title: string; onOpen?: () => void }) {
-  const body = (
-    <>
+  return (
+    <div title={title}>
       <dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">{label}</dt>
-      <dd className="text-xl font-semibold tabular-nums">{value}</dd>
+      <dd className="text-xl font-semibold tabular-nums">
+        {onOpen
+          ? <button type="button" onClick={onOpen} aria-label={`${label}: ${value}. Show the records`} className="rounded text-left underline decoration-dotted underline-offset-4 hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-brand">{value}</button>
+          : value}
+      </dd>
       {sub && <dd className="text-[11px] text-[var(--muted)]">{sub}</dd>}
-    </>
+    </div>
   );
-  return onOpen ? (
-    <div title={title}><button type="button" onClick={onOpen} className="w-full rounded-lg text-left hover:bg-[var(--bg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand">{body}</button></div>
-  ) : <div title={title}>{body}</div>;
+}
+
+/** The period and the work filters as a query string, for a link to one person's page (the people filters do not travel: the page is one person). */
+function personQs(f: AnalyticsFilters): string {
+  const qs = new URLSearchParams();
+  if (f.period !== 'this-week') qs.set('period', f.period);
+  if (f.period === 'custom') { if (f.from) qs.set('from', f.from); if (f.to) qs.set('to', f.to); }
+  for (const [k, v] of [['client', f.clientId], ['source', f.source], ['priority', f.priority], ['kind', f.kind]] as const) if (v) qs.set(k, v);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
 }
 
 /** Phones get cards, not a wide table. */
@@ -246,10 +257,11 @@ function GroupedBars({ labels, series, unit, ariaLabel, height = 200 }: { labels
 }
 
 /** Actual or planned against capacity, one cell per person-day; a neutral single hue by intensity, the three facts in every cell's title and in the table itself. */
-function HeatmapGrid({ heatmap, metric }: { heatmap: HeatmapData; metric: 'actual' | 'planned' }) {
-  const shade = (p: number | null) => (p == null ? 'transparent' : `rgba(20, 83, 45, ${Math.min(0.85, 0.08 + (Math.min(p, 120) / 120) * 0.77)})`);
+function HeatmapGrid({ heatmap, metric, qs }: { heatmap: HeatmapData; metric: 'actual' | 'planned'; qs: string }) {
+  // One hue by intensity: the brand green on a light surface, a lighter green on a dark one, so the steps stay visible in both themes.
+  const shade = (p: number | null) => (p == null ? 'transparent' : `rgb(var(--heat) / ${Math.min(0.85, 0.08 + (Math.min(p, 120) / 120) * 0.77).toFixed(2)})`);
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto [--heat:20_83_45] dark:[--heat:74_222_128]">
       <table className="text-xs">
         <caption className="sr-only">{metric === 'actual' ? 'Actual capacity utilization' : 'Scheduled capacity'} per person and day</caption>
         <thead>
@@ -258,12 +270,12 @@ function HeatmapGrid({ heatmap, metric }: { heatmap: HeatmapData; metric: 'actua
         <tbody>
           {heatmap.rows.map((r) => (
             <tr key={r.appUserId}>
-              <th scope="row" className="sticky left-0 bg-[var(--surface)] px-2 py-1 text-left font-normal"><Link href={`/dashboard/workforce/analytics/${r.appUserId}`} className="hover:underline">{r.displayName}</Link></th>
+              <th scope="row" className="sticky left-0 bg-[var(--surface)] px-2 py-1 text-left font-normal"><Link href={`/dashboard/workforce/analytics/${r.appUserId}${qs}`} className="hover:underline">{r.displayName}</Link></th>
               {r.cells.map((c, i) => {
                 const used = metric === 'actual' ? Math.round(c.actualSeconds / 60) : c.plannedMinutes;
                 const p = c.capacityMinutes && c.capacityMinutes > 0 ? Math.round((used / c.capacityMinutes) * 100) : null;
                 const title = `${fmtDay(heatmap.dates[i])}: ${metric === 'actual' ? 'actual' : 'planned'} ${mins(used)} · capacity ${c.capacityMinutes == null ? 'not offered' : mins(c.capacityMinutes)} · ${p == null ? 'N/A' : `${p}%`}`;
-                return <td key={i} title={title} className="h-8 min-w-[44px] border border-[var(--surface)] text-center tabular-nums" style={{ background: shade(p), color: p != null && p > 70 ? '#fff' : undefined }}>{p == null ? '—' : `${p}%`}</td>;
+                return <td key={i} title={title} className={`h-8 min-w-[44px] border border-[var(--surface)] text-center tabular-nums ${p != null && p > 70 ? 'text-white dark:text-slate-950' : ''}`} style={{ background: shade(p) }}>{p == null ? '—' : `${p}%`}</td>;
               })}
             </tr>
           ))}
@@ -595,7 +607,7 @@ export function WorkforceAnalyticsView() {
             <FigureTable caption="Technicians" rows={data.people} cols={personCols} keyOf={(p) => p.appUserId} initialSort="name"
               narrowTitle={(p) => (
                 <span>
-                  <Link href={`/dashboard/workforce/analytics/${p.appUserId}${filters.period !== 'this-week' || filters.from ? `?period=${filters.period}${filters.period === 'custom' ? `&from=${filters.from}&to=${filters.to}` : ''}` : ''}`} className="font-medium hover:underline">{p.displayName}</Link>
+                  <Link href={`/dashboard/workforce/analytics/${p.appUserId}${personQs(filters)}`} className="font-medium hover:underline">{p.displayName}</Link>
                   {p.teams.length > 0 && <span className="block text-[11px] text-[var(--muted)]">{p.teams.join(', ')}</span>}
                   {!p.hasSchedule && <span className="block text-[11px] text-[var(--muted)]">No working schedule</span>}
                 </span>
@@ -630,7 +642,7 @@ export function WorkforceAnalyticsView() {
                 <button type="button" aria-pressed={metric === 'planned'} onClick={() => setMetric('planned')} className={`rounded-full border px-2.5 py-0.5 ${metric === 'planned' ? 'border-brand bg-brand text-brand-fg' : 'border-[var(--border)]'}`}>Scheduled capacity %</button>
               </div>
             }>
-            {data.heatmap.unavailable ? <p className="text-sm text-[var(--muted)]">{data.heatmap.unavailable}</p> : <HeatmapGrid heatmap={data.heatmap} metric={metric} />}
+            {data.heatmap.unavailable ? <p className="text-sm text-[var(--muted)]">{data.heatmap.unavailable}</p> : <HeatmapGrid heatmap={data.heatmap} metric={metric} qs={personQs(filters)} />}
             {data.heatmap.truncated && <p className="mt-2 text-xs text-[var(--muted)]">Showing {data.heatmap.rows.length} of {data.heatmap.peopleTotal} people; filter by team to see the others.</p>}
           </Panel>
 

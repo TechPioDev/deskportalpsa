@@ -1,6 +1,7 @@
 using System.Text;
 using Desk.Application.Common;
 using Desk.Application.Workforce;
+using Desk.Domain.Authorization;
 using Desk.Domain.Enums;
 using Desk.Domain.Identity;
 using Desk.Domain.Tenancy;
@@ -206,6 +207,7 @@ public partial class WorkPlanTests
         // The kind filter narrows the recorded time only; planned minutes and capacity stay.
         var reactive = await jason.OverviewAsync(w.Jason.Id, Week with { Kind = ActualKindFilter.Reactive });
         (reactive.Totals.ActualSeconds, reactive.Totals.PlannedMinutes, reactive.Totals.CapacityMinutes, reactive.Totals.WorkItems).Should().Be((3600, 60, 2400, 1));
+        (reactive.Totals.VarianceMinutes, reactive.Totals.AbsoluteVarianceMinutes).Should().Be((240, 120), "variance is the plan against all the recorded time, whatever the kind filter");
         var planned = await jason.OverviewAsync(w.Jason.Id, Week with { Kind = ActualKindFilter.Planned });
         (planned.Totals.ActualSeconds, planned.Totals.ReactiveActualSeconds).Should().Be((14_400, 0));
         // The same split My day shows for Wednesday.
@@ -282,6 +284,29 @@ public partial class WorkPlanTests
         (elsewhere.Totals.ActualSeconds, elsewhere.Totals.CompletedWork, elsewhere.Teams.Count, elsewhere.Clients.Count).Should().Be((0, 0, 0, 0));
         (await ((Func<Task>)(() => outsider.OverviewAsync(w.Outsider.Id, Week with { ClientId = xyz.Id }))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Client was not found.");
         (await ((Func<Task>)(() => outsider.TechnicianAsync(w.Outsider.Id, w.Jason.Id, Week))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Person was not found.");
+        (await outsider.WorkAsync(w.Outsider.Id, Week, AnalyticsWorkKind.Actual, 0, 50)).Total.Should().Be(0);
+
+        // That organization's own manager, holding the export right, exports that organization and nothing of this one.
+        var dbB = AdminHarness.Create(OrgB, w.DbName).Db;
+        var roleB = new Role { MspOrganizationId = OrgB, Name = "Manager B", BuiltInType = RoleType.Manager };
+        foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceAnalyticsExport, Permissions.TicketsViewAll })
+            roleB.Permissions.Add(new RolePermission { PermissionKey = key, Scope = PermissionScope.All });
+        var bea = new AppUser { MspOrganizationId = OrgB, DisplayName = "Bea Manager", Email = "bea@other.test", IsActive = true };
+        bea.Roles.Add(new UserRole { RoleId = roleB.Id });
+        dbB.AddRange(roleB, bea);
+        await dbB.SaveChangesAsync();
+        var theirs = World.For(dbB, OrgB, bea, w.Clock).Analytics;
+        foreach (var report in new[] { AnalyticsExportReport.Technicians, AnalyticsExportReport.Clients, AnalyticsExportReport.Work, AnalyticsExportReport.Teams })
+        {
+            var file = Encoding.UTF8.GetString((await theirs.ExportAsync(bea.Id, Week, report)).Content);
+            file.Should().NotContainAny("Jason", "Sam Shah", "ABC Company", "XYZ Co", "VPN down", "NOC", "Autotask 5151");
+        }
+        (await theirs.ExportAsync(bea.Id, Week, AnalyticsExportReport.Technicians)).Rows.Should().Be(2, "Bea and the other person of that organization");
+        (await ((Func<Task>)(() => theirs.ExportAsync(bea.Id, Week with { ClientId = xyz.Id }, AnalyticsExportReport.Work))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Client was not found.");
+
+        // A team filter shows that team's row only: Sam's other team would be a half-row.
+        var nocOnly = await admin.OverviewAsync(w.Admin.Id, Week with { TeamId = w.Noc.Id });
+        nocOnly.Teams.Select(t => t.Name).Should().Equal("NOC");
     }
 
     // ---- periods ----------------------------------------------------------------------------------------------

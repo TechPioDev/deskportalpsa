@@ -8,7 +8,8 @@ import { test, expect, type APIResponse, type Page } from '@playwright/test';
  *
  * The signed-in administrator is the technician here (local mode has one account). Recorded time can
  * only be dated today or in the past and planned work only today or later, so the fixture lives on
- * "today": each browser plans its own hours (offsets 12 / 16 / 20) and every figure is asserted
+ * "today": each browser plans its own hours (02-05, 06-09, 10-13 UTC: hours the My day spec, the
+ * only other spec that plans on today, never uses in any browser) and every figure is asserted
  * relative to what the API itself answers, never as an absolute the other browsers could move.
  */
 test.describe.configure({ timeout: 180_000 });
@@ -23,7 +24,8 @@ async function ask(send: () => Promise<APIResponse>): Promise<APIResponse> {
 }
 const stamp = () => Date.now().toString().slice(-7);
 const api = (path: string) => `/api/bff/api${path}`;
-const hourOffset = () => ({ chromium: 12, firefox: 16, webkit: 20 } as Record<string, number>)[test.info().project.name] ?? 12;
+/** My day plans today at 01-02 and 13-15 (Chromium), 05-06 and 17-19 (Firefox), 09-10 and 21-23 (WebKit); these three hours per browser are free of all of them. */
+const hourOffset = () => ({ chromium: 2, firefox: 6, webkit: 10 } as Record<string, number>)[test.info().project.name] ?? 2;
 const hh = (h: number) => `${String(h + hourOffset()).padStart(2, '0')}:00`;
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, start: '00:00', end: '23:55', breaks: [] as { start: string; end: string }[] }));
 const todayUtc = () => new Date().toISOString().slice(0, 10);
@@ -48,13 +50,16 @@ async function ticket(page: Page, boardId: string, title: string, holder?: strin
   const created = await res.json() as { ticketId: string; number: string; title: string };
   return { id: created.ticketId, number: created.number, title: created.title };
 }
+/** Plans the hour; when a retried run finds its own earlier hour already there, the administrator overrides the double booking with a reason, as the product allows. */
 async function plan(page: Page, ticketId: string, userId: string, date: string, from: string, to: string) {
-  const res = await ask(() => page.request.post(api('/workforce/plan'), { data: { ticketId, appUserId: userId, start: `${date}T${from}:00Z`, end: `${date}T${to}:00Z` } }));
+  const body = { ticketId, appUserId: userId, start: `${date}T${from}:00Z`, end: `${date}T${to}:00Z` };
+  let res = await ask(() => page.request.post(api('/workforce/plan'), { data: body }));
+  if (res.status() === 409) res = await ask(() => page.request.post(api('/workforce/plan'), { data: { ...body, overrideReason: 'Analytics test run again' } }));
   expect(res.ok(), `planned: ${res.status()} ${await res.text()}`).toBeTruthy();
   return await res.json() as { id: string };
 }
 async function logTime(page: Page, ticketId: string, hours: number, notes: string) {
-  const res = await ask(() => page.request.post(api(`/tickets/${ticketId}/time`), { data: { hours, billable: 'true', notes } }));
+  const res = await ask(() => page.request.post(api(`/tickets/${ticketId}/time`), { data: { hours, billable: 'Billable', notes } }));
   expect(res.ok(), `time logged: ${res.status()} ${await res.text()}`).toBeTruthy();
 }
 async function close(page: Page, ticketId: string) {
@@ -122,7 +127,7 @@ test('management sees today\'s cards reconcile with the API, opens the records b
   await expect(page.getByRole('region', { name: 'Capacity heatmap' }).getByRole('table')).toBeVisible();
 
   // Drill into actual work: the recorded entries, our two among them, planned and reactive said as such.
-  await figure(page, 'Actual work').click();
+  await figure(page, 'Actual work').getByRole('button').click();
   const dialog = page.getByRole('dialog', { name: 'Recorded work' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('row').filter({ hasText: planned.number })).toContainText('Planned');
@@ -131,7 +136,7 @@ test('management sees today\'s cards reconcile with the API, opens the records b
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toHaveCount(0);
   // Drill into completed work: the finished ticket, once.
-  await figure(page, 'Completed work').click();
+  await figure(page, 'Completed work').getByRole('button').click();
   const done = page.getByRole('dialog', { name: 'Completed work' });
   await expect(done.getByRole('row').filter({ hasText: reactive.number })).toHaveCount(1);
   await done.getByRole('button', { name: 'Close' }).click();
@@ -169,6 +174,14 @@ test('a person sees their own analytics and the export is a CSV with the period 
   await expect(figure(page, 'Planned')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Work in this period' })).toContainText(planned.number);
   await expect(page.getByLabel('Technician', { exact: true })).toHaveCount(0);
+
+  // A custom range arrives as dates; an incomplete or unknown period is refused, not guessed.
+  const custom = await overview(page, `period=custom&from=${todayUtc()}&to=${todayUtc()}`);
+  expect([custom.period.from, custom.period.to]).toEqual([todayUtc(), todayUtc()]);
+  for (const bad of ['period=custom', 'period=custom&from=2026-02-30&to=2026-03-01', 'period=next-decade', 'period=today&kind=best', 'period=today&source=everything'])
+    expect((await ask(() => page.request.get(api(`/workforce/analytics/overview?${bad}`)))).status(), bad).toBe(400);
+  expect((await ask(() => page.request.get(api('/workforce/analytics/work?list=ranking&period=today')))).status()).toBe(400);
+  expect((await ask(() => page.request.get(api('/workforce/analytics/people/00000000-0000-0000-0000-000000000001?period=today')))).status()).toBe(404);
 
   // The export: the same figures as a file, with a byte-order mark, the period and the person's name.
   const res = await ask(() => page.request.get(api('/workforce/analytics/export?report=technicians&period=today')));

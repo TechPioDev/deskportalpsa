@@ -91,7 +91,8 @@ caller's scope reaches.
 Query parameters: `period` is `today`, `yesterday`, `this-week`, `last-week`, `this-month`,
 `last-month`, `7d`, `30d` or `custom` (then `from` and `to`, at most 366 days, within a year of
 today; the default is this week). `source` is `psa:{connectionId}`, `client`, `internal` or
-`monitoring`. `kind` is `all`, `planned` or `reactive` (narrows the recorded time only). A filter
+`monitoring`. `kind` is `all`, `planned` or `reactive` (narrows the recorded time only; planned
+minutes, capacity and variance are unchanged). A filter
 value that is not a valid id is refused; a client or connection id that is not this organization's
 is "not found"; a team or department the caller's people are not in yields nobody.
 
@@ -200,7 +201,13 @@ Constant whatever the size: one load, then memory. The cost that does grow is th
 loaded (entries, allocations, clocks) for the period and the people, which is why a period is at
 most 366 days and a request at most 1,000 people, and why the heatmap is offered for at most 31 days
 and 200 people. The test also proves the figures at scale (planned, actual, planned actual, the
-drill-down's total and the breakdowns' sums against the cards).
+drill-down's total and the breakdowns' sums against the cards), and runs the client, connection,
+priority and kind filters through the real translator (30 queries: the existence checks more).
+The same theory was run on **PostgreSQL 17** (`DESK_TEST_POSTGRES`, each test in a database built
+by the real migrations): the same counts (27 / 27 / 27 / 26 / 26 / 29 / 18, filtered 30), and at 500
+people with 30,000 allocations and 30,000 entries: overview week 731 ms, four weeks 905 ms, one team
+210 ms, one person 42 ms, drill-down 317 ms (7,500 rows), export 603 ms, filtered overview 818 ms
+(a container on a development laptop; first-call compilation included).
 
 **Not benchmarked here:** a year of 500 people with 1,000,000 entries. The 500-people / 30,000-entry
 run above is the largest a unit test can seed in reasonable time; the next step, if a desk reaches

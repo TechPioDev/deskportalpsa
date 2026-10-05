@@ -129,8 +129,7 @@ public sealed class WorkforceAnalyticsService(
         var t = Tallies.Over(f);
 
         var people = f.People.Select(p => PersonDto(f, p, t.Person(p.Id))).ToList();
-        var teams = t.Teams.OrderBy(x => f.TeamNames.GetValueOrDefault(x.Key, ""), StringComparer.OrdinalIgnoreCase)
-            .Select(x => new AnalyticsGroupDto(x.Key.ToString(), f.TeamNames.GetValueOrDefault(x.Key, "Team"), f.People.Count(p => f.TeamIdsOf.GetValueOrDefault(p.Id)?.Contains(x.Key) == true), x.Value.ToDto())).ToList();
+        var teams = TeamGroups(f, t, query.TeamId);
 
         var heatmap = Heatmap(f, t);
         var daily = f.Dates.Select(d => new AnalyticsDayDto(d, t.Day(d).ToDto())).ToList();
@@ -227,8 +226,7 @@ public sealed class WorkforceAnalyticsService(
             case AnalyticsExportReport.Sources:
                 var (title, groups) = report switch
                 {
-                    AnalyticsExportReport.Teams => ("teams", t.Teams.OrderBy(x => f.TeamNames.GetValueOrDefault(x.Key, ""), StringComparer.OrdinalIgnoreCase)
-                        .Select(x => new AnalyticsGroupDto(x.Key.ToString(), f.TeamNames.GetValueOrDefault(x.Key, "Team"), 0, x.Value.ToDto())).ToList()),
+                    AnalyticsExportReport.Teams => ("teams", TeamGroups(f, t, query.TeamId)),
                     AnalyticsExportReport.Clients => ("clients", Groups(t.Clients, f)),
                     _ => ("sources", Groups(t.Sources, f)),
                 };
@@ -564,6 +562,8 @@ public sealed class WorkforceAnalyticsService(
         public bool HasCapacity;
         public long Capacity, Planned, Tentative;
         public long Actual, PlannedActual, Reactive, Live, Billable, Client, Internal, Monitoring;
+        /// <summary>Every recorded second whatever the kind filter: what the plan is compared with.</summary>
+        public long Recorded;
         public long AbsVariance, PlannedCompared;
         public int Compared;
         public long Over;
@@ -586,6 +586,7 @@ public sealed class WorkforceAnalyticsService(
         }
         public void AddVariance(int plannedMinutes, int actualSeconds)
         {
+            Recorded += actualSeconds;
             if (plannedMinutes <= 0) return;
             var actualMinutes = (int)Math.Round(actualSeconds / 60.0, MidpointRounding.AwayFromZero);
             AbsVariance += Math.Abs(actualMinutes - plannedMinutes);
@@ -596,12 +597,14 @@ public sealed class WorkforceAnalyticsService(
         public AnalyticsFiguresDto ToDto()
         {
             var actualMinutes = (int)Math.Round(Actual / 60.0, MidpointRounding.AwayFromZero);
+            // Variance is the plan against all the recorded time: the kind filter narrows what is counted as actual, never what the plan is compared with.
+            var recordedMinutes = (int)Math.Round(Recorded / 60.0, MidpointRounding.AwayFromZero);
             int? cap = HasCapacity ? (int)Capacity : null;
             return new AnalyticsFiguresDto(
                 cap, (int)Planned, (int)Tentative,
                 (int)Actual, (int)PlannedActual, (int)Reactive, (int)Live, (int)Billable, (int)Client, (int)Internal, (int)Monitoring,
                 cap is > 0 ? Pct(Planned, cap.Value) : null, cap is > 0 ? Pct(actualMinutes, cap.Value) : null, Actual > 0 ? Pct(Reactive, Actual) : null,
-                Planned > 0 ? actualMinutes - (int)Planned : null, Planned > 0 ? Pct(actualMinutes - Planned, Planned) : null,
+                Planned > 0 ? recordedMinutes - (int)Planned : null, Planned > 0 ? Pct(recordedMinutes - Planned, Planned) : null,
                 (int)AbsVariance, PlannedCompared > 0 ? Pct(AbsVariance, PlannedCompared) : null, Compared,
                 (int)Over, OverDays,
                 Completed.Count, Items.Count, ReactiveItems.Count);
@@ -761,6 +764,13 @@ public sealed class WorkforceAnalyticsService(
 
     // ---- shaping -------------------------------------------------------------------------------------------
 
+    /// <summary>The team rows, in name order; with a team filter, that team only (its members' other teams would be half-rows).</summary>
+    private static List<AnalyticsGroupDto> TeamGroups(Facts f, Tallies t, Guid? only)
+        => t.Teams.Where(x => only is null || x.Key == only)
+            .OrderBy(x => f.TeamNames.GetValueOrDefault(x.Key, ""), StringComparer.OrdinalIgnoreCase)
+            .Select(x => new AnalyticsGroupDto(x.Key.ToString(), f.TeamNames.GetValueOrDefault(x.Key, "Team"),
+                f.People.Count(p => f.TeamIdsOf.GetValueOrDefault(p.Id)?.Contains(x.Key) == true), x.Value.ToDto())).ToList();
+
     private static AnalyticsPersonDto PersonDto(Facts f, Person p, Tally t)
         => new(p.Id, p.Name, f.TeamsOf.GetValueOrDefault(p.Id) ?? [], p.IsSchedulable, f.Calendar.HasSchedule(p.Id), f.ZoneOf(p.Id, f.Period.From), t.ToDto());
 
@@ -792,7 +802,7 @@ public sealed class WorkforceAnalyticsService(
         if (f.FinishedWithoutDate > 0) notes.Add($"{f.FinishedWithoutDate} finished work item{(f.FinishedWithoutDate == 1 ? " has" : "s have")} no completion date and {(f.FinishedWithoutDate == 1 ? "is" : "are")} in no period.");
         if (f.People.Any(p => (f.TeamIdsOf.GetValueOrDefault(p.Id)?.Count ?? 0) > 1)) notes.Add("A person in more than one team appears under each of them; the organization total counts them once.");
         notes.Add("Time entered directly in a PSA has no portal row and is not in any day's actual time; it reaches the ticket's totals only.");
-        if (f.Kind != ActualKindFilter.All) notes.Add($"Only {(f.Kind == ActualKindFilter.Planned ? "planned" : "reactive")} work's recorded time is counted; planned minutes and capacity are unchanged.");
+        if (f.Kind != ActualKindFilter.All) notes.Add($"Only {(f.Kind == ActualKindFilter.Planned ? "planned" : "reactive")} work's recorded time is counted; planned minutes, capacity and variance are unchanged.");
         return notes;
         static string People(int n) => n == 1 ? "1 person has" : $"{n} people have";
     }
