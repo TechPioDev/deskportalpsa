@@ -173,6 +173,15 @@ caller's **own** teams for a narrower scope (never the other teams a colleague h
 to); none for someone who sees only themselves. A question about one person or one department is
 about held work only, because unheld work has neither.
 
+**Work filters.** A client, source or priority filter narrows the *work*. Capacity, the gap,
+projected load, whether work fits before its due date and a skill's free time all depend on **all**
+of a person's work, so under such a filter they are not stated (N/A, with a note) rather than
+computed from a slice of it. (Found in review: the first build computed them from the filtered
+allocations, which made a person look free while booked on other work.)
+
+**Team rows** are the teams the caller's scope reaches (the same set as the unheld work below),
+never the other teams a colleague belongs to.
+
 **Why tentative is subtracted from remaining effort here** although the planning queue's own
 *remaining* ignores it: pencilled-in work is already counted as tentative demand. Subtracting only
 confirmed work would count those minutes twice in the projection. The queue's figure is unchanged.
@@ -183,8 +192,10 @@ without work still counts as allocated. The planning queue has the same rule; ch
 Phase 5 decision, not a reporting one.
 
 **Per day.** Capacity, confirmed and tentative are per shift date. Unscheduled effort has no date of
-its own; it is shown on the day its work is **due** (organization zone; overdue work on today), and
-the rest as "no due date in this window". It is never spread across days by guesswork.
+its own; it is shown on the day its work is **due** (organization zone) when that day is in the
+window. Work already past its due date **by the clock** (the overdue list's own test) is its own
+figure, and the rest is "no due date in this window". It is never spread across days by guesswork,
+and effort on work the caller cannot open is put on no day.
 
 **Where the forecast meets existing figures**
 
@@ -280,6 +291,13 @@ design: these are properties of work and data, not grades of people.
 Definitions match the productivity dashboard's, so the two cannot disagree about a ticket. The label
 and its one-line reason travel with the number in the API, the screen and the reports.
 
+**Enforced, not only intended.** When the people in scope are exactly one person and that person is
+not the caller (a technician filter, or a team of one), every signal is returned Not available with
+the reason, and the estimate-variance breakdown is empty. The two reports built on them take no
+technician filter. A person's own view of their own completed work stays available to them.
+(Found in review: the first build let a manager read one named person's signals through the
+technician filter, which is exactly the table this section says does not exist.)
+
 ## 10. Operational attention
 
 A list of statements, each produced by one fixed rule over figures already on the page. Each carries
@@ -288,7 +306,7 @@ insight".
 
 | Rule | Condition | Severity |
 |---|---|---|
-| Capacity shortage (organization, team) | Projected load ≥ 90 % · > 100 % · > 120 % | Watch · Attention · Critical |
+| Capacity shortage (organization, and each team in scope on the same thresholds) | Projected load ≥ 90 % · > 100 % · > 120 %; demand against no capacity at all is Attention | Watch · Attention · Critical |
 | People over capacity | Number of people with projected load > 100 % | Attention |
 | No capacity for demand | Demand attributed to people with no capacity in the window | Attention |
 | Estimated work not scheduled | Estimated unscheduled demand > 0 | Watch |
@@ -305,9 +323,10 @@ making them configurable per organization waits for a business need, and would b
 
 "Free time on the days up to the due date" is the planning queue's existing rule for *not enough
 capacity before the due date*, applied to all due work instead of the queue's first 100 items. It
-is evaluated for work due **within the window**: for work due before the window opens, the free
-time that matters lies outside what the window knows, so nothing is claimed about it (work already
-past its due date is listed as overdue whatever the window).
+is evaluated for work due **within the window**, and only when **the window starts today** and no
+work filter is on: the holder's free time between now and the due date must all be inside what the
+read knows. Otherwise nothing is claimed and a note says so (work already past its due date is
+listed as overdue whatever the window).
 
 ## 11. Data quality, mapping health, integration health
 

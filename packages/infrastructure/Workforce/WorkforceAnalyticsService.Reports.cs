@@ -19,6 +19,8 @@ public sealed partial class WorkforceAnalyticsService
     public const int ReportPreviewRows = 500;
 
     private static readonly string[] WorkFilters = ["team", "department", "person", "client", "source", "priority"];
+    /// <summary>For reports that describe kinds of work or the quality of work: every filter but one person.</summary>
+    private static readonly string[] GroupFilters = ["team", "department", "client", "source", "priority"];
 
     /// <summary>Every report there is, in the order the catalogue shows them.</summary>
     public static readonly IReadOnlyList<ReportDefinitionDto> ReportDefinitions =
@@ -40,11 +42,11 @@ public sealed partial class WorkforceAnalyticsService
         new("reactive-work", "Delivery", "Reactive work by week",
             "The last eight weeks: actual work, how much of it was planned and how much reactive, and completed work.", "none", WorkFilters, false),
         new("estimate-variance", "Delivery", "Estimate variance",
-            "Planned time against the time recorded on that planned work, by category, client or source.", "compare", [.. WorkFilters, "by"], false),
+            "Planned time against the time recorded on that planned work, by category, client or source.", "compare", [.. GroupFilters, "by"], false),
         new("work-sources", "Delivery", "Work sources",
             "Actual work per source (each PSA, team boards, monitoring) in a period against the period before.", "compare", WorkFilters, false),
         new("operational-quality", "Quality", "Operational quality",
-            "The quality signals the records support over completed work, each with what it rests on.", "compare", WorkFilters, false),
+            "The quality signals the records support over completed work, each with what it rests on.", "compare", GroupFilters, false),
         new("integration-health", "Integrations", "Mapping and integration health",
             "Each PSA connection: sync state, how well statuses, priorities, technicians and clients map, and failed records.", "none", [], true),
     ];
@@ -179,6 +181,9 @@ public sealed partial class WorkforceAnalyticsService
 
     private async Task<Built> BuildAsync(Guid callerId, ReportDefinitionDto definition, InsightsQuery q, CancellationToken ct)
     {
+        // A report that takes no person filter is not given one by the address: said the same whoever the person is.
+        if (q.AppUserId is not null && definition.Filters.Count > 0 && !definition.Filters.Contains("person"))
+            throw new ValidationFailedException("This report describes work, not one person. Remove the technician filter.");
         switch (definition.Key)
         {
             case "workforce-utilization":

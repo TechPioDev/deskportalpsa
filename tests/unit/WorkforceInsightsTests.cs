@@ -6,6 +6,7 @@ using Desk.Application.Workforce;
 using Desk.Domain.Authorization;
 using Desk.Domain.Enums;
 using Desk.Domain.Identity;
+using Desk.Domain.Organization;
 using Desk.Domain.Tenancy;
 using Desk.Domain.Tickets;
 using Desk.Domain.Workforce;
@@ -152,12 +153,15 @@ public partial class WorkPlanTests
         (t.ConfirmedMinutes + t.TentativeMinutes + t.UnscheduledMinutes).Should().Be(t.ProjectedMinutes);
 
         // Nothing is over: at 90% the capacity statement is a Watch, with every component of the projection attached.
-        fc.Attention.Select(a => (a.Key, a.Severity)).Should().Equal(("capacity", InsightSeverity.Watch), ("unscheduled", InsightSeverity.Watch), ("unestimated", InsightSeverity.Info));
+        // A team is held to the same thresholds: Security, at exactly 100%, is a Watch too; NOC at 87.5% is nothing.
+        var securityTeam = await w.Db.Teams.AsNoTracking().SingleAsync(x => x.Name == "Security");
+        fc.Attention.Select(a => (a.Key, a.Severity)).Should().Equal(("capacity", InsightSeverity.Watch), ("team:" + securityTeam.Id, InsightSeverity.Watch), ("unscheduled", InsightSeverity.Watch), ("unestimated", InsightSeverity.Info));
+        fc.Attention[1].Title.Should().Be("Security is at 100% of capacity; 0m is left.");
         var capacity = fc.Attention[0];
         capacity.Title.Should().Be("Projected demand takes 90% of capacity in this window; 10h is left.");
         capacity.Rule.Should().Contain("(confirmed + tentative + estimated unscheduled) ÷ capacity");
         capacity.Facts.Select(x => (x.Label, x.Value)).Should().Equal(("Capacity", "100h"), ("Confirmed", "60h"), ("Tentative", "10h"), ("Estimated unscheduled", "20h"), ("Projected", "90h"), ("Gap", "+10h"), ("Projected load", "90%"));
-        fc.Attention[2].Title.Should().Be("5 open work items have no estimate and no plan, so their demand is unknown.");
+        fc.Attention[3].Title.Should().Be("5 open work items have no estimate and no plan, so their demand is unknown.");
 
         // Per person, in name order; nobody is over 100%.
         fc.People.Select(p => p.DisplayName).Should().Equal("Abbie Noor", "Harpal Admin", "Jason Carter", "Lena Lead", "Sam Shah");
@@ -181,7 +185,8 @@ public partial class WorkPlanTests
         // Coverage and the planning data the forecast rests on.
         fc.Coverage.Should().Be(new ScheduleCoverageDto(9, 2, 7, 1200, 0, 1200, 0d));
         fc.DataQuality.Should().Be(new PlanningDataQualityDto(5, 2, 0, 9, 2, 0, 0));
-        fc.Clients.Should().ContainSingle().Which.Should().Match<ForecastGroupDto>(c => c.Name == "ABC Company" && c.Figures.ProjectedMinutes == 5400 && c.Figures.UnestimatedItems == 5 && c.Figures.CapacityMinutes == null);
+        fc.Clients.Should().ContainSingle().Which.Should().Match<ForecastGroupDto>(c => c.Name == "ABC Company" && c.Figures.ProjectedMinutes == 5400 && c.Figures.UnestimatedItems == 5 && c.Figures.CapacityMinutes == null
+            && c.People == 3, "the people planned on a client's work or holding it: Jason, Abbie and Sam");
         fc.Sources.Select(s => (s.Name, s.Figures.ConfirmedMinutes, s.Figures.TentativeMinutes, s.Figures.UnscheduledMinutes)).Should().BeEquivalentTo([("Team boards", 3360, 600, 960), ("Autotask", 240, 0, 240)]);
         (fc.SeesOthers, fc.CanExport, fc.CanSeeHealth).Should().Be((true, true, false));
         fc.Notes.Should().Contain(n => n.StartsWith("5 open work items have no estimate")).And.Contain(n => n.Contains("Nothing is predicted statistically"));
@@ -302,6 +307,21 @@ public partial class WorkPlanTests
         var notMine = await lead.ForecastAsync(w.Lead.Id, NextWeek with { TeamId = security.Id });
         (notMine.People.Count, notMine.Totals.CapacityMinutes, notMine.Totals.UnscheduledMinutes, notMine.Unassigned).Should().Be((0, null, 0, null), "a team outside the scope is nobody and nothing");
 
+        // The work routed to a team and held by nobody opens as its own list, whose total is that line's figure.
+        var unheld = await lead.ForecastWorkAsync(w.Lead.Id, NextWeek, ForecastWorkKind.Unassigned, 0, 50);
+        (unheld.Total, unheld.TotalMinutes, unheld.Rows.Single().Reference).Should().Be((1, 300, "INT-000002"));
+        // Jason also joins Security. That makes Security no team of the lead's: no row for it, and no statement about it.
+        w.Db.UserTeams.Add(new UserTeam { MspOrganizationId = OrgA, AppUserId = w.Jason.Id, TeamId = security.Id });
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        var still = await w.As(w.Lead).Analytics.ForecastAsync(w.Lead.Id, NextWeek);
+        still.Teams.Select(g => g.Name).Should().Equal("NOC");
+        still.Attention.Should().NotContain(a => a.Key == "team:" + security.Id);
+        (still.Totals.UnscheduledMinutes, still.Unassigned!.UnscheduledMinutes).Should().Be((420, 300), "and none of Security's unheld work");
+        w.Db.UserTeams.Remove(await w.Db.UserTeams.SingleAsync(m => m.AppUserId == w.Jason.Id && m.TeamId == security.Id));
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+
         // The administrator sees both teams; a team filter narrows people and unheld work alike; one person has no unheld work.
         var admin = w.As(w.Admin).Analytics;
         var all = await admin.ForecastAsync(w.Admin.Id, NextWeek);
@@ -321,6 +341,7 @@ public partial class WorkPlanTests
         var jason = w.As(w.Jason).Analytics;
         var own = await jason.ForecastAsync(w.Jason.Id, NextWeek);
         (own.People.Select(p => p.DisplayName).Single(), own.Totals.UnscheduledMinutes, own.Unassigned, own.SeesOthers).Should().Be(("Jason Carter", 120, null, false));
+        own.Teams.Should().BeEmpty("a team row built from one member would be a half-row");
         (await ((Func<Task>)(() => jason.ForecastAsync(w.Jason.Id, NextWeek with { AppUserId = w.Abbie.Id }))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Person was not found.");
         (await ((Func<Task>)(() => jason.TrendsAsync(w.Jason.Id, new InsightsQuery(AppUserId: w.Abbie.Id)))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Person was not found.");
         (await jason.ForecastAsync(w.Jason.Id, NextWeek with { TeamId = w.Noc.Id })).People.Select(p => p.DisplayName).Should().Equal(["Jason Carter"], "a team filter never widens the scope");
@@ -360,7 +381,14 @@ public partial class WorkPlanTests
         await OpenWork(w, "On hold", w.Sam, due: At(Today.AddDays(-1), "10:00"), paused: true);
 
         var admin = w.As(w.Admin).Analytics;
+        // Read four days early, the window does not start today: what fits before a due date is not judged, and the page says so.
+        var early = await admin.ForecastAsync(w.Admin.Id, NextWeek);
+        (early.AtRisk, early.Attention.Any(a => a.Key == "at-risk")).Should().Be((new WorkAtRiskDto(1, 0, 1), false), "Friday's free time is outside a window that opens on Monday");
+        early.Notes.Should().Contain(n => n.StartsWith("Whether due work can fit before its due date is worked out only for a window that starts today"));
+        // From Monday morning the window starts today.
+        ClockTo(w, At(Monday, "00:00"));
         var fc = await admin.ForecastAsync(w.Admin.Id, NextWeek);
+        fc.Notes.Should().NotContain(n => n.StartsWith("Whether due work can fit"));
 
         // The board ticket: 600 less the 240 pencilled in. Tentative time is demand already, so it is not counted twice.
         (fc.Totals.TentativeMinutes, fc.Totals.UnscheduledMinutes, fc.Totals.UnscheduledItems).Should().Be((240, 360 + 300 + 1500 + 60, 4), "the project that cannot start yet is not in it");
@@ -398,6 +426,37 @@ public partial class WorkPlanTests
         // A window long enough for the project to start includes it.
         var longer = await admin.ForecastAsync(w.Admin.Id, new InsightsQuery("custom", Monday, Monday.AddDays(20)));
         longer.Totals.UnscheduledMinutes.Should().Be(fc.Totals.UnscheduledMinutes + 480);
+
+        // A priority filter shows that work's demand. What depends on ALL of a person's work is not stated for a slice of it:
+        // no capacity, gap or load, nothing about fitting before a due date, no skill free time.
+        var normal = await admin.ForecastAsync(w.Admin.Id, NextWeek with { Priority = "normal" });
+        (normal.Totals.UnscheduledMinutes, normal.Totals.TentativeMinutes).Should().Be((fc.Totals.UnscheduledMinutes, 240), "every ticket here is NORMAL");
+        (normal.Totals.CapacityMinutes, normal.Totals.GapMinutes, normal.Totals.ProjectedPercent, normal.Totals.ConfirmedRemainingMinutes).Should().Be((null, null, null, null));
+        normal.People.Should().OnlyContain(p => p.Figures.CapacityMinutes == null && p.Figures.GapMinutes == null);
+        normal.Daily.Should().OnlyContain(d => d.CapacityMinutes == null);
+        (normal.Skills.Count, normal.AtRisk).Should().Be((0, new WorkAtRiskDto(1, 0, 1)));
+        normal.Attention.Select(a => a.Key).Should().BeEquivalentTo(["unscheduled", "unestimated", "overdue"], "no capacity, team, people, skill or at-risk statement");
+        normal.Notes.Should().Contain(n => n.StartsWith("A client, source or priority filter shows that work's demand only."));
+
+        // A lead whose ticket scope is "assigned" cannot open Jason's Autotask ticket. In the list of work that asks for Azure it is
+        // one line with its effort and nothing else: no id, no holder, no size of its own that would say which ticket it is.
+        var role = new Role { MspOrganizationId = OrgA, Name = "Shift lead", BuiltInType = RoleType.Technician };
+        role.Permissions.Add(new RolePermission { PermissionKey = Permissions.ScheduleView, Scope = PermissionScope.Team });
+        role.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAssigned, Scope = PermissionScope.Assigned });
+        var shift = new AppUser { MspOrganizationId = OrgA, DisplayName = "Shift Lead", Email = "shift@techpio.test", IsActive = true };
+        shift.Roles.Add(new UserRole { RoleId = role.Id });
+        w.Db.AddRange(role, shift, new UserTeam { MspOrganizationId = OrgA, AppUserId = shift.Id, TeamId = w.Noc.Id });
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        var shifts = w.As(shift).Analytics;
+        var azureList = await shifts.ForecastWorkAsync(shift.Id, NextWeek with { SkillId = azure.Id }, ForecastWorkKind.Skill, 0, 50);
+        azureList.Rows.Should().ContainSingle().Which.Should().Be(new ForecastWorkRowDto("hidden", null, Guid.Empty, WorkforceAnalyticsService.HiddenWork, null, null, "", null, false,
+            null, null, null, null, null, 300, 300, 0, 300, null, null, null, null, null));
+        azureList.TotalMinutes.Should().Be(300, "the effort still counts");
+        // The board ticket that asks for SonicWall is the team's to see, and is listed as itself.
+        (await shifts.ForecastWorkAsync(shift.Id, NextWeek with { SkillId = sonic.Id }, ForecastWorkKind.Skill, 0, 50)).Rows.Should().ContainSingle().Which.Should().Match<ForecastWorkRowDto>(r => r.TicketVisible && r.Reference == "INT-000001" && r.SkillName == "SonicWall");
+        // In the plain unscheduled list the hidden ticket is a row without its skill, its due date or what is free before it.
+        (await shifts.ForecastWorkAsync(shift.Id, NextWeek, ForecastWorkKind.Unscheduled, 0, 50)).Rows.Where(r => !r.TicketVisible).Should().OnlyContain(r => r.SkillName == null && r.DueAt == null && r.FreeBeforeDueMinutes == null && r.Title == null);
     }
 
     [Fact]
@@ -502,6 +561,11 @@ public partial class WorkPlanTests
         abbie.Totals.Single(x => x.Key == "reactive-share").Should().Match<ComparisonDto>(x => x.Current == 100 && x.Previous == null && x.Change == null && x.ChangePercent == null);
         abbie.Clients.Single().ChangePercent.Should().BeNull();
         abbie.Attention.Should().BeEmpty("a share that did not exist before cannot have moved");
+        // Narrowed to one named person by someone else: the totals are Phase 7's own, and there is no estimate breakdown for them.
+        var jasonOnly = await admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "last-week", AppUserId: w.Jason.Id));
+        (jasonOnly.ByCategory.Count, jasonOnly.ByClient.Count, jasonOnly.BySource.Count).Should().Be((0, 0, 0));
+        jasonOnly.Notes.Should().Contain(n => n.Contains(WorkforceAnalyticsService.OnePersonEstimates));
+        jasonOnly.Totals.Single(x => x.Key == "actual").Current.Should().Be(16200);
         // Nothing in either: zeros and no percentages, never a division by zero.
         var sam = await admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "last-week", AppUserId: w.Sam.Id));
         sam.Totals.Where(x => x.Unit != "percent").Should().OnlyContain(x => x.Current == 0 && x.Previous == 0 && x.Change == 0 && x.ChangePercent == null);
@@ -510,7 +574,7 @@ public partial class WorkPlanTests
         // The lead's comparison is NOC's: Abbie and Jason, as in the dashboard.
         var leads = await lead.Analytics.TrendsAsync(w.Lead.Id, new InsightsQuery(Compare: "last-week"));
         leads.Totals.Single(x => x.Key == "actual").Current.Should().Be(19800);
-        ((Func<Task>)(() => admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "since-forever")))).Should().ThrowAsync<ValidationFailedException>();
+        await ((Func<Task>)(() => admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "since-forever")))).Should().ThrowAsync<ValidationFailedException>();
     }
 
     // ---- quality signals -------------------------------------------------------------------------------------------
@@ -521,9 +585,9 @@ public partial class WorkPlanTests
         var w = await WorldAsync();
         var week = Monday.AddDays(7);
         async Task<Ticket> Done(string title, AppUser who, DateTimeOffset at, DateTimeOffset? due = null, int reopened = 0, bool reviewed = false, int sentBack = 0,
-            DateTimeOffset? replyDue = null, DateTimeOffset? replied = null, bool psa = false, int? rating = null)
+            DateTimeOffset? replyDue = null, DateTimeOffset? replied = null, bool psa = false, int? rating = null, string priority = "NORMAL")
         {
-            var t = await OpenWork(w, title, who, due: due, psa: psa, status: "CLOSED");
+            var t = await OpenWork(w, title, who, due: due, psa: psa, status: "CLOSED", priority: priority);
             var row = await w.Db.Tickets.SingleAsync(x => x.Id == t.Id);
             (row.ResolvedAt, row.ClosedAt, row.ResolvedByAppUserId, row.ReopenCount, row.ReviewedAt, row.ReviewSendBacks, row.FirstResponseDueAt, row.FirstRespondedAt)
                 = (at, at, who.Id, reopened, reviewed ? at : null, sentBack, replyDue, replied);
@@ -539,7 +603,7 @@ public partial class WorkPlanTests
         await Done("D rated well", w.Jason, At(week.AddDays(3), "12:00"), due: At(week.AddDays(3), "17:00"), psa: true, rating: 5);
         await Done("E rated badly", w.Jason, At(week.AddDays(3), "13:00"), psa: true, rating: 2);
         // One of Abbie's, on time. And one the week before, on time.
-        await Done("G Abbie's", w.Abbie, At(week.AddDays(4), "11:00"), due: At(week.AddDays(4), "17:00"));
+        await Done("G Abbie's", w.Abbie, At(week.AddDays(4), "11:00"), due: At(week.AddDays(4), "17:00"), priority: "HIGH");
         await Done("F before", w.Jason, At(Tuesday, "10:00"), due: At(Tuesday, "17:00"));
         ClockTo(w, At(week.AddDays(7), "09:00"));
 
@@ -567,13 +631,36 @@ public partial class WorkPlanTests
         var boards = (await admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "last-week", Source: "internal"))).Quality;
         boards.Single(s => s.Key == "reopened").Should().Match<QualitySignalDto>(s => s.Quality == DataQuality.High && s.Met == 1 && s.Eligible == 4 && s.Percent == 25d);
         boards.Single(s => s.Key == "satisfaction").Should().Match<QualitySignalDto>(s => s.Quality == DataQuality.NotAvailable && s.Percent == null && s.QualityReason == "No completed work has a client rating.");
-        // Abbie's one ticket has a due date: complete data.
-        var abbies = (await admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "last-week", AppUserId: w.Abbie.Id))).Quality;
-        abbies.Single(s => s.Key == "due-date-met").Should().Match<QualitySignalDto>(s => s.Quality == DataQuality.High && s.Met == 1 && s.Eligible == 1 && s.Percent == 100d && s.Population == 1);
+        // The HIGH work is one ticket with a due date: complete data.
+        var high = (await admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "last-week", Priority: "high"))).Quality;
+        high.Single(s => s.Key == "due-date-met").Should().Match<QualitySignalDto>(s => s.Quality == DataQuality.High && s.Met == 1 && s.Eligible == 1 && s.Percent == 100d && s.Population == 1);
         // Nothing completed: nothing is available, and no figure is a zero that looks like a result.
-        var sams = (await admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "last-week", AppUserId: w.Sam.Id))).Quality;
-        sams.Should().OnlyContain(s => s.Quality == DataQuality.NotAvailable && s.Percent == null && s.Met == null && s.Population == 0);
-        sams.Single(s => s.Key == "reopened").QualityReason.Should().Be("No work was completed in the period.");
+        var none = (await admin.TrendsAsync(w.Admin.Id, new InsightsQuery(Compare: "last-week", Priority: "low"))).Quality;
+        none.Should().OnlyContain(s => s.Quality == DataQuality.NotAvailable && s.Percent == null && s.Met == null && s.Population == 0);
+        none.Single(s => s.Key == "reopened").QualityReason.Should().Be("No work was completed in the period.");
+
+        // Signals are about work, not a way to grade someone: narrowed to one named person by anyone else (by name, or by a team
+        // of one), every signal is withheld, with the reason. Jason has five completed tickets and none of their figures is given.
+        var security = await w.Db.Teams.AsNoTracking().SingleAsync(x => x.Name == "Security");
+        foreach (var narrowedTo in new[] { new InsightsQuery(Compare: "last-week", AppUserId: w.Jason.Id), new InsightsQuery(Compare: "last-week", AppUserId: w.Abbie.Id), new InsightsQuery(Compare: "last-week", TeamId: security.Id) })
+        {
+            var one = await admin.TrendsAsync(w.Admin.Id, narrowedTo);
+            one.Quality.Should().HaveCount(7).And.OnlyContain(s => s.Quality == DataQuality.NotAvailable && s.QualityReason == WorkforceAnalyticsService.OnePersonQuality
+                && s.Met == null && s.Eligible == null && s.Percent == null && s.PreviousMet == null && s.PreviousPercent == null);
+            one.Notes.Should().Contain(n => n.StartsWith(WorkforceAnalyticsService.OnePersonQuality));
+        }
+        // The same through the reports: the two that describe work take no person filter at all, whoever is named.
+        foreach (var key in new[] { "operational-quality", "estimate-variance" })
+        {
+            WorkforceAnalyticsService.ReportDefinitions.Single(d => d.Key == key).Filters.Should().NotContain("person");
+            foreach (var someone in new[] { w.Jason.Id, w.Outsider.Id, Guid.NewGuid() })
+                (await ((Func<Task>)(() => admin.ReportAsync(w.Admin.Id, key, new InsightsQuery(Compare: "last-week", AppUserId: someone)))).Should().ThrowAsync<ValidationFailedException>())
+                    .Which.Message.Should().Be("This report describes work, not one person. Remove the technician filter.");
+        }
+        (await admin.ReportAsync(w.Admin.Id, "operational-quality", new InsightsQuery(Compare: "last-week", TeamId: security.Id))).Rows.Should().OnlyContain(r => (string?)r[1] == "Not available");
+        // A person's own view of their own work is theirs: Abbie sees her one ticket's figure, and nobody else's.
+        var hers = (await w.As(w.Abbie).Analytics.TrendsAsync(w.Abbie.Id, new InsightsQuery(Compare: "last-week"))).Quality;
+        hers.Single(s => s.Key == "due-date-met").Should().Match<QualitySignalDto>(s => s.Quality == DataQuality.High && s.Met == 1 && s.Eligible == 1 && s.Population == 1);
         // A signal is about work. There is no person in it.
         typeof(QualitySignalDto).GetProperties().Select(p => p.Name).Should().NotContain(n => n.Contains("Person") || n.Contains("User") || n.Contains("Technician") || n.Contains("Score"));
     }
@@ -629,13 +716,13 @@ public partial class WorkPlanTests
         at.TechnicianLinks.Should().BeEquivalentTo(new MappingCoverageDto(1, 2, 50d, []), "tech-1 is linked to Jason, tech-2 to nobody; the integration account is not a technician");
         (at.PlaceholderClientTickets, at.TicketsInSyncError, at.TimeEntriesFailed, at.TimeEntriesPending).Should().Be((1, 1, 1, 1));
         health.Connections[1].Should().Match<ConnectionInsightDto>(c => !c.Stale && !c.HasError && c.Tickets == 0 && c.StatusMapping.Percent == null && c.TechnicianLinks.Total == 0);
-        health.Attention.Select(a => (a.Key, a.Severity)).Should().Equal(("sync:Autotask Main", InsightSeverity.Attention), ("mapping:Autotask Main", InsightSeverity.Watch));
+        health.Attention.Select(a => (a.Key, a.Severity)).Should().Equal(("sync:" + conn, InsightSeverity.Attention), ("mapping:" + conn, InsightSeverity.Watch));
         health.Attention[0].Title.Should().Be($"Autotask Main has not synced successfully since {now.AddDays(-3):d MMM yyyy HH:mm} UTC.");
         // Nothing that could be used against the PSA leaves: no address, no secret reference, no error text.
         JsonSerializer.Serialize(health).Should().NotContainAny("secret.example", "secret-ref", "abc123", "401", "Unauthorized");
         // With the permission, the forecast says the PSA figures are as old as that sync.
         var with = await admin.ForecastAsync(w.Admin.Id, NextWeek);
-        (with.CanSeeHealth, with.Attention.Count(a => a.Key == "sync:Autotask Main")).Should().Be((true, 1));
+        (with.CanSeeHealth, with.Attention.Count(a => a.Key == "sync:" + conn)).Should().Be((true, 1));
 
         // Another organization, holding the permission: none of these connections.
         var dbB = AdminHarness.Create(OrgB, w.DbName).Db;
@@ -767,8 +854,9 @@ public partial class WorkPlanTests
         }
         // A person filter is named by the person; someone outside the scope is "not found" in every report.
         (await admin.ReportAsync(w.Admin.Id, "client-workload", new InsightsQuery(AppUserId: w.Jason.Id))).Applied.Should().Equal(new ReportFactDto("Technician", "Jason Carter"));
-        foreach (var definition in WorkforceAnalyticsService.ReportDefinitions.Where(d => d.Filters.Count > 0))
+        foreach (var definition in WorkforceAnalyticsService.ReportDefinitions.Where(d => d.Filters.Contains("person")))
             (await ((Func<Task>)(() => lead.ReportAsync(w.Lead.Id, definition.Key, new InsightsQuery(AppUserId: w.Sam.Id)))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Person was not found.", definition.Key);
+        WorkforceAnalyticsService.ReportDefinitions.Where(d => d.Filters.Count > 0 && !d.Filters.Contains("person")).Select(d => d.Key).Should().BeEquivalentTo(["estimate-variance", "operational-quality"]);
     }
 
     [Fact]

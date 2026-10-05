@@ -493,7 +493,7 @@ export const ForecastWorkPageSchema = z.object({
   kind: z.number(), window: AnalyticsPeriodSchema, total: z.number(), totalMinutes: z.number(), skip: z.number(), take: z.number(), rows: z.array(ForecastWorkRowSchema),
 });
 export type ForecastWorkPage = z.infer<typeof ForecastWorkPageSchema>;
-export type ForecastWorkList = 'confirmed' | 'tentative' | 'unscheduled' | 'unestimated' | 'at-risk' | 'overdue' | 'skill';
+export type ForecastWorkList = 'confirmed' | 'tentative' | 'unscheduled' | 'unestimated' | 'at-risk' | 'overdue' | 'unassigned' | 'skill';
 export const ComparisonSchema = z.object({
   key: z.string(), label: z.string(), unit: z.string(), current: z.number().nullable(), previous: z.number().nullable(), change: z.number().nullable(), changePercent: z.number().nullable(),
 });

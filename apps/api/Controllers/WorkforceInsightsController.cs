@@ -45,7 +45,7 @@ public sealed class WorkforceInsightsController(IWorkforceInsightsService insigh
     /// <summary>
     /// The records behind a forecast figure, paged on the server; the totals cover the whole set so the
     /// list reconciles with the figure. <paramref name="list"/> is confirmed, tentative, unscheduled,
-    /// unestimated, at-risk, overdue or skill (with <paramref name="skillId"/>).
+    /// unestimated, at-risk, overdue, unassigned or skill (with <paramref name="skillId"/>).
     /// </summary>
     [HttpGet("forecast/work")]
     public async Task<IActionResult> ForecastWork([FromQuery] string list, [FromQuery] InsightsQueryInput q, [FromQuery] Guid? skillId = null,
@@ -60,7 +60,8 @@ public sealed class WorkforceInsightsController(IWorkforceInsightsService insigh
             "at-risk" or "atrisk" => ForecastWorkKind.AtRisk,
             "overdue" => ForecastWorkKind.Overdue,
             "skill" => ForecastWorkKind.Skill,
-            _ => throw new ValidationFailedException("Unknown list. Use confirmed, tentative, unscheduled, unestimated, at-risk, overdue or skill."),
+            "unassigned" => ForecastWorkKind.Unassigned,
+            _ => throw new ValidationFailedException("Unknown list. Use confirmed, tentative, unscheduled, unestimated, at-risk, overdue, unassigned or skill."),
         };
         if (parsed == ForecastWorkKind.Skill && skillId is null) throw new ValidationFailedException("The skill list needs a skillId.");
         return Ok(await insights.ForecastWorkAsync(Caller(), q.ToQuery(skillId), parsed, skip, take, ct));

@@ -32,6 +32,11 @@ report opens at `/dashboard/workforce/reports/{key}` with its filters in the add
 
 Rows about people are in name order. Nothing is ranked.
 
+**Estimate variance and Operational quality take no technician filter.** They describe kinds of
+work and the quality of work, not one person: the filter is not offered, and a technician id in the
+address is refused ("This report describes work, not one person. Remove the technician filter."),
+the same whoever is named. Narrowed to a team of one by someone else, their figures are withheld.
+
 ## The preview
 
 - What was applied: the period and its time zone, each filter by name ("None: everyone and all the

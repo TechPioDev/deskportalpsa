@@ -187,6 +187,15 @@ test('management reads the forecast, opens the records behind it, sees why somet
   await expect(page.getByRole('region', { name: 'Planning data' })).toContainText('Estimated');
   await page.getByRole('tab', { name: 'Forecast' }).click();
   await expect(page).not.toHaveURL(/view=/);
+  // By keyboard: one tab stop, arrows to move, Home for the first.
+  await page.getByRole('tab', { name: 'Forecast' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page).toHaveURL(/view=history/);
+  await expect(page.getByRole('tab', { name: 'What changed' })).toBeFocused();
+  await expect(page.getByRole('tab', { name: 'Forecast' })).toHaveAttribute('tabindex', '-1');
+  await page.keyboard.press('Home');
+  await expect(page).not.toHaveURL(/view=/);
+  await expect(page.getByRole('tab', { name: 'Forecast' })).toBeFocused();
 
   // The window and the filters live in the address too.
   await page.getByLabel('Forecast window', { exact: true }).selectOption('next-14');
@@ -258,6 +267,15 @@ test('the report center previews a report under its filters and exports the same
   await expect(page).toHaveURL(/compare=last-7/);
   await page.getByRole('link', { name: 'All reports' }).click();
   await expect(page).toHaveURL(/\/dashboard\/workforce\/reports$/);
+
+  // The reports that describe work take no technician filter: none is offered, and one in the address is refused.
+  await go(page, '/dashboard/workforce/reports/operational-quality');
+  await expect(page.getByRole('heading', { name: 'Operational quality' })).toBeVisible();
+  await expect(page.getByLabel('Team', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Technician', { exact: true })).toHaveCount(0);
+  for (const key of ['operational-quality', 'estimate-variance'])
+    expect((await ask(() => page.request.get(api(`/workforce/reports/${key}?appUserId=${who.userId}`)))).status(), key).toBe(400);
+  expect((await ask(() => page.request.get(api('/workforce/insights/forecast/work?list=unassigned')))).status()).toBe(200);
 
   // Nothing is guessed: an unknown report, format, window, list, comparison or person is refused.
   for (const [path, status] of [

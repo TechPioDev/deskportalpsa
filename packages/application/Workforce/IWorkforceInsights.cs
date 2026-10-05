@@ -7,7 +7,7 @@ public enum InsightSeverity { Info = 1, Watch = 2, Attention = 3, Critical = 4 }
 public enum DataQuality { NotAvailable = 0, Partial = 1, High = 2 }
 
 /// <summary>What a forecast drill-down lists: the records behind one forecast figure.</summary>
-public enum ForecastWorkKind { Confirmed = 1, Tentative = 2, Unscheduled = 3, Unestimated = 4, AtRisk = 5, Overdue = 6, Skill = 7 }
+public enum ForecastWorkKind { Confirmed = 1, Tentative = 2, Unscheduled = 3, Unestimated = 4, AtRisk = 5, Overdue = 6, Skill = 7, Unassigned = 8 }
 
 /// <summary>
 /// What management insights and reports are asked for. <paramref name="Window"/> is a forecast
@@ -86,8 +86,9 @@ public sealed record ForecastDto(
     bool SeesOthers, bool CanExport, bool CanSeeHealth);
 
 /// <summary>
-/// One record behind a forecast figure. <paramref name="Kind"/> is "allocation" or "ticket". Titles,
-/// references, clients, priority and due date only for tickets the caller may open.
+/// One record behind a forecast figure. <paramref name="Kind"/> is "allocation", "ticket", or "hidden"
+/// (the skill list's one line for the work the caller cannot open, with no id). Titles, references,
+/// clients, priority, due date, free time and skill only for tickets the caller may open.
 /// </summary>
 public sealed record ForecastWorkRowDto(
     string Kind, Guid? Id, Guid TicketId, string Reference, string? Title, string? ClientName, string Source, string? Priority, bool TicketVisible,

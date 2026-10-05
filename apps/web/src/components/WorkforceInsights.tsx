@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
@@ -122,6 +122,9 @@ export function WorkFilterSelects({ value, onChange, options, allow }: {
 
 // ---- formatting -----------------------------------------------------------------------------------------------
 
+/** Where "not applicable" sorts: at one end, below every real number, never among them as if it were 0. */
+const NOT_APPLICABLE = -1e15;
+
 /** A capacity gap in words: what is left, or how much is short. Neither is a judgement. */
 const gapText = (m: number | null | undefined) => (m == null ? 'N/A' : m < 0 ? `${mins(-m)} short` : `${mins(m)} left`);
 const signedNumber = (n: number, unit = '') => (n === 0 ? `0${unit}` : `${n > 0 ? '+' : '−'}${Math.round(Math.abs(n) * 10) / 10}${unit}`);
@@ -191,6 +194,7 @@ function AttentionList({ list, action }: { list: Insight[]; action: (i: Insight)
 const LIST_LABEL: Record<ForecastWorkList, string> = {
   confirmed: 'Confirmed work ahead', tentative: 'Tentative work ahead', unscheduled: 'Estimated work with no time allocated', unestimated: 'Open work with no estimate and no plan',
   'at-risk': 'Work without enough free time before its due date', overdue: 'Open work past its due date', skill: 'Work that asks for this skill',
+  unassigned: 'Estimated work routed to a team and held by nobody',
 };
 
 type Drill = { list: ForecastWorkList; skillId?: string; skillName?: string };
@@ -277,7 +281,7 @@ const figureCols = <T,>(of: (row: T) => ForecastFigures, withCapacity: boolean):
   { key: 'unestimated', label: 'Unestimated', value: (r) => String(of(r).unestimatedItems), sort: (r) => of(r).unestimatedItems, right: true, title: 'Open work items with no estimate and no plan: a count, never hours' },
   { key: 'projected', label: 'Projected', value: (r) => mins(of(r).projectedMinutes), sort: (r) => of(r).projectedMinutes, right: true, title: 'Confirmed + tentative + estimated unscheduled' },
   ...(withCapacity ? [
-    { key: 'gap', label: 'Gap', value: (r: T) => gapText(of(r).gapMinutes), sort: (r: T) => of(r).gapMinutes ?? 0, right: true, title: 'Capacity − projected demand' } as Col<T>,
+    { key: 'gap', label: 'Gap', value: (r: T) => gapText(of(r).gapMinutes), sort: (r: T) => of(r).gapMinutes ?? NOT_APPLICABLE, right: true, title: 'Capacity − projected demand' } as Col<T>,
     { key: 'load', label: 'Projected load', value: (r: T) => pct(of(r).projectedPercent), sort: (r: T) => of(r).projectedPercent ?? -1, right: true, title: 'Projected demand ÷ capacity. A scheduling condition, not a judgement' } as Col<T>,
   ] : []),
 ];
@@ -347,7 +351,7 @@ const groupComparisonCols = (label: string): Col<GroupComparison>[] => [
   { key: 'current', label: 'Actual', value: (g) => dur(g.currentSeconds), sort: (g) => g.currentSeconds, right: true },
   { key: 'previous', label: 'Before', value: (g) => dur(g.previousSeconds), sort: (g) => g.previousSeconds, right: true },
   { key: 'change', label: 'Change', value: (g) => (g.changeSeconds === 0 ? 'no change' : `${g.changeSeconds > 0 ? '+' : '−'}${dur(Math.abs(g.changeSeconds))}`), sort: (g) => g.changeSeconds, right: true },
-  { key: 'pct', label: 'Change %', value: (g) => changePercent(g.changePercent), sort: (g) => g.changePercent ?? 0, right: true, title: 'N/A when there was nothing before' },
+  { key: 'pct', label: 'Change %', value: (g) => changePercent(g.changePercent), sort: (g) => g.changePercent ?? NOT_APPLICABLE, right: true, title: 'N/A when there was nothing before' },
   { key: 'reactive', label: 'Reactive', value: (g) => dur(g.currentReactiveSeconds), sort: (g) => g.currentReactiveSeconds, right: true },
   { key: 'completed', label: 'Completed', value: (g) => `${g.currentCompleted} (before ${g.previousCompleted})`, sort: (g) => g.currentCompleted, right: true },
 ];
@@ -357,7 +361,7 @@ const varianceCols = (label: string): Col<EstimateVarianceRow>[] => [
   { key: 'planned', label: 'Planned', value: (r) => mins(r.plannedMinutes), sort: (r) => r.plannedMinutes, right: true },
   { key: 'actual', label: 'Recorded on it', value: (r) => mins(r.actualMinutes), sort: (r) => r.actualMinutes, right: true, title: 'Time recorded on that planned work, on the days it was planned' },
   { key: 'variance', label: 'Variance', value: (r) => (r.varianceMinutes === 0 ? '0m' : `${r.varianceMinutes > 0 ? '+' : '−'}${mins(Math.abs(r.varianceMinutes))}`), sort: (r) => r.varianceMinutes, right: true, title: 'Recorded − planned. Neither sign is good or bad' },
-  { key: 'pct', label: 'Variance %', value: (r) => changePercent(r.variancePercent), sort: (r) => r.variancePercent ?? 0, right: true },
+  { key: 'pct', label: 'Variance %', value: (r) => changePercent(r.variancePercent), sort: (r) => r.variancePercent ?? NOT_APPLICABLE, right: true },
   { key: 'estimate', label: 'Estimate variance', value: (r) => pct(r.estimateVariancePercent), sort: (r) => r.estimateVariancePercent ?? -1, right: true, title: 'Σ |recorded − planned| ÷ Σ planned, over the planned ticket-days' },
   { key: 'days', label: 'Ticket-days', value: (r) => String(r.ticketDays), sort: (r) => r.ticketDays, right: true },
 ];
@@ -552,6 +556,16 @@ export function WorkforceInsightsView() {
     return null;
   };
 
+  // The tabs as a keyboard user expects them: one tab stop, arrows to move, Home and End for the ends.
+  const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const at = TABS.findIndex(([k]) => k === tab);
+    const to = e.key === 'ArrowRight' ? (at + 1) % TABS.length : e.key === 'ArrowLeft' ? (at + TABS.length - 1) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    setTab(TABS[to][0]);
+    document.getElementById(`insights-tab-${TABS[to][0]}`)?.focus();
+  };
+
   const daily = useMemo(() => {
     if (!data) return null;
     const long = data.daily.length > 10;
@@ -611,13 +625,13 @@ export function WorkforceInsightsView() {
             <Figure label="Est. unscheduled" value={mins(t.unscheduledMinutes)} sub={items(t.unscheduledItems)} title="Estimated effort of open work with no time allocated to it yet" onOpen={() => setDrill({ list: 'unscheduled' })} />
             <Figure label="Unestimated" value={String(t.unestimatedItems)} sub="demand of unknown size" title="Open work items with no estimate and no plan. A count: never turned into hours" onOpen={() => setDrill({ list: 'unestimated' })} />
             <Figure label="Projected demand" value={mins(t.projectedMinutes)} sub="confirmed + tentative + unscheduled" title="Confirmed + tentative + estimated unscheduled demand. Unestimated work is not in it" />
-            <Figure label="Capacity gap" value={gapText(t.gapMinutes)} sub={`${mins(t.confirmedRemainingMinutes)} left after confirmed`} title="Capacity − projected demand. Left is potential remaining capacity; short is a potential shortage" />
+            <Figure label="Capacity gap" value={gapText(t.gapMinutes)} sub={t.confirmedRemainingMinutes == null ? 'no capacity in scope' : t.confirmedRemainingMinutes < 0 ? `${mins(-t.confirmedRemainingMinutes)} short on confirmed work alone` : `${mins(t.confirmedRemainingMinutes)} left after confirmed`} title="Capacity − projected demand. Left is potential remaining capacity; short is a potential shortage" />
             <Figure label="Projected load" value={pct(t.projectedPercent)} sub="projected ÷ capacity" title="How much of the capacity the projected demand takes. N/A when there is no capacity" />
           </dl>
 
-          <div role="tablist" aria-label="Insights" className="flex flex-wrap gap-1 border-b border-[var(--border)]">
+          <div role="tablist" aria-label="Insights" onKeyDown={onTabKey} className="flex flex-wrap gap-1 border-b border-[var(--border)]">
             {TABS.map(([k, label]) => (
-              <button key={k} type="button" role="tab" id={`insights-tab-${k}`} aria-selected={tab === k} aria-controls="insights-panel" onClick={() => setTab(k)}
+              <button key={k} type="button" role="tab" id={`insights-tab-${k}`} aria-selected={tab === k} aria-controls="insights-panel" tabIndex={tab === k ? 0 : -1} onClick={() => setTab(k)}
                 className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === k ? 'border-brand text-[var(--fg)]' : 'border-transparent text-[var(--muted)] hover:text-[var(--fg)]'}`}>{label}</button>
             ))}
           </div>
@@ -674,7 +688,7 @@ export function WorkforceInsightsView() {
                     )} />
                   {data.unassigned && (
                     <p className="mt-2 text-xs text-[var(--muted)]">
-                      Not yet assigned: <button type="button" onClick={(e) => { e.currentTarget.focus(); setDrill({ list: 'unscheduled' }); }} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{mins(data.unassigned.unscheduledMinutes)} of estimated work on {items(data.unassigned.unscheduledItems)}</button>
+                      Not yet assigned: <button type="button" onClick={(e) => { e.currentTarget.focus(); setDrill({ list: 'unassigned' }); }} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{mins(data.unassigned.unscheduledMinutes)} of estimated work on {items(data.unassigned.unscheduledItems)}</button>
                       {data.unassigned.unestimatedItems > 0 && <> and {items(data.unassigned.unestimatedItems, 'unestimated item', 'unestimated items')}</>} routed to a team and held by nobody. Counted in the team and the totals, in no person&rsquo;s row.
                     </p>
                   )}

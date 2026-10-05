@@ -166,7 +166,7 @@ Phase 8 (`WorkforceInsightsController`, `WorkforceReportsController`; details in
 | Route | Permission | Notes |
 |---|---|---|
 | `GET insights/forecast?window&from&to&teamId&departmentId&appUserId&clientId&source&priority` | schedule.view | Capacity ahead against confirmed, tentative and estimated unscheduled demand; by day, team, person, client, source, skill; work at risk; recurring work; the attention list |
-| `GET insights/forecast/work?list=…&skillId&skip&take&…` | schedule.view | The records behind a forecast figure, paged, with the whole set's totals |
+| `GET insights/forecast/work?list=…&skillId&skip&take&…` | schedule.view | The records behind a forecast figure (confirmed, tentative, unscheduled, unestimated, at-risk, overdue, unassigned, skill), paged, with the whole set's totals |
 | `GET insights/trends?compare=…&…` | schedule.view | A period against the one before, eight weeks, clients, sources, estimate variance, quality signals |
 | `GET insights/health` | integration.health.view | Per PSA connection: sync state and mapping coverage; no secret |
 | `GET reports` | schedule.view | The reports the caller may run |

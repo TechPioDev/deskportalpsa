@@ -80,10 +80,20 @@ open tab live in the address, so a view can be bookmarked and shared inside the 
 - **Eligible**: work whose planning window lets it start by the window's last day. A project that
   may not start for a month is not this week's demand.
 - **By day**: capacity, confirmed and tentative are per shift date. Unscheduled effort has no day of
-  its own: it is shown on the day its work is **due**, with two figures for the rest (already past
-  its due date; no due date in the window). It is never spread across days.
+  its own: it is shown on the day its work is **due**, with two figures for the rest: already past
+  its due date (by the clock, exactly as the overdue list counts it), and no due date in the window
+  (none at all, or one that falls outside it). It is never spread across days. Effort on work the
+  caller cannot open is counted and put on no day: a due day is the ticket's own.
 - **Remaining effort is "estimated minus allocated"**, as the planning queue counts it. A planned
   hour that passed without work still counts as allocated. This is Phase 5's rule, said on screen.
+- **Under a client, source or priority filter** the page shows that work's demand (confirmed,
+  tentative, unscheduled, unestimated) and nothing that depends on all of a person's work: capacity,
+  the gap, projected load, whether work fits before its due date and a skill's free time are shown
+  as N/A, with a note saying why. One client's demand against everyone's whole capacity would be a
+  number that looks like an answer and is not one.
+- **Team rows** are the teams the caller's scope reaches: every team for a caller who sees everyone,
+  the caller's own teams otherwise, none for someone who sees only themselves. A colleague's other
+  team gets no row and no statement.
 
 The two fixtures of the brief are tests: 100 h capacity, 60 h confirmed, 10 h tentative, 20 h
 unscheduled and five unestimated items give 40 h left after confirmed, 90 h projected, 10 h left and
@@ -96,6 +106,9 @@ Only for skills that some eligible estimated work **requires** (the planning req
 Demand is that work's unallocated effort; capacity is the free time, after confirmed and tentative
 work, of the people in scope who hold the skill at any level (nothing in the product reads the
 level). A person with two skills counts under both, so the rows do not add up; the screen says so.
+In the list of work that asks for a skill, work the caller cannot open is **one line** with its
+effort and nothing else (no id, no holder, no size of its own): what a ticket asks for is the
+ticket's own, and the line cannot be matched to a row in another list.
 
 ### Work at risk
 
@@ -103,8 +116,10 @@ level). A person with two skills counts under both, so the rows do not add up; t
 - **Not enough free time**: due within the window, with more unallocated effort than its holder has
   free (after confirmed work) on the days up to the due date. This is the planning queue's own rule,
   applied to all due work rather than the queue's first hundred items.
-- Work due before the window opens is not judged for capacity: the time that matters is outside the
-  window.
+- It is judged **only for a window that starts today** and with no client, source or priority
+  filter. For a window that starts later, the free days between now and its first day are outside
+  what it knows; under a work filter, the holder's other work is. In both cases the figure is 0 and a
+  note says it was not worked out, rather than a number that could be wrong either way.
 
 ### Recurring work
 
@@ -117,7 +132,7 @@ gate for the recurring list.
 
 | Rule | Condition | Severity |
 |---|---|---|
-| Capacity (everyone, a team) | Projected load ≥ 90 % · > 100 % · > 120 % | Watch · Attention · Critical |
+| Capacity (everyone, and each team in scope, on the same thresholds) | Projected load ≥ 90 % · > 100 % · > 120 %; demand against no capacity at all | Watch · Attention · Critical; Attention |
 | People over capacity | People with projected load > 100 % | Attention |
 | No capacity for demand | Demand on people whose capacity in the window is 0 | Attention |
 | Estimated work not scheduled | Estimated unscheduled > 0 | Watch |
@@ -167,6 +182,14 @@ Phase 7 Completed card. Each signal is a numerator over a denominator, out of a 
 There is no per-technician quality table, by design. A signal with no reliable source is shown as
 Not available with the reason, and is not estimated from something else.
 
+**Not for one named person.** When anyone other than the person themselves narrows the page to a
+single person (by the technician filter, or by a team of one), every quality signal is withheld
+with the reason "Quality signals describe the work of a team or the organization. They are not
+shown for one person.", and so is the estimate-variance breakdown. The Operational quality and
+Estimate variance reports take no technician filter at all, and refuse one given in the address. A
+person's own view of their own work is theirs: at scope Own they see their own signals and nobody
+else's.
+
 ## Data and integrations
 
 - **Planning data** (everyone who sees the forecast): open work held, and how much more nobody holds
@@ -187,7 +210,7 @@ All GET, under `api/workforce`, `schedule.view` unless stated.
 | Route | Returns |
 |---|---|
 | `insights/forecast?window&from&to&teamId&departmentId&appUserId&clientId&source&priority` | The forecast: totals, by day, teams, people, not yet assigned, clients, sources, skills, recurring, coverage, planning data, work at risk, the attention list, notes |
-| `insights/forecast/work?list=confirmed\|tentative\|unscheduled\|unestimated\|at-risk\|overdue\|skill&skillId&skip&take&…` | The records behind a figure, paged (≤ 200), with the whole set's count and minutes |
+| `insights/forecast/work?list=confirmed\|tentative\|unscheduled\|unestimated\|at-risk\|overdue\|unassigned\|skill&skillId&skip&take&…` | The records behind a figure, paged (≤ 200), with the whole set's count and minutes |
 | `insights/trends?compare=last-30\|last-7\|last-week\|last-month&…` | Both periods, the totals compared, eight weeks, clients, sources, estimate variance three ways, quality signals, attention, sync freshness, notes |
 | `insights/health` (`integration.health.view`) | Per connection: state and mapping coverage; attention |
 
@@ -205,9 +228,10 @@ No new permission key.
 | Recurring work in the forecast | `boards.manage` |
 
 - A ticket the caller cannot open counts for its minutes and gives nothing else away: no reference,
-  title, client, priority, status, due date or skill. It is one "Work you cannot open" row in the
-  client and source tables, and a client, connection or priority filter matches only tickets the
-  caller may open, so a filter cannot be used to find out whose it is.
+  title, client, priority, status, due date, free time before the due date, or skill. It is one
+  "Work you cannot open" row in the client and source tables, its unscheduled effort is put on no
+  day, it is one line in a skill's list, and a client, connection or priority filter matches only
+  tickets the caller may open, so a filter cannot be used to find out whose it is.
 - Another organization has its own database context and its own tenant filter: none of this
   organization's people, work, teams, clients or connections appear, and its ids are "not found".
 - Nothing is cached, so there is no cache to leak across tenants or to go stale.
@@ -217,18 +241,42 @@ No new permission key.
 One load per request, then memory. Query counts are constant whatever the number of people, days or
 hours, and are pinned in `CapacityPerformanceTests` through a real SQL translator.
 
-| Read | Queries | 500 people, 30,000 allocations, 30,000 time entries (SQLite, development machine) |
-|---|---|---|
-| Forecast, a week or four weeks | 51 | 0.55 – 0.62 s |
-| Forecast, one team | 50 | 0.13 s |
-| Drill-down | 51 | 0.41 s |
-| Comparison (last week, last 30 days) | 28 | 0.92 – 1.14 s |
-| Mapping and integration health | 12 | under 0.1 s |
-| Report preview / XLSX | 53 / 54 | 0.62 / 0.69 s |
+500 people, 30,000 allocations, 30,000 time entries, every ticket sized (development machine,
+5 Oct 2026):
+
+| Read | Queries | SQLite | PostgreSQL 17 |
+|---|---|---|---|
+| Forecast, a week / four weeks | 53 | 0.49 / 0.56 s | 0.84 / 1.06 s |
+| Forecast, one team (100 people) | 52 | 0.10 s | 0.35 s |
+| Drill-down | 53 | 0.30 s | 0.88 s |
+| Forecast under a client, connection and priority filter | 50 | 0.22 s | 0.95 s |
+| Comparison (last week / last 30 days) | 28 | 0.59 / 0.60 s | 0.63 / 0.63 s |
+| Mapping and integration health | 12 | under 0.01 s | 0.01 s |
+| Report preview / XLSX | 55 / 56 | 0.47 / 0.51 s | 0.91 / 0.91 s |
+
+For comparison, the Phase 7 dashboard for the same week: 28 queries, 0.28 s and 0.65 s.
+
+The open work is read as three set-based queries (the work, what it needs, what is allocated to
+it). A first version read it as one query with six subqueries per ticket; on PostgreSQL that cost
+2.4 – 2.8 s at this size, because the database evaluated them row by row. The test now prints, for
+the forecast, the time spent waiting for the database and the slowest query, so a regression of
+that kind is visible in the report.
 
 Limits: a forecast window is at most 62 days; history at most 366; at most 1,000 people; lists
 paged at 200. No aggregation table, background job or cache was added: the measured cost does not
 ask for one.
+
+Known and accepted:
+
+- The tickets behind the open work are described in batches of 2,000, so the count grows by two
+  queries per 2,000 open tickets in scope (the same batching Phase 7 uses).
+- Each page of a drill-down recomputes the forecast it belongs to. It is the same read as the page,
+  so the list can never disagree with the figure; it costs a second or less.
+- A person whose own time zone is behind the organization's has the rest of their current shift
+  outside a window that starts on the organization's today. The same boundary as capacity.
+- An id of a client that exists but has no work the caller may open answers with zeros, and an id
+  that does not exist answers "not found" (Phase 7's behaviour, unchanged). Telling the two apart
+  needs the client's id in the first place.
 
 ## Reconciliation
 
@@ -238,6 +286,7 @@ ask for one.
 | Σ people's projected + not yet assigned | The total |
 | Σ days' capacity, confirmed, tentative | The totals |
 | Σ unscheduled due by day + past due + no due date | Estimated unscheduled |
+| The "not yet assigned" line | Its own drill-down (`unassigned`) |
 | A drill-down's count and minutes | The figure it was opened from |
 | Capacity and confirmed, for a window starting tomorrow or later | Phase 7's capacity against demand for the same days |
 | The comparison's current period | Phase 7's dashboard for the same period |
@@ -274,3 +323,6 @@ Reading insights is not audited (reading the dashboards never was). An export is
 | The Data tab has no connection table | The viewer lacks `integration.health.view` | An administrator grants it |
 | A quality signal says Not available | The completed work in the period carries no such data, or nothing records it at all | Read "What it rests on" |
 | A custom window is refused | It starts before today, or is longer than 62 days | Choose dates from today |
+| Capacity, gap and load read N/A | A client, source or priority filter is on | Expected: they depend on all of a person's work. Clear the filter to see them |
+| "Not enough free time" is 0 although work looks tight | The window does not start today, or a work filter is on (a note says which) | Use a window that starts today, without those filters |
+| Quality signals are all Not available for a person | The page is narrowed to one person by someone else | By design: signals describe a team's or the organization's work |

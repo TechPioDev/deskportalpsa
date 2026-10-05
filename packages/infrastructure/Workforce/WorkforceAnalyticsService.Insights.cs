@@ -167,7 +167,14 @@ public sealed partial class WorkforceAnalyticsService
         public int FailedTimeEntries;
         public int? OpenWithoutHolder;
         public bool CanSeeHealth;
-        public List<(string Name, DateTimeOffset? LastSuccess, ConnectionStatus Status)> SyncProblems = [];
+        public List<(Guid Id, string Name, DateTimeOffset? LastSuccess, ConnectionStatus Status)> SyncProblems = [];
+        /// <summary>
+        /// A client, source or priority filter is on. Capacity, the gap, whether work fits before its due date and a skill's
+        /// free time all depend on ALL of a person's work, so none of them is stated for a slice of it.
+        /// </summary>
+        public bool Narrowed;
+        /// <summary>Whether work can fit before its due date is judged only from today: the free days before a later window are outside it.</summary>
+        public bool JudgesFit;
 
         public Fig Person(Guid id) => Get(People, id);
         public Fig Team(Guid id) => Get(Teams, id);
@@ -200,27 +207,40 @@ public sealed partial class WorkforceAnalyticsService
         var f = await LoadAsync(callerId, new AnalyticsQuery("custom", window.From, window.To, q.TeamId, q.DepartmentId, q.AppUserId, q.ClientId, q.Source, q.Priority), withNow: false, ct);
         var now = f.Now;
         var ids = f.People.Select(p => p.Id).ToList();
-        var scopeTeams = await RoutedTeamsAsync(callerId, q, f, ct);
+        var idSet = ids.ToHashSet();
+        // The teams the caller's scope reaches: their rows, and the unheld work routed to them.
+        var teams = await ScopeTeamsAsync(callerId, q, f, ct);
+        // A question about one person or one department is about held work only: unheld work has neither.
+        var scopeTeams = q.AppUserId is not null || q.DepartmentId is not null ? [] : teams.ToList();
+        var narrowed = f.Filter.Ids is not null;
 
         var open = new List<Demand>();
         if (ids.Count > 0 || scopeTeams.Count > 0)
         {
-            open = (await f.Filter.Apply(db.Tickets.AsNoTracking().Where(TicketStatusRules.Open()))
+            // Three set-based reads (the open work, what it needs, what is allocated to it) rather than one row with
+            // six subqueries per ticket: the cost then follows the rows read, not tickets x allocations.
+            var openQuery = f.Filter.Apply(db.Tickets.AsNoTracking().Where(TicketStatusRules.Open()))
                 .Where(t => (t.AssignedAppUserId != null && ids.Contains(t.AssignedAppUserId.Value))
-                            || (t.AssignedAppUserId == null && t.AssignedTeamId != null && scopeTeams.Contains(t.AssignedTeamId.Value)))
-                .Select(t => new
-                {
-                    t.Id, t.AssignedAppUserId, t.AssignedTeamId, t.SlaDueAt, Paused = t.SlaPausedAt != null, t.PortalStatus,
-                    Required = db.WorkPlannings.Where(p => p.TicketId == t.Id).Select(p => p.RequiredMinutes).FirstOrDefault(),
-                    Earliest = db.WorkPlannings.Where(p => p.TicketId == t.Id).Select(p => p.EarliestStart).FirstOrDefault(),
-                    Skill = db.WorkPlannings.Where(p => p.TicketId == t.Id).Select(p => p.RequiredSkillId).FirstOrDefault(),
-                    Confirmed = db.WorkAllocations.Where(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Planned).Sum(a => (int?)a.PlannedMinutes) ?? 0,
-                    Tentative = db.WorkAllocations.Where(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Tentative).Sum(a => (int?)a.PlannedMinutes) ?? 0,
-                    PlanAhead = db.WorkAllocations.Any(a => a.TicketId == t.Id && a.EndsAt > now && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative)),
-                }).ToListAsync(ct))
-                .Select(t => new Demand(t.Id, t.AssignedAppUserId, t.AssignedAppUserId is null ? t.AssignedTeamId : null, t.Required, t.Confirmed, t.Tentative, t.PlanAhead,
-                    t.Earliest, t.Skill, t.SlaDueAt, t.Paused, t.PortalStatus))
-                .ToList();
+                            || (t.AssignedAppUserId == null && t.AssignedTeamId != null && scopeTeams.Contains(t.AssignedTeamId.Value)));
+            var openIds = openQuery.Select(t => t.Id);
+            var work = await openQuery.Select(t => new { t.Id, t.AssignedAppUserId, t.AssignedTeamId, t.SlaDueAt, Paused = t.SlaPausedAt != null, t.PortalStatus }).ToListAsync(ct);
+            var needs = (await db.WorkPlannings.AsNoTracking().Where(p => openIds.Contains(p.TicketId))
+                    .Select(p => new { p.TicketId, p.RequiredMinutes, p.EarliestStart, p.RequiredSkillId }).ToListAsync(ct))
+                .GroupBy(p => p.TicketId).ToDictionary(g => g.Key, g => g.First());
+            var allocated = (await db.WorkAllocations.AsNoTracking()
+                    .Where(a => openIds.Contains(a.TicketId) && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative))
+                    .GroupBy(a => new { a.TicketId, a.Status })
+                    .Select(g => new { g.Key.TicketId, g.Key.Status, Minutes = g.Sum(a => a.PlannedMinutes), Ahead = g.Count(a => a.EndsAt > now) })
+                    .ToListAsync(ct))
+                .ToLookup(a => a.TicketId);
+            open = work.Select(t =>
+            {
+                var need = needs.GetValueOrDefault(t.Id);
+                var sums = allocated[t.Id].ToList();
+                return new Demand(t.Id, t.AssignedAppUserId, t.AssignedAppUserId is null ? t.AssignedTeamId : null, need?.RequiredMinutes,
+                    sums.Where(a => a.Status == WorkAllocationStatus.Planned).Sum(a => a.Minutes), sums.Where(a => a.Status == WorkAllocationStatus.Tentative).Sum(a => a.Minutes),
+                    sums.Any(a => a.Ahead > 0), need?.EarliestStart, need?.RequiredSkillId, t.SlaDueAt, t.Paused, t.PortalStatus);
+            }).ToList();
         }
         // The tickets the demand points at, for the ones the Phase 7 load did not already describe.
         var missing = open.Select(d => d.TicketId).Where(id => !f.Tickets.ContainsKey(id)).Distinct().ToList();
@@ -228,7 +248,7 @@ public sealed partial class WorkforceAnalyticsService
 
         var fc = new Forecast
         {
-            F = f, Window = window, Open = open,
+            F = f, Window = window, Open = open, Narrowed = narrowed, JudgesFit = !narrowed && window.From == f.Today,
             // Work whose planning window does not let it start until after this window is not this window's demand.
             Eligible = open.Where(d => d.EarliestStart is not { } e || WorkforceCalendar.LocalDate(e, f.OrgZone) <= window.To).Select(d => d.TicketId).ToHashSet(),
         };
@@ -252,13 +272,14 @@ public sealed partial class WorkforceAnalyticsService
         foreach (var p in f.People)
         {
             var figs = new List<Fig> { fc.Total, fc.Person(p.Id) };
-            figs.AddRange((f.TeamIdsOf.GetValueOrDefault(p.Id) ?? []).Select(fc.Team));
+            // Only the teams the caller's scope reaches: a colleague's other team is not the caller's to read a row or a shortage for.
+            figs.AddRange((f.TeamIdsOf.GetValueOrDefault(p.Id) ?? []).Where(teams.Contains).Select(fc.Team));
             foreach (var d in f.Dates)
             {
                 var day = fc.Days[(p.Id, d)];
                 foreach (var fig in figs)
                 {
-                    if (p.IsSchedulable) fig.AddCapacity(day.Cap);
+                    if (p.IsSchedulable && !narrowed) fig.AddCapacity(day.Cap);
                     fig.Confirmed += day.Confirmed;
                     fig.Tentative += day.Tentative;
                     fig.People.Add(p.Id);
@@ -267,35 +288,41 @@ public sealed partial class WorkforceAnalyticsService
         }
 
         // Demand that has no time allocated: to its holder (and their teams), or to the team it is routed to when nobody holds it.
-        var idSet = ids.ToHashSet();
         foreach (var d in open)
         {
             var eligible = fc.Eligible.Contains(d.TicketId);
+            var holder = d.HolderId is { } h && idSet.Contains(h) ? h : (Guid?)null;
             var figs = new List<Fig> { fc.Total };
-            if (d.HolderId is { } holder && idSet.Contains(holder))
+            if (holder is { } who)
             {
-                figs.Add(fc.Person(holder));
-                figs.AddRange((f.TeamIdsOf.GetValueOrDefault(holder) ?? []).Select(fc.Team));
+                figs.Add(fc.Person(who));
+                figs.AddRange((f.TeamIdsOf.GetValueOrDefault(who) ?? []).Where(teams.Contains).Select(fc.Team));
             }
             else
             {
                 figs.Add(fc.Unassigned);
                 if (d.TeamId is { } team) figs.Add(fc.Team(team));
             }
-            if (f.Tickets.TryGetValue(d.TicketId, out var m))
-            {
-                figs.Add(Forecast.Get(fc.Clients, m.ClientKey, m.ClientLabel));
-                figs.Add(Forecast.Get(fc.Sources, m.SourceKey, m.SourceGroupLabel));
-            }
+            var m = f.Tickets.GetValueOrDefault(d.TicketId);
+            var counts = (eligible && d.Remaining > 0) || (!d.Estimated && !d.PlanAhead);
+            if (m is not null)
+                foreach (var group in new[] { Forecast.Get(fc.Clients, m.ClientKey, m.ClientLabel), Forecast.Get(fc.Sources, m.SourceKey, m.SourceGroupLabel) })
+                {
+                    figs.Add(group);
+                    // Whoever holds work for a client is one of the people on that client's row, planned or not.
+                    if (counts && holder is { } on) group.People.Add(on);
+                }
             foreach (var fig in figs) fig.AddDemand(d, eligible);
 
             // Unscheduled effort has no day of its own: it is shown on the day its work is due, never spread by guesswork.
             if (eligible && d.Remaining > 0)
             {
                 var due = d.Paused ? null : d.DueAt;
-                var dueDate = due is { } at ? WorkforceCalendar.LocalDate(at, f.OrgZone) : (DateOnly?)null;
-                if (dueDate is { } day && day < window.From) fc.OverdueMinutes += d.Remaining;
-                else if (dueDate is { } inWindow && inWindow <= window.To) fc.DueByDay[inWindow] = fc.DueByDay.GetValueOrDefault(inWindow) + d.Remaining;
+                // Past its due date by the clock, as the overdue list counts it; not by the calendar.
+                if (due is { } at && at < now) fc.OverdueMinutes += d.Remaining;
+                // A due day is the ticket's own: work the caller cannot open is counted, and put on no day.
+                else if (m?.Visible == true && due is { } then && WorkforceCalendar.LocalDate(then, f.OrgZone) is var day && day >= window.From && day <= window.To)
+                    fc.DueByDay[day] = fc.DueByDay.GetValueOrDefault(day) + d.Remaining;
                 else fc.NoDateMinutes += d.Remaining;
             }
         }
@@ -305,19 +332,20 @@ public sealed partial class WorkforceAnalyticsService
         {
             var due = d.DueAt!.Value;
             if (due < now) { fc.AtRisk.Add((d, "Overdue", null)); continue; }
-            var dueDate = d.HolderId is { } h && idSet.Contains(h)
-                ? WorkforceCalendar.LocalDate(due, f.Calendar.Zone(f.ZoneOf(h, WorkforceCalendar.LocalDate(due, TimeZoneInfo.Utc))))
+            var holder = d.HolderId is { } h && idSet.Contains(h) ? h : (Guid?)null;
+            var dueDate = holder is { } zoned
+                ? WorkforceCalendar.LocalDate(due, f.Calendar.Zone(f.ZoneOf(zoned, WorkforceCalendar.LocalDate(due, TimeZoneInfo.Utc))))
                 : WorkforceCalendar.LocalDate(due, f.OrgZone);
-            // Due before the window opens or after it closes: the free time that matters lies outside what this window knows.
             if (dueDate < window.From || dueDate > window.To) continue;
             fc.DueInWindow++;
-            if (d.HolderId is not { } holder || !idSet.Contains(holder) || d.Remaining <= 0) continue;
-            var free = f.Dates.Where(day => day <= dueDate).Sum(day => fc.Days.TryGetValue((holder, day), out var x) ? Math.Max(0, x.Cap - x.Confirmed) : 0);
+            // Whether it fits is a statement about all of the holder's time between now and the due date.
+            if (!fc.JudgesFit || holder is not { } who || d.Remaining <= 0) continue;
+            var free = f.Dates.Where(day => day <= dueDate).Sum(day => fc.Days.TryGetValue((who, day), out var x) ? Math.Max(0, x.Cap - x.Confirmed) : 0);
             if (free < d.Remaining) fc.AtRisk.Add((d, "Not enough free time before the due date", free));
         }
 
         // Skills, only for those some eligible work requires and still has effort to allocate.
-        var skillIds = open.Where(d => d.SkillId is not null && d.Remaining > 0 && fc.Eligible.Contains(d.TicketId)).Select(d => d.SkillId!.Value).Distinct().ToList();
+        var skillIds = narrowed ? [] : open.Where(d => d.SkillId is not null && d.Remaining > 0 && fc.Eligible.Contains(d.TicketId)).Select(d => d.SkillId!.Value).Distinct().ToList();
         if (skillIds.Count > 0)
         {
             fc.SkillNames = await db.Skills.AsNoTracking().Where(s => skillIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name, ct);
@@ -334,28 +362,28 @@ public sealed partial class WorkforceAnalyticsService
         fc.CanSeeHealth = await HoldsAsync(callerId, Permissions.IntegrationHealthView, ct);
         if (fc.CanSeeHealth)
             fc.SyncProblems = (await db.PsaConnections.AsNoTracking().Where(c => c.IsEnabled).OrderBy(c => c.Name).ThenBy(c => c.Id)
-                    .Select(c => new { c.Name, c.LastSuccessfulSyncAt, c.Status }).ToListAsync(ct))
-                .Where(c => SyncProblem(c.Status, c.LastSuccessfulSyncAt, now)).Select(c => (c.Name, c.LastSuccessfulSyncAt, c.Status)).ToList();
+                    .Select(c => new { c.Id, c.Name, c.LastSuccessfulSyncAt, c.Status }).ToListAsync(ct))
+                .Where(c => SyncProblem(c.Status, c.LastSuccessfulSyncAt, now)).Select(c => (c.Id, c.Name, c.LastSuccessfulSyncAt, c.Status)).ToList();
 
         if (await HoldsAsync(callerId, Permissions.BoardsManage, ct)) fc.Recurring = await RecurringAsync(f, window, q, idSet, ct);
         return fc;
     }
 
     /// <summary>
-    /// The teams whose unheld, team-routed work the caller's forecast counts: every team for someone
-    /// who sees everyone, the caller's own teams for a narrower scope, none for someone who sees only
-    /// themselves. Never the other teams a colleague happens to belong to. A question about one person
-    /// or one department is about held work only: unheld work has neither.
+    /// The teams the caller's scope reaches, narrowed by a team filter: every team for someone who sees
+    /// everyone, the caller's own teams for a narrower scope, none for someone who sees only themselves.
+    /// These are the team rows the forecast shows and the teams whose unheld, routed work it counts;
+    /// never the other teams a colleague happens to belong to.
     /// </summary>
-    private async Task<List<Guid>> RoutedTeamsAsync(Guid callerId, InsightsQuery q, Facts f, CancellationToken ct)
+    private async Task<HashSet<Guid>> ScopeTeamsAsync(Guid callerId, InsightsQuery q, Facts f, CancellationToken ct)
     {
-        if (!f.SeesOthers || q.AppUserId is not null || q.DepartmentId is not null) return [];
+        if (!f.SeesOthers) return [];
         var all = (await permissions.ResolveAsync(callerId, Permissions.ScheduleView, ct)).Scope == PermissionScope.All;
         var teams = db.Teams.AsNoTracking().Where(t => all || db.UserTeams.Any(m => m.TeamId == t.Id && m.AppUserId == callerId));
         if (q.TeamId is { } only) teams = teams.Where(t => t.Id == only);
         var rows = await teams.OrderBy(t => t.Name).ThenBy(t => t.Id).Select(t => new { t.Id, t.Name }).ToListAsync(ct);
         foreach (var r in rows) f.TeamNames.TryAdd(r.Id, r.Name);
-        return rows.Select(r => r.Id).ToList();
+        return rows.Select(r => r.Id).ToHashSet();
     }
 
     private static bool SyncProblem(ConnectionStatus status, DateTimeOffset? lastSuccess, DateTimeOffset now)
@@ -406,7 +434,7 @@ public sealed partial class WorkforceAnalyticsService
         {
             var rows = f.People.Where(p => p.IsSchedulable).Select(p => fc.Days[(p.Id, d)]).ToList();
             var all = f.People.Select(p => fc.Days[(p.Id, d)]).ToList();
-            return new ForecastDayDto(d, rows.Count == 0 ? null : rows.Sum(x => x.Cap), all.Sum(x => x.Confirmed), all.Sum(x => x.Tentative), fc.DueByDay.GetValueOrDefault(d));
+            return new ForecastDayDto(d, rows.Count == 0 || fc.Narrowed ? null : rows.Sum(x => x.Cap), all.Sum(x => x.Confirmed), all.Sum(x => x.Tentative), fc.DueByDay.GetValueOrDefault(d));
         }).ToList();
 
         var skills = fc.SkillNames.OrderBy(s => s.Value, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.Key).Select(s =>
@@ -467,14 +495,20 @@ public sealed partial class WorkforceAnalyticsService
     {
         var list = new List<InsightDto>();
         const string loadRule = "Projected load = (confirmed + tentative + estimated unscheduled) ÷ capacity. From 90% watch, above 100% attention, above 120% critical.";
-        if (LoadSeverity(totals.ProjectedPercent) is { } overall)
+        // Demand against no capacity at all has no percentage, and is a shortage all the same.
+        static InsightSeverity? Load(ForecastFiguresDto x) => LoadSeverity(x.ProjectedPercent) ?? (x.GapMinutes < 0 ? InsightSeverity.Attention : null);
+        if (Load(totals) is { } overall)
             list.Add(new InsightDto("capacity", overall,
                 totals.GapMinutes < 0 ? $"Projected demand is {Hm(-totals.GapMinutes!.Value)} over capacity in this window."
                     : $"Projected demand takes {Percent(totals.ProjectedPercent)} of capacity in this window; {Hm(totals.GapMinutes ?? 0)} is left.",
                 loadRule, Components(totals)));
-        foreach (var t in teams.Where(t => t.Figures.GapMinutes < 0))
-            list.Add(new InsightDto("team:" + t.Key, LoadSeverity(t.Figures.ProjectedPercent) ?? InsightSeverity.Attention,
-                $"{t.Name} is projected {Hm(-t.Figures.GapMinutes!.Value)} over capacity.", loadRule, Components(t.Figures), TargetKind: "team", TargetId: t.Key));
+        // A team is held to the same thresholds as everyone together.
+        foreach (var t in teams)
+            if (Load(t.Figures) is { } load)
+                list.Add(new InsightDto("team:" + t.Key, load,
+                    t.Figures.GapMinutes < 0 ? $"{t.Name} is projected {Hm(-t.Figures.GapMinutes!.Value)} over capacity."
+                        : $"{t.Name} is at {Percent(t.Figures.ProjectedPercent)} of capacity; {Hm(t.Figures.GapMinutes ?? 0)} is left.",
+                    loadRule, Components(t.Figures), TargetKind: "team", TargetId: t.Key));
 
         var over = people.Where(p => p.Figures.ProjectedPercent > InsightThresholds.AttentionPercent).OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
         if (over.Count > 0)
@@ -482,7 +516,7 @@ public sealed partial class WorkforceAnalyticsService
                 $"{over.Count} {(over.Count == 1 ? "person is" : "people are")} projected over 100% of their capacity.",
                 "A person's projected load above 100%. A scheduling condition, not a judgement of the person.",
                 over.Take(8).Select(p => new InsightFactDto(p.DisplayName, $"{Percent(p.Figures.ProjectedPercent)} ({Hm(p.Figures.ProjectedMinutes)} of {Hm(p.Figures.CapacityMinutes ?? 0)})")).ToList()));
-        var stranded = people.Where(p => (p.Figures.CapacityMinutes ?? 0) == 0 && p.Figures.ProjectedMinutes > 0).ToList();
+        var stranded = fc.Narrowed ? [] : people.Where(p => (p.Figures.CapacityMinutes ?? 0) == 0 && p.Figures.ProjectedMinutes > 0).ToList();
         if (stranded.Count > 0)
             list.Add(new InsightDto("no-capacity", InsightSeverity.Attention,
                 $"{Hm(stranded.Sum(p => p.Figures.ProjectedMinutes))} of demand is with {stranded.Count} {(stranded.Count == 1 ? "person who has" : "people who have")} no capacity in this window.",
@@ -524,13 +558,13 @@ public sealed partial class WorkforceAnalyticsService
                 $"{fc.FailedTimeEntries} time entr{(fc.FailedTimeEntries == 1 ? "y is" : "ies are")} not in the PSA: the push failed.",
                 "Portal time entries of the people in scope whose push to the PSA failed. The time is kept here and can be retried from the ticket.",
                 [new("Failed pushes", fc.FailedTimeEntries.ToString(CultureInfo.InvariantCulture))]));
-        list.AddRange(fc.SyncProblems.Select(c => SyncInsight(c.Name, c.LastSuccess, c.Status)));
+        list.AddRange(fc.SyncProblems.Select(c => SyncInsight(c.Id, c.Name, c.LastSuccess, c.Status)));
 
         return list.OrderByDescending(i => i.Severity).ThenBy(i => i.Key, StringComparer.Ordinal).ToList();
     }
 
-    private static InsightDto SyncInsight(string name, DateTimeOffset? lastSuccess, ConnectionStatus status)
-        => new("sync:" + name, InsightSeverity.Attention,
+    private static InsightDto SyncInsight(Guid id, string name, DateTimeOffset? lastSuccess, ConnectionStatus status)
+        => new("sync:" + id, InsightSeverity.Attention,
             lastSuccess is { } at
                 ? $"{name} has not synced successfully since {at.ToString("d MMM yyyy HH:mm", CultureInfo.InvariantCulture)} UTC."
                 : $"{name} has never synced successfully.",
@@ -548,7 +582,9 @@ public sealed partial class WorkforceAnalyticsService
         if (fc.Unassigned.UnscheduledItems + fc.Unassigned.Unestimated > 0) notes.Add("Work routed to a team that nobody holds yet is counted in its team and in the totals, and in no person's row.");
         if (f.People.Any(p => (f.TeamIdsOf.GetValueOrDefault(p.Id)?.Count ?? 0) > 1)) notes.Add("A person in more than one team appears under each of them; the totals count them once.");
         if (fc.SkillNames.Count > 0) notes.Add("A person who holds two skills is counted under both, so the skill rows do not add up. Anyone holding a skill counts, at any level.");
-        if (fc.Clients.ContainsKey("hidden")) notes.Add("Some demand is on work you cannot open: it counts, and is listed as one row without its client or source.");
+        if (fc.Clients.ContainsKey("hidden")) notes.Add("Some demand is on work you cannot open: it counts, and is listed as one row without its client or source. Its unscheduled effort is put on no day.");
+        if (fc.Narrowed) notes.Add("A client, source or priority filter shows that work's demand only. Capacity, the gap, projected load, whether work fits before its due date and a skill's free time depend on all of a person's work, and are not stated under such a filter.");
+        else if (!fc.JudgesFit) notes.Add("Whether due work can fit before its due date is worked out only for a window that starts today: the free days before a later window are outside it.");
         notes.Add("Remaining effort is the estimate less the time allocated to the work, as the planning queue counts it: a planned hour that has passed counts as allocated whether or not it was worked.");
         notes.Add("A forecast from records: capacity, plans and estimates as they stand now. Nothing is predicted statistically.");
         return notes;
@@ -576,7 +612,7 @@ public sealed partial class WorkforceAnalyticsService
             return new ForecastWorkRowDto("ticket", d.TicketId, d.TicketId, m.Visible ? m.Reference : HiddenWork, m.Visible ? m.Title : null, m.Visible ? m.ClientName : null, m.SourceName, m.Priority, m.Visible,
                 holder, holder is { } p ? names[p] : null, d.TeamId is { } t ? f.TeamNames.GetValueOrDefault(t) : null, null, null,
                 minutes, d.Required, d.Estimated ? d.Allocated : null, d.Estimated ? d.Remaining : null,
-                m.Visible && !d.Paused ? d.DueAt : null, free, risk, m.Visible && d.SkillId is { } s ? fc.SkillNames.GetValueOrDefault(s) : null, m.Visible ? Blank(d.Status) : null);
+                m.Visible && !d.Paused ? d.DueAt : null, m.Visible ? free : null, risk, m.Visible && d.SkillId is { } s ? fc.SkillNames.GetValueOrDefault(s) : null, m.Visible ? Blank(d.Status) : null);
         }
         static IEnumerable<ForecastWorkRowDto> Ordered(IEnumerable<ForecastWorkRowDto> rows)
             => rows.OrderBy(r => r.DueAt ?? DateTimeOffset.MaxValue).ThenByDescending(r => r.Minutes ?? 0).ThenBy(r => r.Reference, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.TicketId);
@@ -601,13 +637,26 @@ public sealed partial class WorkforceAnalyticsService
                 return Ordered(fc.AtRisk.Where(r => r.Risk != "Overdue").Select(r => Ticket(r.Work, r.Work.Remaining, r.Risk, r.FreeBeforeDue))).ToList();
             case ForecastWorkKind.Overdue:
                 return Ordered(fc.AtRisk.Where(r => r.Risk == "Overdue").Select(r => Ticket(r.Work, r.Work.Estimated ? r.Work.Remaining : null, r.Risk))).ToList();
+            case ForecastWorkKind.Unassigned:
+                return Ordered(fc.Open.Where(d => !(d.HolderId is { } h && names.ContainsKey(h)) && d.Remaining > 0 && fc.Eligible.Contains(d.TicketId)).Select(d => Ticket(d, d.Remaining))).ToList();
             default:
                 if (skillId is not { } skill || !fc.SkillNames.ContainsKey(skill)) throw new NotFoundException("Skill");
-                return Ordered(fc.Open.Where(d => d.SkillId == skill && d.Remaining > 0 && fc.Eligible.Contains(d.TicketId)).Select(d => Ticket(d, d.Remaining))).ToList();
+                var asking = fc.Open.Where(d => d.SkillId == skill && d.Remaining > 0 && fc.Eligible.Contains(d.TicketId)).ToList();
+                var rows = Ordered(asking.Where(d => Meta(d.TicketId).Visible).Select(d => Ticket(d, d.Remaining))).ToList();
+                // What a piece of work asks for is the ticket's own. Work the caller cannot open is one line here: its effort counts,
+                // and nothing (an id, a holder, a size of its own) says which ticket asks for this skill.
+                var hidden = asking.Where(d => !Meta(d.TicketId).Visible).ToList();
+                if (hidden.Count > 0)
+                    rows.Add(new ForecastWorkRowDto("hidden", null, Guid.Empty, hidden.Count == 1 ? HiddenWork : $"{hidden.Count} work items you cannot open", null, null, "", null, false,
+                        null, null, null, null, null, hidden.Sum(d => d.Remaining), hidden.Sum(d => d.Required!.Value), hidden.Sum(d => d.Allocated), hidden.Sum(d => d.Remaining), null, null, null, null, null));
+                return rows;
         }
     }
 
     // ---- history: comparison, weekly trend, estimate variance, quality signals ---------------------------------
+
+    public const string OnePersonQuality = "Quality signals describe the work of a team or the organization. They are not shown for one person.";
+    public const string OnePersonEstimates = "Estimate variance by kind of work is not shown for one person.";
 
     public async Task<TrendsDto> TrendsAsync(Guid callerId, InsightsQuery query, CancellationToken ct = default)
     {
@@ -621,6 +670,9 @@ public sealed partial class WorkforceAnalyticsService
         var f = await LoadAsync(callerId, new AnalyticsQuery("custom", from, today, query.TeamId, query.DepartmentId, query.AppUserId, query.ClientId, query.Source, query.Priority), withNow: false, ct);
         var tc = Tallies.Over(f, cur.From, cur.To);
         var tp = Tallies.Over(f, prev.From, prev.To);
+        // One person's own view of their own work is theirs. Anyone else narrowing to a single person (by name, or by a team of one)
+        // gets no quality figure and no estimate breakdown for them: these describe work, and are not a way to grade someone.
+        var onePerson = f.People.Count == 1 && f.People[0].Id != callerId;
         var c = tc.Total.ToDto();
         var p = tp.Total.ToDto();
 
@@ -682,10 +734,11 @@ public sealed partial class WorkforceAnalyticsService
             "Time entered directly in a PSA has no portal row and is not in any figure here.",
         };
         if (cur.To >= today) notes.Insert(1, "The current period includes today, which is not over.");
+        if (onePerson) notes.Add(OnePersonQuality + " " + OnePersonEstimates);
 
         return new TrendsDto(cur, prev, f.Now, totals, weeks, Compare(tc.Clients, tp.Clients), Compare(tc.Sources, tp.Sources),
-            Estimates(tc.Categories), Estimates(tc.Clients), Estimates(tc.Sources),
-            QualitySignals(f, cur, prev), attention, f.Sync, notes);
+            onePerson ? [] : Estimates(tc.Categories), onePerson ? [] : Estimates(tc.Clients), onePerson ? [] : Estimates(tc.Sources),
+            QualitySignals(f, cur, prev, onePerson), attention, f.Sync, notes);
     }
 
     /// <summary>
@@ -693,7 +746,7 @@ public sealed partial class WorkforceAnalyticsService
     /// its numerator, its denominator, the population and a data-quality label set by fixed rules; a
     /// signal with no explicit source says so instead of being inferred.
     /// </summary>
-    private static List<QualitySignalDto> QualitySignals(Facts f, AnalyticsPeriodDto cur, AnalyticsPeriodDto prev)
+    private static List<QualitySignalDto> QualitySignals(Facts f, AnalyticsPeriodDto cur, AnalyticsPeriodDto prev, bool onePerson)
     {
         List<Done> In(AnalyticsPeriodDto period) => f.Completed.Where(d => d.Date >= period.From && d.Date <= period.To).GroupBy(d => d.TicketId).Select(g => g.First()).ToList();
         var now = In(cur);
@@ -705,6 +758,7 @@ public sealed partial class WorkforceAnalyticsService
 
         QualitySignalDto Signal(string key, string name, string definition, Func<Done, bool> eligible, Func<Done, bool> met, DataQuality quality, string reason)
         {
+            if (onePerson) return new QualitySignalDto(key, name, definition, DataQuality.NotAvailable, OnePersonQuality, null, null, null, now.Count, null, null, null);
             int e = now.Count(eligible), m = now.Count(d => eligible(d) && met(d)), pe = before.Count(eligible), pm = before.Count(d => eligible(d) && met(d));
             return quality == DataQuality.NotAvailable
                 ? new QualitySignalDto(key, name, definition, quality, reason, null, null, null, now.Count, null, null, null)
@@ -740,9 +794,9 @@ public sealed partial class WorkforceAnalyticsService
                 d => d.Reviewed, d => d.ReviewSendBacks == 0, reviewed == 0 ? DataQuality.NotAvailable : DataQuality.Partial,
                 reviewed == 0 ? "None of the completed work went through review." : $"{reviewed} of {now.Count} completed work items were reviewed: only boards and topics that require review."),
             new QualitySignalDto("escalated", "Escalated work", "Work that was escalated.", DataQuality.NotAvailable,
-                "No escalation is recorded anywhere: a reassignment is not an escalation, and none is inferred from one.", null, null, null, now.Count, null, null, null),
+                onePerson ? OnePersonQuality : "No escalation is recorded anywhere: a reassignment is not an escalation, and none is inferred from one.", null, null, null, now.Count, null, null, null),
             new QualitySignalDto("repeat-issues", "Repeat issues", "Work that repeats an earlier issue.", DataQuality.NotAvailable,
-                "Links between tickets are entered by hand, and a duplicate is not a repeat. Nothing is inferred from titles.", null, null, null, now.Count, null, null, null),
+                onePerson ? OnePersonQuality : "Links between tickets are entered by hand, and a duplicate is not a repeat. Nothing is inferred from titles.", null, null, null, now.Count, null, null, null),
         ];
     }
 
@@ -792,9 +846,9 @@ public sealed partial class WorkforceAnalyticsService
                 time.Where(x => x.Conn == c.Id && x.SyncStatus == TimeEntrySyncStatus.Pending).Sum(x => x.N));
         }).ToList();
 
-        var attention = rows.Where(r => r.Stale).Select(r => SyncInsight(r.Name, r.LastSuccessfulSyncAt, Enum.Parse<ConnectionStatus>(r.Status))).ToList();
+        var attention = rows.Where(r => r.Stale).Select(r => SyncInsight(r.ConnectionId, r.Name, r.LastSuccessfulSyncAt, Enum.Parse<ConnectionStatus>(r.Status))).ToList();
         foreach (var r in rows.Where(r => r.StatusMapping.Mapped < r.StatusMapping.Total || r.PriorityMapping.Mapped < r.PriorityMapping.Total))
-            attention.Add(new InsightDto("mapping:" + r.Name, InsightSeverity.Watch,
+            attention.Add(new InsightDto("mapping:" + r.ConnectionId, InsightSeverity.Watch,
                 $"{r.Name}: {r.StatusMapping.Total - r.StatusMapping.Mapped} ticket{(r.StatusMapping.Total - r.StatusMapping.Mapped == 1 ? "" : "s")} carry a status and {r.PriorityMapping.Total - r.PriorityMapping.Mapped} a priority that no mapping rule covers.",
                 "A portal status or priority outside the normalized set: the PSA's own value passed through because no rule maps it. Reports group such tickets under the raw value.",
                 [new("Unmapped statuses", string.Join(", ", r.StatusMapping.Unmapped.DefaultIfEmpty("none"))), new("Unmapped priorities", string.Join(", ", r.PriorityMapping.Unmapped.DefaultIfEmpty("none")))]));

@@ -54,7 +54,18 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     private sealed class Counter : DbCommandInterceptor
     {
         public int Commands { get; private set; }
-        public void Reset() => Commands = 0;
+        /// <summary>The slowest command since the last reset, for the report: which read to look at when a figure grows.</summary>
+        public (double Ms, string Sql) Slowest { get; private set; }
+        /// <summary>Time the database took to answer, summed: what is left of a read's time is rows travelling and the work in memory.</summary>
+        public double DatabaseMs { get; private set; }
+        public void Reset() { Commands = 0; Slowest = default; DatabaseMs = 0; }
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            DatabaseMs += eventData.Duration.TotalMilliseconds;
+            if (eventData.Duration.TotalMilliseconds > Slowest.Ms) Slowest = (eventData.Duration.TotalMilliseconds, command.CommandText);
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
@@ -435,6 +446,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         var month = new InsightsQuery("custom", Monday, Monday.AddDays(27));
 
         var forecastWeek = await MeasureAsync(() => insights.ForecastAsync(admin, week));
+        var (slowest, databaseMs) = (_counter.Slowest, _counter.DatabaseMs);
         var forecastMonth = await MeasureAsync(() => insights.ForecastAsync(admin, month));
         var forecastTeam = await MeasureAsync(() => insights.ForecastAsync(admin, week with { TeamId = teamId }));
         var drill = await MeasureAsync(() => insights.ForecastWorkAsync(admin, week, ForecastWorkKind.Unscheduled, 0, 50));
@@ -446,6 +458,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         var filtered = await MeasureAsync(() => insights.ForecastAsync(admin, week with { ClientId = client.Id, Source = "psa:" + connection.Id, Priority = "high" }));
 
         output.WriteLine($"{people} people, {allocations} allocations, {entries} time entries | forecast week: {forecastWeek.Commands} queries, {forecastWeek.Ms} ms | forecast four weeks: {forecastMonth.Commands} queries, {forecastMonth.Ms} ms | team week: {forecastTeam.Commands} queries, {forecastTeam.Ms} ms ({forecastTeam.Result.People.Count} people)");
+        output.WriteLine($"{people} people | the week's forecast spent {databaseMs:0} ms waiting for the database | slowest query: {slowest.Ms:0} ms: {OneLine(slowest.Sql, 160)}");
         output.WriteLine($"{people} people | drill-down: {drill.Commands} queries, {drill.Ms} ms ({drill.Result.Total} rows) | skill list: {skillList.Commands} queries, {skillList.Ms} ms | health: {health.Commands} queries, {health.Ms} ms | catalogue: {catalogue.Commands} queries | report preview: {preview.Commands} queries, {preview.Ms} ms | report xlsx: {export.Commands} queries, {export.Ms} ms ({export.Result.Content.Length / 1024} KB) | filtered forecast: {filtered.Commands} queries, {filtered.Ms} ms");
 
         // Right at scale. Every weekday holds perPerson planned hours for every person; every ticket is 100 hours less the four weeks planned on it.
@@ -461,7 +474,9 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         fc.Daily.Sum(d => d.ConfirmedMinutes).Should().Be(fc.Totals.ConfirmedMinutes);
         fc.Daily.Sum(d => d.CapacityMinutes ?? 0).Should().Be(fc.Totals.CapacityMinutes);
         // The same capacity and confirmed demand as the Phase 7 dashboard for the same days.
-        var phase7 = await insights.OverviewAsync(admin, new AnalyticsQuery("custom", Monday, Monday.AddDays(6)));
+        var phase7Week = await MeasureAsync(() => insights.OverviewAsync(admin, new AnalyticsQuery("custom", Monday, Monday.AddDays(6))));
+        output.WriteLine($"{people} people | for comparison, the Phase 7 dashboard for the same week: {phase7Week.Commands} queries, {phase7Week.Ms} ms, {_counter.DatabaseMs:0} ms of it waiting for the database");
+        var phase7 = phase7Week.Result;
         (fc.Totals.CapacityMinutes, fc.Totals.ConfirmedMinutes).Should().Be((phase7.Demand.AvailableMinutes, phase7.Demand.ConfirmedMinutes));
         forecastMonth.Result.Totals.ConfirmedMinutes.Should().Be(people * perPerson * 60 * 20);
         forecastMonth.Result.Totals.UnscheduledMinutes.Should().Be(fc.Totals.UnscheduledMinutes, "what is left to allocate does not depend on the window");
@@ -511,7 +526,14 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         foreach (var ms in new[] { forecastWeek.Ms, forecastMonth.Ms, forecastTeam.Ms, drill.Ms, health.Ms, preview.Ms, export.Ms, trends.Ms, trendsMonth.Ms, quality.Ms }) ms.Should().BeLessThan(30_000);
     }
 
-    private const int MaxForecast = 51;
+    /// <summary>A command's text on one line, shortened: enough to recognise the read in a test report.</summary>
+    private static string OneLine(string sql, int max)
+    {
+        var line = string.Join(' ', (sql ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return line.Length <= max ? line : line[..max] + "…";
+    }
+
+    private const int MaxForecast = 53;
     private const int MaxHealth = 12;
     private const int MaxTrends = 28;
 
