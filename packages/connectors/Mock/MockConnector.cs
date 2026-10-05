@@ -177,14 +177,14 @@ public sealed class MockConnector : IServiceManagementConnector
         return Task.FromResult<IReadOnlyList<UnifiedAttachment>>(list);
     }
 
-    public Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+    public Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
     {
         Guard();
         var refs = _attachments
             .SelectMany(kv => kv.Value.Select(a => new ProviderAttachmentRef(kv.Key, a.Meta)))
             .Where(r => since is null || r.Attachment.CreatedAt is null || r.Attachment.CreatedAt >= since)
             .ToList();
-        return Task.FromResult<IReadOnlyList<ProviderAttachmentRef>>(refs);
+        return Task.FromResult(new ProviderAttachmentSweep(refs, Complete: true));
     }
 
     public Task<DownloadedAttachment?> DownloadAttachmentAsync(string ticketId, string attachmentId, CancellationToken ct = default)
@@ -274,23 +274,7 @@ public sealed class MockConnector : IServiceManagementConnector
     }
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
-    {
-        // Timestamp freshness (replay protection).
-        if (!request.Headers.TryGetValue("X-Timestamp", out var tsRaw)
-            || !DateTimeOffset.TryParse(tsRaw, out var ts))
-            return Task.FromResult(new WebhookValidationResult(false, "Missing or invalid timestamp."));
-        if (Math.Abs((request.ReceivedAt - ts).TotalSeconds) > _options.WebhookMaxSkew.TotalSeconds)
-            return Task.FromResult(new WebhookValidationResult(false, "Timestamp outside allowed skew."));
-
-        // HMAC signature over the raw body.
-        var expected = ComputeHmac(request.Body, _options.WebhookSecret);
-        var provided = request.RawSignature ?? "";
-        var ok = CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(provided));
-        return Task.FromResult(ok
-            ? new WebhookValidationResult(true, null)
-            : new WebhookValidationResult(false, "Signature mismatch."));
-    }
+        => Task.FromResult(WebhookSignature.Validate(request, _options.WebhookSecret, _options.WebhookMaxSkew));
 
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default)
     {
@@ -334,8 +318,6 @@ public sealed class MockConnector : IServiceManagementConnector
         var mac = HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(body));
         return Convert.ToHexStringLower(mac);
     }
-
-    public static string SignBody(string body, string secret) => ComputeHmac(body, secret);
 
     private void Seed()
     {

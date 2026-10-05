@@ -16,19 +16,21 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
 {
     private const string Secret = "cw-webhook-secret";
 
-    private ConnectWiseConnector Build(FakeConnectWiseServer server)
+    private ConnectWiseConnector Build(FakeConnectWiseServer server, string webhookSecret = Secret)
     {
         var http = new HttpClient(server) { BaseAddress = new Uri("https://cw.local/v4_6_release/apis/3.0/") };
         var config = new ConnectWiseConnectorConfig
         {
             BaseUrl = "https://cw.local/v4_6_release/apis/3.0/",
             Credentials = new ConnectWiseCredentials("acme", "pub", "priv", "client-guid"),
-            WebhookSecret = Secret,
+            WebhookSecret = webhookSecret,
         };
         return new ConnectWiseConnector(http, config, Clock);
     }
 
     protected override IServiceManagementConnector CreateConnector() => Build(new FakeConnectWiseServer(Clock));
+
+    protected override IServiceManagementConnector CreateConnectorWithoutWebhookSecret() => Build(new FakeConnectWiseServer(Clock), "");
 
     [Fact]
     public async Task A_ticket_carries_its_contact_as_ConnectWise_sends_it_inline()
@@ -129,6 +131,20 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
 
         boards.Should().OnlyContain(o => o.Value.All(char.IsDigit), "the filter sends board/id");
         boards.Should().OnlyContain(o => !o.SyncValue.All(char.IsDigit), "a ticket carries the name");
+    }
+
+    [Fact]
+    public async Task A_synced_ticket_carries_its_boards_id_as_well_as_its_name()
+    {
+        // The other half of the test above. A connection limited to certain boards holds their ids;
+        // with only the name on the ticket, the limit could not be checked against what came back.
+        var connector = Build(WithExistingTicket(Clock));
+
+        var ticket = (await connector.GetTicketsAsync(new TicketFilter())).Items.Single();
+
+        (ticket.QueueOrBoard, ticket.QueueOrBoardId).Should().Be(("Service Desk", "1"));
+        (await connector.GetQueuesOrBoardsAsync()).Select(o => o.Value).Should().Contain(ticket.QueueOrBoardId,
+            "the id on the ticket is the id the board list offers for the limit");
     }
 
     [Fact]

@@ -77,9 +77,11 @@ public interface IServiceManagementConnector
     /// Every attachment added across the tenant since <paramref name="since"/> (all of them when
     /// null). Needed because providers do not necessarily touch a ticket's modified timestamp when a
     /// file is attached to it — Autotask does not — so a ticket-driven incremental sync would never
-    /// notice new files. Returns empty for providers that cannot query attachments by date.
+    /// notice new files. Returns <see cref="ProviderAttachmentSweep.Unsupported"/> for providers that
+    /// cannot query attachments by date. <see cref="ProviderAttachmentSweep.Complete"/> must be false
+    /// whenever anything asked for may be missing from the answer.
     /// </summary>
-    Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default);
+    Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default);
 
     /// <summary>Pulls an attachment's bytes back from the provider. Null when the provider cannot
     /// serve the content (unsupported, deleted, or too large to inline). The parent ticket is

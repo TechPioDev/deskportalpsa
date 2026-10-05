@@ -8,6 +8,7 @@ using Desk.Infrastructure.Persistence;
 using Desk.PsaCore.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 namespace Desk.Api.Controllers;
@@ -16,10 +17,14 @@ namespace Desk.Api.Controllers;
 /// Inbound webhook receiver. Unauthenticated by design — PSAs cannot present a user session — so
 /// trust is established by the connector's signature + timestamp validation, not by a login. The
 /// connection id in the path is an unguessable GUID; the HMAC is the actual gate.
+///
+/// Everything a delivery is filed under - the organization, the connection - comes from the
+/// connection row found by that id. Nothing in the body or the headers can name a tenant.
 /// </summary>
 [ApiController]
 [Route("api/webhooks")]
 [AllowAnonymous]
+[EnableRateLimiting("webhooks")]
 public sealed class WebhooksController(
     IConnectorResolver connectors,
     ISyncEventStore syncEvents,
@@ -28,7 +33,14 @@ public sealed class WebhooksController(
     TimeProvider clock,
     ILogger<WebhooksController> logger) : ControllerBase
 {
+    /// <summary>
+    /// A notification says "something changed"; it is a few hundred bytes. The API's general limit
+    /// is sized for attachments, and this route reads the whole body before it knows who sent it.
+    /// </summary>
+    public const int MaxBodyBytes = 256 * 1024;
+
     [HttpPost("{connectionId:guid}")]
+    [RequestSizeLimit(MaxBodyBytes)]
     public async Task<IActionResult> Receive(Guid connectionId, CancellationToken ct)
     {
         // Load the connection across tenants (no user session here), then act under its tenant.
@@ -43,6 +55,9 @@ public sealed class WebhooksController(
             return NotFound();
         }
 
+        if (Request.ContentLength > MaxBodyBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge);
+
         var body = await ReadBodyAsync();
         var request = new WebhookRequest(
             Headers: Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(), StringComparer.OrdinalIgnoreCase),
@@ -50,7 +65,18 @@ public sealed class WebhooksController(
             RawSignature: Request.Headers["X-Signature"].FirstOrDefault(),
             ReceivedAt: clock.GetUtcNow());
 
-        var connector = await connectors.ResolveAsync(connectionId, ct);
+        Desk.PsaCore.Contracts.IServiceManagementConnector connector;
+        try
+        {
+            connector = await connectors.ResolveAsync(connectionId, ct);
+        }
+        catch (Desk.Application.Common.DeskException ex)
+        {
+            // No connector, or credentials that no longer resolve. To an anonymous caller that is
+            // the same answer as a bad signature; the reason is for the operator.
+            logger.LogWarning("Webhook for {ConnectionId} refused: {Reason}", connectionId, ex.Message);
+            return Unauthorized();
+        }
 
         var validation = await connector.ValidateWebhookAsync(request, ct);
         if (!validation.IsValid)

@@ -52,6 +52,13 @@ public record UnifiedTicket
     public string? Category { get; init; }
     public string? Subcategory { get; init; }
     public string? QueueOrBoard { get; init; }
+
+    /// <summary>
+    /// The provider's own id for that queue or board, kept beside its name. The name is what people
+    /// read and what mapping rules match; the id is what the provider is asked for, so it is what an
+    /// import filter holds. With only the name on the ticket, a filter of ids matched nothing.
+    /// </summary>
+    public string? QueueOrBoardId { get; init; }
     public string? AssignedTechnicianExternalId { get; init; }
     public string? RequesterExternalId { get; init; }
     /// <summary>Display name of the owning company, when the provider sends it inline (CW does).</summary>
@@ -269,6 +276,20 @@ public record ExternalTechnicianAssignment(
 
 /// <summary>An attachment paired with the ticket it hangs off, as returned by a tenant-wide sweep.</summary>
 public record ProviderAttachmentRef(string TicketExternalId, UnifiedAttachment Attachment);
+
+/// <summary>
+/// The result of a tenant-wide attachment sweep, and whether it is ALL of what was asked for.
+///
+/// The difference matters because of what a caller does with an absence. A file missing from a
+/// complete list has been deleted in the PSA; a file missing from a list that was cut short is
+/// simply further down it. A sweep that stopped early - a page limit, a cap - must say so, or the
+/// second case is read as the first and the portal deletes files that still exist.
+/// </summary>
+public record ProviderAttachmentSweep(IReadOnlyList<ProviderAttachmentRef> Items, bool Complete)
+{
+    /// <summary>Nothing, from a provider that cannot answer the question: never grounds for a deletion.</summary>
+    public static ProviderAttachmentSweep Unsupported { get; } = new([], Complete: false);
+}
 
 /// <summary>An attachment's bytes pulled back from a provider, ready to stage in object storage.</summary>
 public record DownloadedAttachment(string FileName, string ContentType, byte[] Content);

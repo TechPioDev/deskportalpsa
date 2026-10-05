@@ -14,6 +14,12 @@ public sealed class AutotaskConnectorConfig
     public string WebhookSecret { get; init; } = "";
     public TimeSpan WebhookMaxSkew { get; init; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>Attachments asked for per page of a tenant-wide sweep (Autotask allows up to 500).</summary>
+    public int AttachmentSweepPageSize { get; init; } = 500;
+
+    /// <summary>Pages one sweep will read before it stops and reports itself incomplete.</summary>
+    public int AttachmentSweepMaxPages { get; init; } = 20;
+
     /// <summary>publish value the connector writes for a public (client-visible) note.</summary>
     public int PublicPublishValue { get; init; } = 1;
     /// <summary>publish value used for internal-only notes (never mirrored to the portal).</summary>

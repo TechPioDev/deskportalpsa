@@ -16,19 +16,21 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
 {
     private const string Secret = "at-webhook-secret";
 
-    private AutotaskConnector Build(FakeAutotaskServer server)
+    private AutotaskConnector Build(FakeAutotaskServer server, string webhookSecret = Secret)
     {
         var http = new HttpClient(server) { BaseAddress = new Uri("https://webservices.local/atservicesrest/") };
         var config = new AutotaskConnectorConfig
         {
             BaseUrl = "https://webservices.local/atservicesrest/",
             Credentials = new AutotaskCredentials("code", "user", "secret"),
-            WebhookSecret = Secret,
+            WebhookSecret = webhookSecret,
         };
         return new AutotaskConnector(http, config, Clock);
     }
 
     protected override IServiceManagementConnector CreateConnector() => Build(new FakeAutotaskServer(Clock));
+
+    protected override IServiceManagementConnector CreateConnectorWithoutWebhookSecret() => Build(new FakeAutotaskServer(Clock), "");
 
     [Fact]
     public async Task A_ticket_carries_its_contact_resolved_from_the_contact_id()
@@ -379,11 +381,93 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
         byte[] content = [1, 2, 3];
         await c.AddAttachmentAsync(ticket.ExternalId!, new SecureAttachment("a.bin", "application/octet-stream", 3, "k", content));
 
-        var swept = await c.GetRecentAttachmentsAsync(null);
+        var swept = (await c.GetRecentAttachmentsAsync(null)).Items;
 
         // The fake stamps attachedByResourceID 20 on every file it stores, as Autotask does.
         swept.Should().ContainSingle(r => r.TicketExternalId == ticket.ExternalId)
             .Which.Attachment.AuthorExternalId.Should().Be("20");
+    }
+
+    [Fact]
+    public async Task A_ticket_carries_its_queues_id_beside_the_name()
+    {
+        // The name is what people read and map. The id is what Autotask is asked for, so it is what
+        // a connection's queue limit holds - and with only the name on the ticket, that limit could
+        // never be checked against what came back.
+        var c = Build(new FakeAutotaskServer(Clock));
+        var created = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "Queued", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "q1", QueueOrBoard = "Service Desk",
+        });
+
+        var ticket = await c.GetTicketAsync(created.ExternalId!);
+
+        (ticket!.QueueOrBoard, ticket.QueueOrBoardId).Should().Be(("Service Desk", "8"));
+    }
+
+    private AutotaskConnector BuildWithSweepLimits(FakeAutotaskServer server, int pageSize, int maxPages)
+    {
+        var http = new HttpClient(server) { BaseAddress = new Uri("https://webservices.local/atservicesrest/") };
+        return new AutotaskConnector(http, new AutotaskConnectorConfig
+        {
+            BaseUrl = "https://webservices.local/atservicesrest/",
+            Credentials = new AutotaskCredentials("code", "user", "secret"),
+            WebhookSecret = Secret,
+            AttachmentSweepPageSize = pageSize,
+            AttachmentSweepMaxPages = maxPages,
+        }, Clock);
+    }
+
+    private async Task<string> TicketWithFilesAsync(AutotaskConnector c, int files)
+    {
+        var ticket = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "t", IdempotencyKey = "k", ExternalCompanyId = SeededOrganizationId,
+        });
+        for (var i = 0; i < files; i++)
+            await c.AddAttachmentAsync(ticket.ExternalId!,
+                new SecureAttachment($"file-{i}.bin", "application/octet-stream", 3, $"k{i}", [1, 2, 3]));
+        return ticket.ExternalId!;
+    }
+
+    [Fact]
+    public async Task The_attachment_sweep_reads_every_page_and_says_the_list_is_complete()
+    {
+        // It read the first page only. Five files at two a page is three pages.
+        var c = BuildWithSweepLimits(new FakeAutotaskServer(Clock), pageSize: 2, maxPages: 20);
+        var ticketId = await TicketWithFilesAsync(c, 5);
+
+        var sweep = await c.GetRecentAttachmentsAsync(null);
+
+        sweep.Complete.Should().BeTrue();
+        sweep.Items.Where(r => r.TicketExternalId == ticketId).Select(r => r.Attachment.FileName)
+            .Should().BeEquivalentTo(["file-0.bin", "file-1.bin", "file-2.bin", "file-3.bin", "file-4.bin"]);
+    }
+
+    [Fact]
+    public async Task The_attachment_sweep_says_so_when_it_stops_before_the_end()
+    {
+        // What it read is returned; what it must not do is call it everything, because the sync
+        // deletes stored files that a complete list no longer contains.
+        var c = BuildWithSweepLimits(new FakeAutotaskServer(Clock), pageSize: 2, maxPages: 2);
+        await TicketWithFilesAsync(c, 5);
+
+        var sweep = await c.GetRecentAttachmentsAsync(null);
+
+        sweep.Complete.Should().BeFalse();
+        sweep.Items.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public async Task A_sweep_that_ends_exactly_on_its_last_allowed_page_is_complete()
+    {
+        var c = BuildWithSweepLimits(new FakeAutotaskServer(Clock), pageSize: 2, maxPages: 2);
+        await TicketWithFilesAsync(c, 4);
+
+        var sweep = await c.GetRecentAttachmentsAsync(null);
+
+        sweep.Complete.Should().BeTrue();
+        sweep.Items.Should().HaveCount(4);
     }
 
     protected override string WebhookSecret => Secret;

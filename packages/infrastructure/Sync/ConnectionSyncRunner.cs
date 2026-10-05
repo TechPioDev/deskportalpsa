@@ -506,14 +506,24 @@ public sealed class ConnectionSyncRunner(
     /// </summary>
     private async Task<(int Added, int Removed)> ImportAttachmentsAsync(PsaConnection connection, IServiceManagementConnector connector, DateTimeOffset? since, CancellationToken ct)
     {
-        IReadOnlyList<ProviderAttachmentRef> incoming;
-        try { incoming = await connector.GetRecentAttachmentsAsync(since, ct); }
+        ProviderAttachmentSweep sweep;
+        try { sweep = await connector.GetRecentAttachmentsAsync(since, ct); }
         catch (ConnectorException) { return (0, 0); } // files must not fail the whole run
+        var incoming = sweep.Items;
 
         // A DATED sweep returns only recent files, so a file's absence from it says nothing about
         // whether it still exists — reconciling against that would delete the entire back catalogue.
         // Only a full sweep sees everything, and only then can deletions be inferred.
-        IReadOnlyList<string>? reconcilable = since is null
+        //
+        // And only when the provider says the list is ALL of them. A full sweep that stopped early is
+        // a dated sweep in everything but name: the files past where it stopped are missing from the
+        // list and still exist. They are imported from what was read; nothing is removed.
+        if (since is null && !sweep.Complete && logger is not null)
+            Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(logger,
+                "Attachment sweep of connection {ConnectionId} returned an incomplete list ({Count} files); "
+                + "files deleted in the PSA are not being removed this run",
+                connection.Id, incoming.Count);
+        IReadOnlyList<string>? reconcilable = since is null && sweep.Complete
             ? await db.Tickets
                 .Where(t => t.PsaConnectionId == connection.Id && t.ExternalTicketId != null)
                 .Select(t => t.ExternalTicketId!)
@@ -655,8 +665,12 @@ public sealed class ConnectionSyncRunner(
         if (closed && !c.ImportClosedTickets) return false;
         if (!closed && !c.ImportOpenTickets) return false;
 
+        // By id, which is what the filter holds and what the provider was asked for. It used to be
+        // compared with the queue's NAME alone, so a connection limited to any queue imported
+        // nothing at all. The name is used only for a provider that reports no id: where there is an
+        // id it alone decides, or a board that happens to be CALLED "8" would pass as queue 8.
         var queues = Csv(c.FilterQueueIds);
-        if (queues.Count > 0 && !queues.Contains(t.QueueOrBoard ?? "", StringComparer.OrdinalIgnoreCase)) return false;
+        if (queues.Count > 0 && !queues.Contains(t.QueueOrBoardId ?? t.QueueOrBoard ?? "", StringComparer.OrdinalIgnoreCase)) return false;
 
         var resources = Csv(c.FilterResourceIds);
         if (resources.Count > 0 && !resources.Contains(t.AssignedTechnicianExternalId ?? "", StringComparer.OrdinalIgnoreCase)) return false;

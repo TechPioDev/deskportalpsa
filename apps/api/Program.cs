@@ -125,6 +125,13 @@ builder.Services.AddRateLimiter(o =>
             : "alert:anon",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1) }));
 
+    // A webhook delivery is anonymous until its signature has been checked, and checking it costs
+    // a database read and a decryption. Budgeted per connection, so one sender - genuine or not -
+    // cannot spend another connection's allowance. The per-address limit above still applies.
+    o.AddPolicy("webhooks", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: "webhook:" + (ctx.Request.RouteValues["connectionId"]?.ToString() ?? "unknown"),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 300, Window = TimeSpan.FromMinutes(1) }));
+
     o.AddPolicy("public-forms", ctx => RateLimitPartition.GetFixedWindowLimiter(
         partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(10) }));

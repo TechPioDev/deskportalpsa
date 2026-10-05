@@ -432,12 +432,37 @@ public sealed class AutotaskConnector(
             ExternalNoteId = a.TicketNoteId is > 0 ? a.TicketNoteId!.Value.ToString() : null,
         };
 
-    public async Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+    public async Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
     {
         var filters = since is { } from
             ? new List<object> { Filter("attachDate", "gte", from.ToUniversalTime().ToString("o")) }
             : [Filter("id", "gte", 0)];
-        var items = await QueryAsync<AtTicketAttachment>("TicketAttachments", filters, 500, ct);
+
+        // Every page, not the first. This read one page of 500 and returned it as the whole answer;
+        // the sync then took a file's absence from it to mean the file had been deleted in Autotask,
+        // and removed its stored copy. A desk with more than 500 ticket attachments would have lost
+        // the rest on the next full re-sync.
+        var items = new List<AtTicketAttachment>();
+        var body = new { MaxRecords = config.AttachmentSweepPageSize, Filter = filters };
+        var page = await SendAsync<AtQueryResult<AtTicketAttachment>>(HttpMethod.Post, "V1.0/TicketAttachments/query", body, ct);
+        var pages = 1;
+        while (true)
+        {
+            items.AddRange(page?.Items ?? []);
+            var next = page?.PageDetails?.NextPageUrl;
+            if (string.IsNullOrWhiteSpace(next)) break;
+            if (pages >= config.AttachmentSweepMaxPages)
+                // Still more to read, and the limit is reached. What was read is real and is
+                // returned; what it is NOT is a complete list, so nothing may be inferred deleted.
+                return new ProviderAttachmentSweep(await ToRefsAsync(items, ct), Complete: false);
+            page = await SendAsync<AtQueryResult<AtTicketAttachment>>(HttpMethod.Post, NextPageUrl(next), body, ct);
+            pages++;
+        }
+        return new ProviderAttachmentSweep(await ToRefsAsync(items, ct), Complete: true);
+    }
+
+    private async Task<IReadOnlyList<ProviderAttachmentRef>> ToRefsAsync(List<AtTicketAttachment> items, CancellationToken ct)
+    {
         if (items.Count == 0) return [];
 
         var names = new Dictionary<long, string>();
@@ -721,19 +746,7 @@ public sealed class AutotaskConnector(
     }
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
-    {
-        if (!request.Headers.TryGetValue("X-Timestamp", out var tsRaw) || !DateTimeOffset.TryParse(tsRaw, out var ts))
-            return Task.FromResult(new WebhookValidationResult(false, "Missing or invalid timestamp."));
-        if (Math.Abs((request.ReceivedAt - ts).TotalSeconds) > config.WebhookMaxSkew.TotalSeconds)
-            return Task.FromResult(new WebhookValidationResult(false, "Timestamp outside allowed skew."));
-
-        var expected = Hmac(request.Body, config.WebhookSecret);
-        var ok = CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(request.RawSignature ?? ""));
-        return Task.FromResult(ok
-            ? new WebhookValidationResult(true, null)
-            : new WebhookValidationResult(false, "Signature mismatch."));
-    }
+        => Task.FromResult(WebhookSignature.Validate(request, config.WebhookSecret, config.WebhookMaxSkew));
 
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default)
     {
@@ -1078,6 +1091,7 @@ public sealed class AutotaskConnector(
         Priority = await LabelForAsync("priority", t.Priority, ct),
         Category = await LabelForAsync("ticketCategory", t.Category, ct),
         QueueOrBoard = await LabelForAsync("queueID", t.QueueId, ct),
+        QueueOrBoardId = string.IsNullOrWhiteSpace(t.QueueId) ? null : t.QueueId,
         AssignedTechnicianExternalId = t.AssignedResourceId,
         RequesterExternalId = t.CompanyId.ToString(),
         // An Autotask ticket carries only a numeric companyID, so without this every client company

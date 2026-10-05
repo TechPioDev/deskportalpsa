@@ -38,15 +38,21 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
             Attachments.GetValueOrDefault(ticketId, []).Select(a => a.Meta).ToList());
     }
 
-    public Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+    public Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
     {
         AttachmentSweeps++;
         var refs = Attachments
             .SelectMany(kv => kv.Value.Select(a => new ProviderAttachmentRef(kv.Key, a.Meta)))
             .Where(r => since is null || r.Attachment.CreatedAt is null || r.Attachment.CreatedAt >= since)
             .ToList();
-        return Task.FromResult<IReadOnlyList<ProviderAttachmentRef>>(refs);
+        // A provider that stopped reading early hands back the first part of its list and says so.
+        return Task.FromResult(SweepStopsAfter is { } limit && refs.Count > limit
+            ? new ProviderAttachmentSweep(refs.Take(limit).ToList(), Complete: false)
+            : new ProviderAttachmentSweep(refs, Complete: true));
     }
+
+    /// <summary>Set to make the sweep return only its first N files and report itself incomplete.</summary>
+    public int? SweepStopsAfter { get; set; }
 
     /// <summary>How many times the runner swept for attachments.</summary>
     public int AttachmentSweeps { get; private set; }
@@ -104,7 +110,10 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     public Task<ConnectionTestResult> TestConnectionAsync(CancellationToken ct = default) => No<ConnectionTestResult>();
     public Task<IReadOnlyList<ExternalOrganization>> GetOrganizationsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalOrganization>>();
     public Task<IReadOnlyList<ExternalContact>> GetContactsAsync(string organizationId, CancellationToken ct = default) => No<IReadOnlyList<ExternalContact>>();
-    public Task<IReadOnlyList<ExternalTechnician>> GetTechniciansAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnician>>();
+    /// <summary>The provider's people. Read by the sync to put a name to a ticket's assignee.</summary>
+    public List<ExternalTechnician> Technicians { get; } = [];
+    public Task<IReadOnlyList<ExternalTechnician>> GetTechniciansAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<ExternalTechnician>>(Technicians);
     public Task<IReadOnlyList<ExternalTechnicianAssignment>> GetTechnicianAssignmentsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnicianAssignment>>();
     /// <summary>Every device change asked for: ticket, new device, the one it replaced.</summary>
     public List<(string TicketId, string? Device, string? Previous)> DeviceChanges { get; } = [];
