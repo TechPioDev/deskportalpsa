@@ -2,6 +2,7 @@ using System.Text;
 using Desk.Application.Common;
 using Desk.Application.Workforce;
 using Desk.Domain.Authorization;
+using Desk.Domain.Common;
 using Desk.Domain.Enums;
 using Desk.Domain.Identity;
 using Desk.Domain.Tenancy;
@@ -28,6 +29,7 @@ public partial class WorkPlanTests
     // Properties, not fields: a static field here could initialize before Monday, which lives in another file of this partial class.
     private static DateOnly Wednesday => Monday.AddDays(2);
     private static DateOnly Friday => Monday.AddDays(4);
+    private static DateOnly Saturday => Monday.AddDays(5);
     private static DateOnly Sunday => Monday.AddDays(6);
     private static AnalyticsQuery Week => new("custom", Monday, Sunday);
 
@@ -79,13 +81,15 @@ public partial class WorkPlanTests
         for (var i = 0; i < 10; i++) await Finish(w, $"Done {i}", w.Jason, At(Tuesday, "16:00"));
         await Finish(w, "Abbie's work", w.Abbie, At(Monday, "11:00"));
         await Finish(w, "Imported closed, undated", w.Jason, null);
+        // Read on the Monday after: the week is over, so everything planned in it is due and compared.
+        ClockTo(w, At(Sunday.AddDays(1), "09:00"));
 
         // A technician sees their own figures and nobody else's.
         var mine = await w.As(w.Jason).Analytics.OverviewAsync(w.Jason.Id, Week);
         var jason = mine.People.Should().ContainSingle().Subject;
         jason.DisplayName.Should().Be("Jason Carter");
         var f = jason.Figures;
-        (f.CapacityMinutes, f.PlannedMinutes, f.TentativeMinutes).Should().Be((2400, 1920, 0), "5 x 8 h; 4 x 8 h planned");
+        (f.CapacityMinutes, f.PlannedMinutes, f.PlannedToDateMinutes, f.TentativeMinutes).Should().Be((2400, 1920, 1920, 0), "5 x 8 h; 4 x 8 h planned");
         (f.ActualSeconds, f.PlannedActualSeconds, f.ReactiveActualSeconds, f.LiveSeconds).Should().Be((108_000, 90_000, 18_000, 0), "30 h, of which 25 h on the day's planned work");
         (f.ScheduledUtilizationPercent, f.CapacityUtilizationPercent, f.ReactiveSharePercent).Should().Be((80d, 75d, 16.67d));
         (f.VarianceMinutes, f.VariancePercent).Should().Be((-120, -6.25d), "30 h against 32 h planned");
@@ -95,7 +99,8 @@ public partial class WorkPlanTests
         (f.OverCapacityMinutes, f.OverCapacityPersonDays).Should().Be((0, 0));
         mine.Totals.Should().BeEquivalentTo(f, "a technician's totals are their own figures");
         (mine.SeesOthers, mine.CanExport).Should().Be((false, false));
-        mine.Period.Should().Be(new AnalyticsPeriodDto("custom", Monday, Sunday, Zone, "Mon 5 Jan – Sun 11 Jan 2026", 7, true));
+        mine.Period.Should().Be(new AnalyticsPeriodDto("custom", Monday, Sunday, Zone, "Mon 5 Jan – Sun 11 Jan 2026", 7, false));
+        mine.Notes.Should().NotContain(n => n.StartsWith("This period has not ended"));
         mine.Notes.Should().Contain(n => n.Contains("1 finished work item has no completion date"));
 
         // The administrator sees everyone; the lead and the administrator have no schedule and say so.
@@ -125,7 +130,7 @@ public partial class WorkPlanTests
         all.Heatmap.Rows.Single(r => r.AppUserId == w.Jason.Id).Cells[0].Should().Be(new HeatmapCellDto(480, 480, 22_500));
         all.Heatmap.Rows.Single(r => r.AppUserId == w.Lead.Id).Cells[0].Should().Be(new HeatmapCellDto(0, 0, 0));
         all.Demand.Should().Be(new CapacityDemandDto(7200, 1920, 0, 1920, 0, 5280));
-        all.Now.Should().Match<WorkNowDto>(n => n.Open == 3 && n.Unscheduled == 2 && n.Overdue == 0, "Jason's two open tickets and Sam's are held; only Jason's board ticket has a plan ahead of now");
+        all.Now.Should().Match<WorkNowDto>(n => n.Open == 3 && n.Unscheduled == 3 && n.Overdue == 0, "Jason's two open tickets and Sam's are held; the week's plan has ended, so none has a plan ahead of now");
     }
 
     // ---- tentative, time away, over-capacity, zero capacity, the clock -------------------------------------
@@ -153,7 +158,8 @@ public partial class WorkPlanTests
         (lena.CapacityMinutes, lena.ActualSeconds, lena.CapacityUtilizationPercent, lena.VarianceMinutes).Should().Be((0, 7200, null, null));
         all.Demand.Should().Be(new CapacityDemandDto(6720, 540, 120, 660, 0, 6180));
         (all.Totals.OverCapacityMinutes, all.Totals.TentativeMinutes).Should().Be((60, 120));
-        all.Notes.Should().Contain("This period has not ended: its later days hold capacity but no recorded time yet, so utilization reads low until it is over.");
+        all.Notes.Should().Contain("This period has not ended: its later days hold capacity but no recorded time yet, so utilization reads low until it is over. Variance compares the recorded time with what was planned up to today.");
+        (jason.PlannedToDateMinutes, jason.VarianceMinutes).Should().Be((0, null), "read before the week began: nothing is due yet, so nothing is behind");
 
         // The clock: a stopped clock is its entry and nothing else; a running one is counted live, once.
         var jasonsDesk = w.As(w.Jason);
@@ -169,11 +175,19 @@ public partial class WorkPlanTests
         today.Period.Should().Match<AnalyticsPeriodDto>(p => p.From == Tuesday && p.To == Tuesday && p.Key == "today");
         (today.Totals.ActualSeconds, today.Totals.LiveSeconds, today.Totals.WorkItems).Should().Be((2400 + 1800, 1800, 1));
         (await w.Db.WorkSessions.CountAsync(), await w.Db.TicketTimeEntries.CountAsync(e => e.AppUserId == w.Jason.Id)).Should().Be((2, 1));
-        today.Notes.Should().Contain("30 m on clocks still running is included in today's actual time.");
+        today.Notes.Should().Contain("30 m on clocks not yet stopped (running or paused) is included in the actual time.");
         today.WorkTypes.Should().Contain(x => x.Name == WorkforceAnalyticsService.RunningClock && x.Figures.ActualSeconds == 1800);
         var rows = await jasonsDesk.Analytics.WorkAsync(w.Jason.Id, new AnalyticsQuery("today"), AnalyticsWorkKind.Actual, 0, 50);
         rows.Rows.Select(r => (r.Kind, r.Seconds, r.Status)).Should().BeEquivalentTo([("entry", (int?)2400, "Recorded"), ("live", 1800, "Running")]);
         rows.TotalSeconds.Should().Be(today.Totals.ActualSeconds);
+
+        // Paused: the clock keeps its seconds and gains none while it waits.
+        var open = (await jasonsDesk.Time.ActiveAsync(w.Jason.Id)).Single();
+        await jasonsDesk.Time.PauseAsync(w.Jason.Id, open.Id, new WorkSessionStateInput(open.Version, WorkPauseReason.WaitingOnClient));
+        await Minutes(w, 20);
+        var waiting = await jasonsDesk.Analytics.OverviewAsync(w.Jason.Id, new AnalyticsQuery("today"));
+        (waiting.Totals.ActualSeconds, waiting.Totals.LiveSeconds).Should().Be((4200L, 1800L));
+        (await jasonsDesk.Analytics.WorkAsync(w.Jason.Id, new AnalyticsQuery("today"), AnalyticsWorkKind.Actual, 0, 50)).Rows.Single(r => r.Kind == "live").Status.Should().Be("Paused");
     }
 
     // ---- reactive classification -------------------------------------------------------------------------------
@@ -194,6 +208,7 @@ public partial class WorkPlanTests
         await lead.Plans.CancelAsync(w.Lead.Id, cancelled.Id, "Client postponed");
         await Log(w, w.Jason, w.JasonsTicket, Wednesday, "11:00", 1m);
 
+        ClockTo(w, At(Sunday.AddDays(1), "09:00"));
         var jason = w.As(w.Jason).Analytics;
         var all = await jason.OverviewAsync(w.Jason.Id, Week);
         var f = all.Totals;
@@ -210,6 +225,13 @@ public partial class WorkPlanTests
         (reactive.Totals.VarianceMinutes, reactive.Totals.AbsoluteVarianceMinutes).Should().Be((240, 120), "variance is the plan against all the recorded time, whatever the kind filter");
         var planned = await jason.OverviewAsync(w.Jason.Id, Week with { Kind = ActualKindFilter.Planned });
         (planned.Totals.ActualSeconds, planned.Totals.ReactiveActualSeconds).Should().Be((14_400, 0));
+        // A card and the list it opens agree under the filter too: the Reactive card reads 0, so its list is empty.
+        (await jason.WorkAsync(w.Jason.Id, Week with { Kind = ActualKindFilter.Planned }, AnalyticsWorkKind.Reactive, 0, 50)).Total.Should().Be(0);
+        var reactiveList = await jason.WorkAsync(w.Jason.Id, Week with { Kind = ActualKindFilter.Reactive }, AnalyticsWorkKind.Actual, 0, 50);
+        (reactiveList.Total, reactiveList.TotalSeconds).Should().Be((1, reactive.Totals.ActualSeconds));
+        (await jason.WorkAsync(w.Jason.Id, Week with { Kind = ActualKindFilter.Reactive }, AnalyticsWorkKind.PlannedActual, 0, 50)).Total.Should().Be(0);
+        var item = (await jason.TechnicianAsync(w.Jason.Id, w.Jason.Id, Week with { Kind = ActualKindFilter.Reactive })).Items.Single();
+        (item.ActualSeconds, item.PlannedMinutes, item.VarianceMinutes).Should().Be((3600, 60, 240), "the item's variance is the plan against all its recorded time, as the cards");
         // The same split My day shows for Wednesday.
         var myDay = await w.As(w.Jason).Time.MyDayAsync(w.Jason.Id, null, Wednesday);
         myDay.Summary.UnplannedActualSeconds.Should().Be(3600);
@@ -259,6 +281,8 @@ public partial class WorkPlanTests
         // A forged or foreign id: nobody, or "not found" - never an error that confirms anything exists.
         var forgedTeam = await admin.OverviewAsync(w.Admin.Id, Week with { TeamId = Guid.NewGuid() });
         (forgedTeam.People.Count, forgedTeam.Totals.ActualSeconds, forgedTeam.Totals.CapacityMinutes).Should().Be((0, 0, null));
+        forgedTeam.Now.Should().BeEquivalentTo(new { Open = 0, Unscheduled = 0, Overdue = 0, DueToday = 0, DueSoon = 0, UnscheduledDue = 0 }, "nobody matching is an answer of zeros, not a missing one");
+        (await admin.WorkAsync(w.Admin.Id, Week with { TeamId = Guid.NewGuid() }, AnalyticsWorkKind.Open, 0, 50)).Total.Should().Be(0);
         (await ((Func<Task>)(() => admin.OverviewAsync(w.Admin.Id, Week with { ClientId = Guid.NewGuid() }))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Client was not found.");
         (await ((Func<Task>)(() => admin.OverviewAsync(w.Admin.Id, Week with { Source = "psa:" + Guid.NewGuid() }))).Should().ThrowAsync<NotFoundException>()).Which.Message.Should().Be("Connection was not found.");
         await ((Func<Task>)(() => admin.OverviewAsync(w.Admin.Id, Week with { Source = "everything" }))).Should().ThrowAsync<ValidationFailedException>();
@@ -369,6 +393,7 @@ public partial class WorkPlanTests
         // Jason logged two hours on Sam's PSA ticket, which his ticket scope (assigned) cannot open.
         await Log(w, w.Jason, w.SamsTicket, Tuesday, "09:00", 2m, sync: TimeEntrySyncStatus.Pending);
         var finished = await Finish(w, "Printer fixed", w.Jason, At(Wednesday, "15:00"));
+        ClockTo(w, At(Monday, "08:00"));
 
         var jason = w.As(w.Jason).Analytics;
         var overview = await jason.OverviewAsync(w.Jason.Id, Week);
@@ -381,6 +406,18 @@ public partial class WorkPlanTests
         var hidden = actual.Rows.Single(r => r.TicketId == w.SamsTicket.Id);
         (hidden.Reference, hidden.Title, hidden.ClientName, hidden.TicketVisible, hidden.Source, hidden.PlannedWork, hidden.Status, hidden.Seconds)
             .Should().Be((WorkforceAnalyticsService.HiddenWork, null, null, false, "Autotask", false, "Not in the PSA yet", 7200));
+        (hidden.Priority, hidden.DueAt).Should().Be((null, null), "priority and due date are the ticket's own");
+        // In every breakdown it is one row, and no filter on what a ticket says about itself can pick it out.
+        overview.Sources.Select(s => (s.Key, s.Name)).Should().BeEquivalentTo([("internal", "Team boards"), ("hidden", WorkforceAnalyticsService.HiddenWork)]);
+        overview.Priorities.Select(p => (p.Key, p.Name)).Should().BeEquivalentTo([("NORMAL", "NORMAL"), ("hidden", WorkforceAnalyticsService.HiddenWork)]);
+        overview.Notes.Should().Contain(n => n.StartsWith("Some recorded or planned time is on work you cannot open"));
+        var abc = await jason.OverviewAsync(w.Jason.Id, Week with { ClientId = w.JasonsTicket.ClientCompanyId });
+        (abc.Totals.ActualSeconds, abc.Clients.Select(c => c.Name).Single()).Should().Be((3600L, "ABC Company"), "filtering by the client does not reveal that the hidden ticket is theirs");
+        (await jason.OverviewAsync(w.Jason.Id, Week with { Priority = "normal" })).Totals.ActualSeconds.Should().Be(3600);
+        (await jason.WorkAsync(w.Jason.Id, Week with { ClientId = w.JasonsTicket.ClientCompanyId }, AnalyticsWorkKind.Actual, 0, 50)).Rows.Should().OnlyContain(r => r.TicketVisible);
+        (await jason.OverviewAsync(w.Jason.Id, Week with { Source = "client" })).Totals.ActualSeconds.Should().Be(7200, "the kind of work is known for every ticket");
+        var jasonsItems = (await jason.TechnicianAsync(w.Jason.Id, w.Jason.Id, Week)).Items;
+        jasonsItems.Single(i => !i.TicketVisible).Should().Match<AnalyticsWorkItemDto>(i => i.Reference == WorkforceAnalyticsService.HiddenWork && i.Title == null && i.ClientName == null && i.Priority == null && !i.Finished && i.FinishedAt == null && i.ActualSeconds == 7200);
         var shown = actual.Rows.Single(r => r.TicketId == w.JasonsTicket.Id);
         (shown.Reference, shown.Title, shown.ClientName, shown.PlannedWork, shown.Status, shown.Minutes, shown.PersonName).Should().Be(("INT-000001", "Firewall review", "ABC Company", true, "Recorded", 60, "Jason Carter"));
         var reactive = await jason.WorkAsync(w.Jason.Id, Week, AnalyticsWorkKind.Reactive, 0, 50);
@@ -423,6 +460,12 @@ public partial class WorkPlanTests
         await w.Db.SaveChangesAsync();
         w.Db.ChangeTracker.Clear();
         await Log(w, w.Jason, trap, Monday, "09:00", 1m);
+        var tabbed = await Finish(w, "\t=cmd|' /C calc'!A0", w.Abbie, null);
+        tabbed.PortalStatus = "IN_PROGRESS";
+        w.Db.Tickets.Update(tabbed);
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        await Log(w, w.Abbie, tabbed, Tuesday, "09:00", 0.5m);
 
         var admin = w.As(w.Admin).Analytics;
         var work = await admin.ExportAsync(w.Admin.Id, Week, AnalyticsExportReport.Work);
@@ -433,21 +476,159 @@ public partial class WorkPlanTests
         text.Should().StartWith("Workforce analytics: recorded work\r\nPeriod,");
         text.Should().Contain("\"'=HYPERLINK(\"\"http://evil.test\"\",\"\"click\"\")\"", "a formula in a title is neutralised and quoted");
         text.Should().Contain("Jason Carter").And.Contain(",60,yes,reactive,Recorded");
-        work.Rows.Should().Be(1);
+        text.Should().Contain(",'\t=cmd|' /C calc'!A0,", "a formula hidden behind a leading tab is neutralised too");
+        work.Rows.Should().Be(2);
 
         var technicians = await admin.ExportAsync(w.Admin.Id, Week, AnalyticsExportReport.Technicians);
         technicians.Rows.Should().Be(5);
-        Encoding.UTF8.GetString(technicians.Content).Should().Contain("Technician,Teams,Offered for planned work,Capacity (h),Planned (h)").And.Contain("Jason Carter,NOC,yes,40,0,0,1,0,1,100,0,2.5,N/A,N/A,0,1,1,0,1,0,0");
+        Encoding.UTF8.GetString(technicians.Content).Should().Contain("Technician,Teams,Offered for planned work,Capacity (h),Planned (h)").And.Contain("Capacity (h),Planned (h),Planned to date (h),Tentative (h)").And.Contain("Jason Carter,NOC,yes,40,0,0,0,1,0,1,100,0,2.5,N/A,N/A,0,1,1,0,1,0,0");
         (await admin.ExportAsync(w.Admin.Id, Week, AnalyticsExportReport.Daily)).Rows.Should().Be(7);
 
         (await w.Db.AuditLog.Where(a => a.Action == "workforce.analytics.exported").CountAsync()).Should().Be(3);
         var entry = await w.Db.AuditLog.Where(a => a.Action == "workforce.analytics.exported").OrderBy(a => a.CreatedAt).FirstAsync();
-        entry.DetailJson.Should().Contain("\"report\":\"Work\"").And.Contain("\"rows\":1").And.Contain("\"people\":5");
+        entry.DetailJson.Should().Contain("\"report\":\"Work\"").And.Contain("\"rows\":2").And.Contain("\"people\":5");
 
         // The right to read is not the right to take it out of the system.
         (await ((Func<Task>)(() => w.As(w.Lead).Analytics.ExportAsync(w.Lead.Id, Week, AnalyticsExportReport.Teams))).Should().ThrowAsync<ForbiddenException>())
             .Which.Message.Should().Be("Exporting workforce analytics needs the workforce.analytics.export permission.");
         await ((Func<Task>)(() => w.As(w.Jason).Analytics.ExportAsync(w.Jason.Id, Week, AnalyticsExportReport.Technicians))).Should().ThrowAsync<ForbiddenException>();
         (await w.Db.AuditLog.Where(a => a.Action == "workforce.analytics.exported").CountAsync()).Should().Be(3, "a refused export is not an export");
+    }
+
+    // ---- shift days and zones ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_night_shift_and_another_time_zone_keep_work_on_the_persons_own_shift_day()
+    {
+        var w = await WorldAsync();
+        var admin = w.As(w.Admin);
+        var weekdays = new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday };
+        // Abbie works nights, 18:00 to 03:00 the next morning; Sam works days in New York.
+        await admin.Schedules.SaveAsync(w.Admin.Id, w.Abbie.Id, new WorkScheduleInput(null, Zone, weekdays.Select(d => new WorkDayInput(d, "18:00", "03:00", [])).ToList()));
+        await admin.Schedules.SaveAsync(w.Admin.Id, w.Sam.Id, new WorkScheduleInput(null, "America/New_York",
+            weekdays.Select(d => new WorkDayInput(d, "08:30", "17:30", [new WorkBreakDto("12:30", "13:30")])).ToList()));
+        w.Db.ChangeTracker.Clear();
+        // Friday night's shift runs into Saturday: three hours planned and one recorded after midnight, inside it.
+        await admin.Plans.CreateAsync(w.Admin.Id, Place(w.JasonsTicket, w.Abbie, Saturday, "00:00", "03:00"));
+        await Log(w, w.Abbie, w.JasonsTicket, Saturday, "01:00", 1m);
+        // Sam records an hour at 22:00 on Monday, New York time (already Tuesday for the organization in Mohali).
+        var newYork = TimeZones.Resolve("America/New_York");
+        w.Db.TicketTimeEntries.Add(new TicketTimeEntry
+        {
+            MspOrganizationId = OrgA, TicketId = w.SamsTicket.Id, AppUserId = w.Sam.Id, Hours = 1m, Billable = true, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Synced,
+            EntryDate = TimeZones.WallToUtc(Monday.ToDateTime(new TimeOnly(22, 0)), newYork, true),
+        });
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+
+        var all = await admin.Analytics.OverviewAsync(w.Admin.Id, Week);
+        var abbie = all.People.Single(p => p.AppUserId == w.Abbie.Id).Figures;
+        (abbie.CapacityMinutes, abbie.PlannedMinutes, abbie.OverCapacityMinutes, abbie.OverCapacityPersonDays).Should().Be((2700, 180, 0, 0), "five nine-hour nights; the hours after midnight are Friday's shift, not work on a day off");
+        (abbie.ActualSeconds, abbie.PlannedActualSeconds, abbie.ReactiveActualSeconds).Should().Be((3600, 3600, 0), "recorded inside the shift it was planned in");
+        var cells = all.Heatmap.Rows.Single(r => r.AppUserId == w.Abbie.Id).Cells;
+        (cells[4], cells[5]).Should().Be((new HeatmapCellDto(540, 180, 3600), new HeatmapCellDto(0, 0, 0)), "Friday holds the night's work; Saturday holds none");
+        var nights = await admin.Analytics.TechnicianAsync(w.Admin.Id, w.Abbie.Id, Week);
+        nights.Daily.Single(d => d.Date == Friday).Figures.Should().Match<AnalyticsFiguresDto>(d => d.PlannedMinutes == 180 && d.ActualSeconds == 3600 && d.CapacityMinutes == 540 && d.OverCapacityMinutes == 0);
+        nights.Daily.Single(d => d.Date == Saturday).Figures.Should().Match<AnalyticsFiguresDto>(d => d.PlannedMinutes == 0 && d.ActualSeconds == 0 && d.CapacityMinutes == 0);
+        (await admin.Analytics.WorkAsync(w.Admin.Id, Week with { AppUserId = w.Abbie.Id }, AnalyticsWorkKind.Actual, 0, 50)).Rows.Single().Date.Should().Be(Friday);
+
+        // Sam's hour is on Sam's Monday, whatever day it was where the organization sits.
+        var sam = await admin.Analytics.TechnicianAsync(w.Admin.Id, w.Sam.Id, Week);
+        sam.Person.TimeZone.Should().Be("America/New_York");
+        (sam.Daily.Single(d => d.Date == Monday).Figures.ActualSeconds, sam.Daily.Single(d => d.Date == Tuesday).Figures.ActualSeconds).Should().Be((3600L, 0L));
+        sam.Daily.Single(d => d.Date == Monday).Figures.CapacityMinutes.Should().Be(480);
+    }
+
+    // ---- due work right now, and a week still running -------------------------------------------------------
+
+    [Fact]
+    public async Task Work_right_now_counts_due_work_as_the_boards_do_and_a_running_week_compares_only_what_was_planned_so_far()
+    {
+        var w = await WorldAsync();
+        var lead = w.As(w.Lead);
+        // Two hours planned every day, Monday to Friday; worked on Monday and Tuesday; read on Wednesday morning.
+        for (var day = 0; day < 5; day++) await lead.Plans.CreateAsync(w.Lead.Id, Place(w.JasonsTicket, w.Jason, Monday.AddDays(day), "09:00", "11:00"));
+        await Log(w, w.Jason, w.JasonsTicket, Monday, "09:00", 2m);
+        await Log(w, w.Jason, w.JasonsTicket, Tuesday, "09:00", 1.5m);
+        ClockTo(w, At(Wednesday, "08:00"));
+        var n = 0;
+        void Due(string title, DateTimeOffset? due, bool paused = false) => w.Db.Tickets.Add(new Ticket
+        {
+            MspOrganizationId = OrgA, Origin = TicketOrigin.Internal, BoardId = w.Board.Id, Number = $"INT-0009{++n:00}", RequesterName = "Lena Lead", RequesterEmail = "lena@techpio.test",
+            Title = title, PortalStatus = "IN_PROGRESS", PortalPriority = "NORMAL", AssignedAppUserId = w.Jason.Id, SyncStatus = TicketSyncStatus.Synced, UpdateHash = "hash-" + title,
+            CreatedByUserId = w.Lead.Id, SlaDueAt = due, SlaPausedAt = paused ? At(Tuesday, "09:00") : null,
+        });
+        Due("Overdue since yesterday", At(Tuesday, "17:00"));
+        Due("Past its date but waiting on the client", At(Tuesday, "12:00"), paused: true);
+        Due("Due this afternoon", At(Wednesday, "15:00"));
+        Due("Due tonight", At(Wednesday, "23:00"));
+        Due("Due on Friday", At(Friday, "12:00"));
+        Due("No due date", null);
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+
+        var jason = w.As(w.Jason).Analytics;
+        var week = await jason.OverviewAsync(w.Jason.Id, Week);
+        // Open: the two tickets Jason already held and the six above. His board ticket has a plan ahead of now; the rest have none.
+        week.Now.Should().BeEquivalentTo(new { Open = 8, Unscheduled = 7, Overdue = 1, DueToday = 2, DueSoon = 1, UnscheduledDue = 4 },
+            "a paused ticket is not late whatever its date says; due soon is within eight hours; unscheduled due is overdue or due within a week");
+        var overdue = await jason.WorkAsync(w.Jason.Id, Week, AnalyticsWorkKind.Overdue, 0, 50);
+        overdue.Rows.Should().ContainSingle().Which.Should().Match<AnalyticsWorkRowDto>(r => r.Title == "Overdue since yesterday" && r.DueAt == At(Tuesday, "17:00") && r.PlannedWork == false);
+        (await jason.WorkAsync(w.Jason.Id, Week, AnalyticsWorkKind.Unscheduled, 0, 50)).Total.Should().Be(7);
+        // The open list has one order on every page: due first, then by reference, down to the row itself.
+        var first = await jason.WorkAsync(w.Jason.Id, Week, AnalyticsWorkKind.Open, 0, 4);
+        var second = await jason.WorkAsync(w.Jason.Id, Week, AnalyticsWorkKind.Open, 4, 4);
+        first.Rows.Concat(second.Rows).Select(r => r.TicketId).Should().OnlyHaveUniqueItems().And.HaveCount(8);
+        first.Rows.Select(r => r.Title).Take(2).Should().Equal("Past its date but waiting on the client", "Overdue since yesterday");
+
+        // The week is still running: ten hours are planned, six of them by today; three and a half are recorded.
+        var f = week.Totals;
+        (f.PlannedMinutes, f.PlannedToDateMinutes, f.ActualSeconds).Should().Be((600, 360, 12_600L));
+        (f.VarianceMinutes, f.VariancePercent).Should().Be((-150, -41.67d), "210 minutes against the 360 planned so far, not against Thursday and Friday too");
+        (f.AbsoluteVarianceMinutes, f.EstimateVariancePercent, f.PlannedItemsCompared).Should().Be((150, 41.67d, 3), "Monday 0, Tuesday 30, Wednesday (not worked yet) 120");
+        f.ScheduledUtilizationPercent.Should().Be(25d, "scheduled utilization is the whole week's plan against the whole week's capacity");
+        week.Daily.Single(d => d.Date == Wednesday).Figures.VarianceMinutes.Should().Be(-120);
+        week.Daily.Single(d => d.Date == Monday.AddDays(3)).Figures.Should().Match<AnalyticsFiguresDto>(d => d.PlannedMinutes == 120 && d.PlannedToDateMinutes == 0 && d.VarianceMinutes == null);
+        week.Notes.Should().Contain(x => x.EndsWith("Variance compares the recorded time with what was planned up to today."));
+        var item = (await jason.TechnicianAsync(w.Jason.Id, w.Jason.Id, Week)).Items.Single(i => i.Reference == "INT-000001");
+        (item.PlannedMinutes, item.ActualSeconds, item.VarianceMinutes).Should().Be((600, 12_600, -150));
+    }
+
+    // ---- credit through a PSA login; a person not offered for planned work -----------------------------------
+
+    [Fact]
+    public async Task Work_closed_in_the_PSA_under_a_linked_login_is_credited_once_and_someone_not_offered_for_planned_work_has_no_capacity()
+    {
+        var w = await WorldAsync();
+        var connection = w.Autotask.PsaConnectionId!.Value;
+        Ticket Psa(string title, string external, string login) => new()
+        {
+            MspOrganizationId = OrgA, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, ExternalTicketId = external, PsaConnectionId = connection,
+            RequesterName = "ABC", RequesterEmail = "it@abc.test", Title = title, PortalStatus = "CLOSED", PortalPriority = "NORMAL", ClientCompanyId = w.Autotask.ClientCompanyId,
+            SyncStatus = TicketSyncStatus.Synced, UpdateHash = "hash-" + external, AssignedTechnicianExternalId = login, AssignedTechnicianName = login,
+            ResolvedAt = At(Tuesday, "10:00"), ClosedAt = At(Tuesday, "10:00"),
+        };
+        w.Db.AddRange(Psa("Closed by Jason in Autotask", "8001", "jc-1"), Psa("Closed under a login nobody here is linked to", "8002", "zz-9"),
+            new UserPsaIdentity { MspOrganizationId = OrgA, AppUserId = w.Jason.Id, PsaConnectionId = connection, ExternalTechnicianId = "jc-1" });
+        (await w.Db.AppUsers.SingleAsync(u => u.Id == w.Sam.Id)).IsSchedulable = false;
+        await w.Db.SaveChangesAsync();
+        w.Db.ChangeTracker.Clear();
+        await Log(w, w.Sam, w.SamsTicket, Monday, "09:00", 2m);
+
+        var admin = w.As(w.Admin).Analytics;
+        var all = await admin.OverviewAsync(w.Admin.Id, Week);
+        (all.Totals.CompletedWork, all.People.Single(p => p.AppUserId == w.Jason.Id).Figures.CompletedWork).Should().Be((1, 1), "the login linked to Jason is Jason; the other closure is credited to nobody here and is in no row");
+        var completed = await admin.WorkAsync(w.Admin.Id, Week, AnalyticsWorkKind.Completed, 0, 50);
+        completed.Rows.Should().ContainSingle().Which.Should().Match<AnalyticsWorkRowDto>(r => r.Reference == "Autotask 8001" && r.PersonName == "Jason Carter" && r.Status == "CLOSED");
+        // Jason's own view counts it too (his scope reaches himself, and the link makes the ticket his credit; he cannot open it, so it has no name).
+        var mine = await w.As(w.Jason).Analytics.WorkAsync(w.Jason.Id, Week, AnalyticsWorkKind.Completed, 0, 50);
+        mine.Rows.Should().ContainSingle().Which.Should().Match<AnalyticsWorkRowDto>(r => !r.TicketVisible && r.Reference == WorkforceAnalyticsService.HiddenWork && r.Title == null && r.Status == null && r.FinishedAt == At(Tuesday, "10:00"));
+
+        // Sam is not offered for planned work: his recorded time counts, his capacity does not exist (as Team capacity counts it).
+        var sam = all.People.Single(p => p.AppUserId == w.Sam.Id);
+        (sam.IsSchedulable, sam.Figures.CapacityMinutes, sam.Figures.ActualSeconds, sam.Figures.CapacityUtilizationPercent, sam.Figures.OverCapacityMinutes).Should().Be((false, null, 7200L, null, 0));
+        all.Totals.CapacityMinutes.Should().Be(4800, "Jason and Abbie");
+        all.Heatmap.Rows.Single(r => r.AppUserId == w.Sam.Id).Cells[0].Should().Be(new HeatmapCellDto(null, 0, 7200));
+        all.Notes.Should().Contain("1 person is not offered for planned work; their recorded time counts, their capacity does not.");
     }
 }

@@ -364,7 +364,7 @@ export type TeamToday = z.infer<typeof TeamTodaySchema>;
 // and planned time, seconds for actual time (the screen rounds); a ratio with nothing to divide by is
 // null and shown as N/A. Nothing here is a score. Definitions: docs/workforce-scheduling/PHASE7_ANALYTICS_METRIC_SPEC.md.
 export const AnalyticsFiguresSchema = z.object({
-  capacityMinutes: z.number().nullable(), plannedMinutes: z.number(), tentativeMinutes: z.number(),
+  capacityMinutes: z.number().nullable(), plannedMinutes: z.number(), plannedToDateMinutes: z.number(), tentativeMinutes: z.number(),
   actualSeconds: z.number(), plannedActualSeconds: z.number(), reactiveActualSeconds: z.number(), liveSeconds: z.number(), billableSeconds: z.number(),
   clientSeconds: z.number(), internalSeconds: z.number(), monitoringSeconds: z.number(),
   scheduledUtilizationPercent: z.number().nullable(), capacityUtilizationPercent: z.number().nullable(), reactiveSharePercent: z.number().nullable(),

@@ -60,7 +60,7 @@ rows of any breakdown add up to the cards because they are those rows grouped.
   not cover". A card opens a drill-down dialog listing its records with the whole set's total.
 - **Technician work analytics** (`/dashboard/workforce/analytics/{appUserId}`): one person over the
   period: twelve figures, the daily trend, the work items in the period (each ticket once, with
-  planned against actual, filterable to completed / open / reactive), by client, by source, by work
+  planned against actual, filterable to finished / open / reactive), by client, by source, by work
   type, by priority. Opened from a name in the table, the heatmap or a drill-down row.
 - **My analytics** (`/dashboard/workforce/my-analytics`, for everyone with `schedule.view`): the
   same detail for the signed-in person. No technician filter, no peer, no comparison.
@@ -106,11 +106,11 @@ In code (`WorkforceAnalyticsService`, `packages/infrastructure/Workforce`):
 | People | `WorkforceAccess.VisibleStaffAsync` + `Narrow` | active staff, name order, at most 1,000 |
 | Teams of those people | one join | a person may be in several |
 | Capacity | `WorkforceCalendar.LoadAsync` (versions, exceptions, holidays) + `CapacityCalculator.ForDay` per person-day | the same calendar and calculator as My capacity and the scheduler; allocations are not read here (the dashboard takes planned minutes from the allocations themselves) |
-| Allocations | one query over a UTC window a day wider than the period | placed on the person-day of their start in the person's zone; Cancelled left out |
+| Allocations | one query over a UTC window a day wider than the period | placed on the person-day of their start: the date in the person's zone, or the shift's date when the moment is inside a night shift that began the day before; Cancelled left out |
 | Time entries | one query, every sync status, portal author only | placed on the person-day of `EntryDate` |
 | Live clocks | one query (Active / Paused, no entry yet, with segments) | the day they started; seconds by the server's clock |
-| Completed | one query: finished status, `ResolvedAt ?? ClosedAt` inside the period's UTC bounds in the organization zone, credit in scope | credit = `ResolvedByAppUserId ?? AssignedAppUserId ?? linked PSA login` |
-| Open work now | one query (only the overview and the open / unscheduled / overdue lists) | held by a person in scope; unscheduled = no Planned / Tentative allocation ending after now |
+| Completed | one query: finished status, `ResolvedAt ?? ClosedAt` inside the period's UTC bounds in the organization zone, credit in scope | credit = `ResolvedByAppUserId ?? AssignedAppUserId ?? linked PSA login`; the link is part of the query (`UserPsaIdentities`), so a desk's PSA-side closures under unlinked logins are never loaded |
+| Open work now | one query (only the overview and the open / unscheduled / overdue lists) | held by a person in scope; unscheduled = no Planned / Tentative allocation ending after now; the due figures leave out tickets whose SLA clock is paused |
 | Tickets | one query per 2,000 ids, plus visibility through `ITicketScopeQuery` | reference, title, client, source, priority, origin, status, due date; invisible tickets are "Work you cannot open" |
 
 Then `Tallies.Over(facts)` makes one pass: capacity and planned per person-day into the total, the
@@ -125,11 +125,15 @@ ratios at the end, once.
 A period is whole calendar dates in the **organization's zone** (`MspOrganization.TimeZone`, the
 same setting staff reports use), resolved on the server from the server's today, so two people
 asking for "this week" get the same Monday–Sunday. Inside the period a person's day is their **shift
-date** in their own schedule's zone, exactly as capacity, the plan and My day place it; a night
-shift and a clock across midnight belong to the day they started. Completed work is dated in the
+date** in their own schedule's zone, as capacity counts it: the calendar date, except that a moment
+inside a night shift that began the day before belongs to that shift (so its planned and recorded
+time is compared with the shift it was worked in, never with a day off). For anyone who does not work
+across midnight that is the date My plan and My day show; for a night shift My day lists work after
+midnight under the calendar date, and the totals over a period agree. Completed work is dated in the
 organization zone (a completion is an organization event). A clock change inside the period changes
 nothing: dates are dates, and each day's instants are converted for that day. A running period is
-not cut at now: its later days hold capacity and no recorded time, and the screen says so.
+not cut at now: its later days hold capacity and no recorded time, and the screen says so; variance
+and estimate variance compare the recorded time only with what was planned up to today.
 
 The productivity dashboard (`api/dashboard`) buckets hours by the UTC date and counts only synced
 entries; the workforce dashboard uses the person's day and every portal entry. Both are stated in
@@ -163,9 +167,13 @@ the specification, and neither was changed.
   organization's person, client or connection is "not found"; its allocations, entries, clocks and
   tickets never load. `Breakdowns_add_up_to_the_totals_filters_combine_and_nothing_leaks_across_scope_or_organization`
   proves each of these with a second organization and a second database context.
-- **Titles, references and clients** are given only for tickets the caller may open; the rest is
-  one row, "Work you cannot open", with its time still counted. Notes and descriptions are never
-  in an answer or an export.
+- **A ticket the caller cannot open gives nothing of its own away.** Its time still counts (it is
+  the person's time), but its reference, title, client, priority, status, due date and completion
+  are not returned; in the client, source and priority tables it is one row, "Work you cannot open",
+  and a list row says only the kind of provider, as My day does. A filter on what a ticket says
+  about itself (client, PSA connection, priority) matches only tickets the caller may open, so
+  filtering by a client can never show that a hidden ticket is theirs. Notes and descriptions are
+  never in an answer or an export.
 - **Nothing is cached**, so there is no cache to leak between tenants or scopes.
 
 ## Export
@@ -197,16 +205,21 @@ laptop; the counts are what matter):
 | Export, technicians, four weeks | 29 | 46 ms | 238 ms | 596 ms |
 | Filter lists | 18 | 2 ms | 30 ms | 6 ms |
 
-Constant whatever the size: one load, then memory. The cost that does grow is the number of rows
+Constant whatever the number of people, days, allocations and hours: one load, then memory. Two
+things do add queries, and both are bounded: the tickets behind the figures are read 2,000 at a time
+(two queries per 2,000 distinct tickets), and a drill-down page or an export re-runs the load (it is
+the same rows, which is what keeps a list equal to its card). The cost that does grow is the number of rows
 loaded (entries, allocations, clocks) for the period and the people, which is why a period is at
 most 366 days and a request at most 1,000 people, and why the heatmap is offered for at most 31 days
 and 200 people. The test also proves the figures at scale (planned, actual, planned actual, the
 drill-down's total and the breakdowns' sums against the cards), and runs the client, connection,
-priority and kind filters through the real translator (30 queries: the existence checks more).
+priority and kind filters through the real translator, for an administrator and for a technician
+whose ticket scope is "assigned" (33 queries: the existence checks and the caller's ticket scope).
 The same theory was run on **PostgreSQL 17** (`DESK_TEST_POSTGRES`, each test in a database built
-by the real migrations): the same counts (27 / 27 / 27 / 26 / 26 / 29 / 18, filtered 30), and at 500
-people with 30,000 allocations and 30,000 entries: overview week 731 ms, four weeks 905 ms, one team
-210 ms, one person 42 ms, drill-down 317 ms (7,500 rows), export 603 ms, filtered overview 818 ms
+by the real migrations): the same counts (27 / 27 / 27 / 26 / 26 / 29 / 18, filtered 33, a technician's
+own view by client 40), and at 500 people with 30,000 allocations and 30,000 entries: overview week
+575 ms, four weeks 890 ms, one team 125 ms, one person 34 ms, drill-down 204 ms (7,500 rows), export
+427 ms, filtered overview 1.6 s while other tests shared the machine (0.8 s alone)
 (a container on a development laptop; first-call compilation included).
 
 **Not benchmarked here:** a year of 500 people with 1,000,000 entries. The 500-people / 30,000-entry
@@ -261,7 +274,11 @@ every other workforce read.
 | A person's capacity is 0 and utilization N/A | No working schedule in force on those dates | Set their schedule (Workforce → person → Work schedule) |
 | A person shows "not offered" for capacity | They are not offered for planned work (`IsSchedulable` off), so their capacity does not count, as Team capacity counts it | Workforce → person → offered for planned work |
 | Recorded time is lower than the PSA's figure for the same person | Time entered directly in the PSA has no portal row and is not in any day | Expected; the note states it. PSA-side rows are a deferred sync change |
-| "Work you cannot open" in a client table | The caller may not open that ticket (ticket scope) | Expected: the time counts, the ticket's identity does not travel |
+| "Work you cannot open" in a client, source or priority table | The caller may not open that ticket (ticket scope) | Expected: the time counts, the ticket's identity does not travel |
+| A client or priority filter shows less time than the person recorded | The filter matches only tickets the caller may open; time on tickets they cannot open is left out rather than attributed | Expected; an administrator's view has it all |
+| Variance reads N/A early in the week although work is planned | Nothing was planned up to today yet: later days are not compared until they arrive | Expected; the panel says how much was planned so far |
+| A night worker's hours after midnight are on the previous day | They are inside the shift that began that evening, and are compared with that shift's capacity | Expected; My day lists them under the calendar date |
+| Overdue here is lower than a count of past due dates | Tickets whose SLA clock is paused (waiting on someone) are not late, as on the boards | Expected |
 | Completed is lower than the tickets closed | A finished ticket with no `ResolvedAt` or `ClosedAt` is in no period (the note counts them); a ticket reopened since is not finished now; a ticket credited to nobody in scope is not a row | As designed; see the specification §11 |
 | "Person was not found." for a colleague | Outside the caller's `schedule.view` scope | Ask for a wider scope, or filter by team |
 | The heatmap says to choose a shorter period | More than 31 days | Choose a month or less |

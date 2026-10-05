@@ -19,8 +19,9 @@ differences are stated in [§ Source audit](#source-of-truth-audit).
 | Term | Meaning here |
 |---|---|
 | Period | The selected date range, as whole calendar dates `[From, To]` in the **organization's time zone** |
-| Person-day | One person on one **shift date**: the date a working window starts on, in the zone of that person's schedule version in force that day (the organization's zone when they have no schedule). The same rule as capacity (Phase 2), the plan (Phase 3) and My day (Phase 6) |
-| Minutes | Capacity and planned time are whole minutes. Actual time is whole **seconds** in the API (the screen rounds), so a day reconciles to the second with My day |
+| Person-day | One person on one **shift date**, as capacity counts it (Phase 2): the calendar date in the zone of that person's schedule version in force (the organization's zone when they have no schedule), except that a moment **inside a night shift that began the day before** belongs to that shift's date. So planned and recorded time is always compared with the capacity of the shift it was worked in, and three hours after midnight inside Friday night's shift are Friday's, not "over capacity on Saturday". For everyone who does not work across midnight this is the calendar date, exactly as My plan and My day show it; for a night shift, My day lists work after midnight under the calendar date while this dashboard keeps it with its shift (the totals over a period agree) |
+| Minutes | Capacity and planned time are whole minutes. Actual time is whole **seconds** in the API (the screen rounds). Each time entry is rounded to the second on its own, so a card, its list and the export agree exactly, and a day agrees with My day to within a second per entry |
+| Work the caller cannot open | A ticket outside the caller's ticket scope still counts (its time is the person's time), but gives nothing of its own away: no reference, title, client, priority, status, due date or completion; in every breakdown it is one row, "Work you cannot open". A filter on what a ticket says about itself (client, PSA connection, priority) matches only tickets the caller may open |
 | N/A | A ratio whose denominator is zero is **null** in the API and shown as "N/A", never 0 % and never an error |
 | In scope | The people the caller's `schedule.view` scope reaches, narrowed by the filters |
 
@@ -251,9 +252,16 @@ a running week reads low, a week of outages reads high, and neither says anythin
 **Formula.**
 
 ```
-Variance        = Actual − Planned           (minutes; positive = more time than planned)
-Variance %      = (Actual − Planned) / Planned × 100     only when Planned > 0, else null
+PlannedToDate   = Σ planned(p, d) over days d ≤ today      (the whole period's plan once it has ended)
+Variance        = Recorded − PlannedToDate   (minutes; positive = more time than planned)
+Variance %      = (Recorded − PlannedToDate) / PlannedToDate × 100     only when PlannedToDate > 0, else null
 ```
+
+`Recorded` is all the actual time in the filter context. **In a period that has not ended**, the plan
+for later days is not compared with anything yet: on Wednesday morning, Thursday's and Friday's
+planned work is not "behind". The screen says how much was planned so far, and the API carries it
+(`PlannedToDateMinutes`). For a finished period PlannedToDate is Planned and the formula is the
+plain "actual − planned".
 
 Positive is not bad and negative is not good: an estimate can be wrong, a client can be slow, a
 reboot can take an hour. The screen shows the sign and the value and nothing else.
@@ -269,7 +277,7 @@ time in the filter context, because "reactive time minus planned time" is not a 
 **Definition.** How far planned estimates were from actual time, regardless of direction, over the
 ticket-days that had a plan. Labelled **Estimate variance**, never a quality score.
 
-**Formula.** Over person-ticket-days with planned(p, t, d) > 0:
+**Formula.** Over person-ticket-days with planned(p, t, d) > 0 and d ≤ today:
 
 ```
 AbsoluteVariance   = Σ | actual(p, t, d) − planned(p, t, d) |      (minutes)
@@ -335,10 +343,10 @@ Snapshot figures as of the moment of the answer (not period-bound; the screen sa
 |---|---|
 | Open work | Open tickets (`TicketStatusRules.Open`) held by a person in scope (`AssignedAppUserId`) |
 | Unscheduled | Open work with no Planned or Tentative allocation ending after now (the unscheduled-list rule) |
-| Overdue | Open work with `SlaDueAt` < now |
-| Due today | Open work due later today in the organization zone |
-| Due soon | Open work due within the next 8 hours (`TicketStatusRules.DueSoonHours`, the boards' meaning of "soon") |
-| Unscheduled due | Unscheduled open work that is overdue or due within 7 days |
+| Overdue | Open work with `SlaDueAt` < now whose SLA clock is not paused (`SlaPausedAt` is null): a ticket waiting on someone is not late whatever its date says, the boards' rule |
+| Due today | Open work, not paused, due later today in the organization zone |
+| Due soon | Open work, not paused, due within the next 8 hours (`TicketStatusRules.DueSoonHours`, the boards' meaning of "soon") |
+| Unscheduled due | Unscheduled open work, not paused, that is overdue or due within 7 days |
 
 Due dates and SLA mappings are read as they are; nothing recomputes an SLA.
 
@@ -370,8 +378,8 @@ same filtered set, so a table's rows add up to the cards.
 | Technician | person | yes | sortable by any column; no default "best" order (name order) |
 | Team | the person's teams | yes (members' capacity) | a person in two teams appears in both; the organization total counts them once (said on screen); with a team filter, that team's row only |
 | Client | the ticket's client company | no | tickets the caller may not open are one row, "Work you cannot open"; tickets with no client (boards) are "No client" |
-| Source | the ticket's PSA connection name, "Team boards", "Monitoring" | no | |
-| Priority | `PortalPriority`; blank is "Not set" | no | |
+| Source | the ticket's PSA connection name, "Team boards", "Monitoring" | no | tickets the caller may not open are one row, "Work you cannot open" (a list row says only the kind of provider, as My day does) |
+| Priority | `PortalPriority`; blank is "Not set" | no | tickets the caller may not open are one row, "Work you cannot open" |
 | Work type | the entry's `WorkTypeLabel`; blank is "Not set" | no | actual time only (allocations carry no work type) |
 | Day | the person-day date | yes | the daily trend; completed work is dated in the organization zone |
 
@@ -412,8 +420,10 @@ colour scale is a neutral single hue by intensity, so meaning is never carried b
 | Completed | The unique finished work items: reference, title, client, source, when, credited to |
 | Open, Unscheduled, Overdue | The open work items as of now |
 
-Lists are paged on the server (50 a page, at most 200). The figure on the card and the list's total
-are computed from the same loaded rows in one request path, so they cannot drift apart.
+Lists are paged on the server (50 a page, at most 200) in one total order (down to the row's own id),
+so no row repeats or disappears between pages. The figure on the card and the list's total are
+computed from the same loaded rows in one request path, so they cannot drift apart; that holds under
+the kind-of-work filter too (with "planned only", the Reactive card reads 0 and its list is empty).
 
 ## 21. Freshness
 

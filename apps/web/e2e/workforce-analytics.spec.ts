@@ -130,11 +130,13 @@ test('management sees today\'s cards reconcile with the API, opens the records b
   await figure(page, 'Actual work').getByRole('button').click();
   const dialog = page.getByRole('dialog', { name: 'Recorded work' });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused();
   await expect(dialog.getByRole('row').filter({ hasText: planned.number })).toContainText('Planned');
   await expect(dialog.getByRole('row').filter({ hasText: reactive.number })).toContainText('Reactive');
   await expect(dialog.getByText(/\d+ records · /)).toBeVisible();
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
+  await expect(figure(page, 'Actual work').getByRole('button')).toBeFocused();
   // Drill into completed work: the finished ticket, once.
   await figure(page, 'Completed work').getByRole('button').click();
   const done = page.getByRole('dialog', { name: 'Completed work' });
@@ -160,7 +162,7 @@ test('management sees today\'s cards reconcile with the API, opens the records b
   const items = page.getByRole('region', { name: 'Work in this period' });
   await expect(items).toContainText(planned.number);
   await expect(items).toContainText(reactive.number);
-  await items.getByRole('button', { name: 'Completed' }).click();
+  await items.getByRole('button', { name: 'Finished' }).click();
   await expect(items).toContainText(reactive.number);
   await expect(items).not.toContainText(planned.number);
   await page.getByRole('link', { name: 'Workforce analytics' }).first().click();

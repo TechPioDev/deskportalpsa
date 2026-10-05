@@ -364,9 +364,23 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         (await analytics.OverviewAsync(admin, week with { Source = "monitoring" })).Totals.ActualSeconds.Should().Be(0);
         (await analytics.WorkAsync(admin, week with { ClientId = client.Id }, AnalyticsWorkKind.Completed, 0, 50)).Rows.Should().ContainSingle().Which.Reference.Should().Be("Autotask 9001");
         (await analytics.FiltersAsync(admin)).Should().Match<AnalyticsFilterOptionsDto>(o => o.Clients.Count == 1 && o.Priorities.Contains("HIGH") && o.Sources.Any(s => s.Key == "psa:" + connection.Id));
-        // The filters add the two existence checks and nothing that grows.
-        narrowed.Commands.Should().BeLessThanOrEqualTo(30);
-        output.WriteLine($"{people} people | filtered overview (client + connection + priority + kind): {narrowed.Commands} queries, {narrowed.Ms} ms");
+        // The filters add the two existence checks and the caller's ticket scope (a filter on what a ticket says about itself matches only tickets the caller may open), and nothing that grows.
+        narrowed.Commands.Should().BeLessThanOrEqualTo(33);
+        // A technician's own view with the same kind of filter, so the "may open" subquery of a narrower ticket scope (assigned) is translated too.
+        var technician = new Role { MspOrganizationId = Org, Name = "Technician", BuiltInType = RoleType.Technician };
+        technician.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAssigned, Scope = PermissionScope.Assigned });
+        technician.Permissions.Add(new RolePermission { PermissionKey = Permissions.ScheduleView, Scope = PermissionScope.Own });
+        db.Add(technician);
+        db.Add(new UserRole { AppUserId = ids[1], RoleId = technician.Id });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var own = Analytics(db, ids[1]);
+        var ownClient = await MeasureAsync(() => own.OverviewAsync(ids[1], week with { ClientId = client.Id }));
+        (ownClient.Result.People.Count, ownClient.Result.Totals.ActualSeconds, ownClient.Result.Totals.CompletedWork, ownClient.Result.SeesOthers).Should().Be((1, 7200L, 1, false));
+        (await own.OverviewAsync(ids[1], week with { Priority = "normal" })).Totals.ActualSeconds.Should().Be(perPerson * 45 * 60 * 5, "their own board ticket");
+        (await own.OverviewAsync(ids[1], week)).Totals.ActualSeconds.Should().Be(perPerson * 45 * 60 * 5 + 7200);
+        ((Func<Task>)(() => own.TechnicianAsync(ids[1], ids[2], week))).Should().ThrowAsync<Desk.Application.Common.NotFoundException>().GetAwaiter().GetResult();
+        output.WriteLine($"{people} people | filtered overview (client + connection + priority + kind): {narrowed.Commands} queries, {narrowed.Ms} ms | a technician's own, by client: {ownClient.Commands} queries, {ownClient.Ms} ms");
     }
 
     private async Task<(int Commands, long Ms, T Result)> MeasureAsync<T>(Func<Task<T>> work)

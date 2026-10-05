@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
@@ -275,7 +275,7 @@ function HeatmapGrid({ heatmap, metric, qs }: { heatmap: HeatmapData; metric: 'a
                 const used = metric === 'actual' ? Math.round(c.actualSeconds / 60) : c.plannedMinutes;
                 const p = c.capacityMinutes && c.capacityMinutes > 0 ? Math.round((used / c.capacityMinutes) * 100) : null;
                 const title = `${fmtDay(heatmap.dates[i])}: ${metric === 'actual' ? 'actual' : 'planned'} ${mins(used)} · capacity ${c.capacityMinutes == null ? 'not offered' : mins(c.capacityMinutes)} · ${p == null ? 'N/A' : `${p}%`}`;
-                return <td key={i} title={title} className={`h-8 min-w-[44px] border border-[var(--surface)] text-center tabular-nums ${p != null && p > 70 ? 'text-white dark:text-slate-950' : ''}`} style={{ background: shade(p) }}>{p == null ? '—' : `${p}%`}</td>;
+                return <td key={i} title={title} className={`h-8 min-w-[44px] border border-[var(--surface)] text-center tabular-nums ${p != null && p > 105 ? 'text-white' : ''} ${p != null && p > 60 ? 'dark:text-slate-950' : ''}`} style={{ background: shade(p) }}>{p == null ? '—' : `${p}%`}</td>;
               })}
             </tr>
           ))}
@@ -385,21 +385,36 @@ const KIND_LABEL: Record<AnalyticsWorkKind, string> = {
 };
 
 /** The records behind a card, paged on the server; the list's total is the card's figure. */
-export function DrillDown({ kind, query, timeZone, onClose }: { kind: AnalyticsWorkKind; query: AnalyticsQuery; timeZone: string; onClose: () => void }) {
+export function DrillDown({ kind, query, timeZone, onClose, linkQs = '' }: { kind: AnalyticsWorkKind; query: AnalyticsQuery; timeZone: string; onClose: () => void; linkQs?: string }) {
   const [skip, setSkip] = useState(0);
   const take = 50;
   const { data, isLoading, error } = useQuery({ queryKey: ['analytics-work', kind, query, skip], queryFn: () => api.analyticsWork(query, kind, skip, take), retry: false, placeholderData: (prev) => prev });
+  // A modal dialog: focus moves into it, Tab stays inside it, Escape closes it, and focus goes back to the card that opened it.
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const opener = document.activeElement as HTMLElement | null;
+    box.current?.querySelector<HTMLElement>('button')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { close.current(); return; }
+      if (e.key !== 'Tab' || !box.current) return;
+      const stops = [...box.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
+      if (stops.length === 0) return;
+      const first = stops[0], last = stops[stops.length - 1];
+      const outside = !box.current.contains(document.activeElement);
+      if (e.shiftKey && (outside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (outside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => { window.removeEventListener('keydown', onKey); opener?.focus?.(); };
+  }, []);
   const timeKind = kind === 'actual' || kind === 'planned-actual' || kind === 'reactive';
   const allocationKind = kind === 'planned' || kind === 'tentative';
   const total = data ? (timeKind ? `${data.total} records · ${dur(data.totalSeconds)}` : allocationKind ? `${data.total} pieces of work · ${mins(data.totalMinutes)}` : `${data.total} work items`) : '';
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="drill-title" onClick={(e) => e.stopPropagation()} className={`${card} flex max-h-[90vh] w-full max-w-5xl flex-col shadow-xl`}>
+      <div ref={box} role="dialog" aria-modal="true" aria-labelledby="drill-title" onClick={(e) => e.stopPropagation()} className={`${card} flex max-h-[90vh] w-full max-w-5xl flex-col shadow-xl`}>
         <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
           <div><h2 id="drill-title" className="text-base font-semibold">{KIND_LABEL[kind]}</h2><p className="text-xs text-[var(--muted)]" aria-live="polite">{data ? `${data.period.label} · ${total}` : 'Loading…'}</p></div>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg border border-[var(--border)] p-1.5 hover:bg-[var(--bg)]"><X size={14} /></button>
@@ -422,7 +437,7 @@ export function DrillDown({ kind, query, timeZone, onClose }: { kind: AnalyticsW
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {data.rows.map((r) => <WorkRow key={`${r.kind}-${r.id ?? r.ticketId}-${r.date}`} r={r} timeZone={timeZone} timeKind={timeKind} allocationKind={allocationKind} />)}
+                {data.rows.map((r) => <WorkRow key={`${r.kind}-${r.id ?? r.ticketId}-${r.date}`} r={r} timeZone={timeZone} timeKind={timeKind} allocationKind={allocationKind} linkQs={linkQs} />)}
               </tbody>
             </table>
           )}
@@ -441,12 +456,12 @@ export function DrillDown({ kind, query, timeZone, onClose }: { kind: AnalyticsW
   );
 }
 
-function WorkRow({ r, timeZone, timeKind, allocationKind }: { r: AnalyticsWorkRow; timeZone: string; timeKind: boolean; allocationKind: boolean }) {
+function WorkRow({ r, timeZone, timeKind, allocationKind, linkQs }: { r: AnalyticsWorkRow; timeZone: string; timeKind: boolean; allocationKind: boolean; linkQs: string }) {
   const when = r.kind === 'ticket' && !r.finishedAt ? (r.dueAt ? fmtAt(r.dueAt, timeZone) : '—') : r.at ? fmtAt(r.at, timeZone) : fmtDay(r.date);
   return (
     <tr>
       <td className="px-3 py-2 whitespace-nowrap tabular-nums">{when}</td>
-      <td className="px-3 py-2">{r.appUserId ? <Link href={`/dashboard/workforce/analytics/${r.appUserId}`} className="hover:underline">{r.personName ?? 'Someone'}</Link> : '—'}</td>
+      <td className="px-3 py-2">{r.appUserId ? <Link href={`/dashboard/workforce/analytics/${r.appUserId}${linkQs}`} className="hover:underline">{r.personName ?? 'Someone'}</Link> : '—'}</td>
       <td className="px-3 py-2">
         {r.ticketVisible ? <Link href={`/dashboard/tickets/${r.ticketId}`} className="hover:underline"><span className="font-mono text-xs text-[var(--muted)]">{r.reference}</span> {r.title}</Link> : <span className="text-[var(--muted)]">{r.reference}</span>}
       </td>
@@ -579,12 +594,12 @@ export function WorkforceAnalyticsView() {
                 <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Marked billable</dt><dd className="font-semibold tabular-nums">{dur(t.billableSeconds)}</dd><dd className="text-[11px] text-[var(--muted)]">as marked when logged; invoicing is the PSA&rsquo;s</dd></div>
               </dl>
             </Panel>
-            <Panel title="Planned against actual" hint="Over the period. Positive is more time than planned; neither sign is good or bad.">
+            <Panel title="Planned against actual" hint={`${data.period.endsInFuture ? `Recorded time against the ${mins(t.plannedToDateMinutes)} planned up to today (the period has not ended).` : 'Recorded time against what was planned in the period.'} Positive is more time than planned; neither sign is good or bad.`}>
               <dl className="grid grid-cols-2 gap-2 text-sm">
                 <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Variance</dt><dd className="font-semibold tabular-nums">{signed(t.varianceMinutes)}{t.variancePercent != null && <span className="ml-1 text-xs text-[var(--muted)]">({t.variancePercent > 0 ? '+' : ''}{pct(t.variancePercent)})</span>}</dd></div>
                 <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Estimate variance</dt><dd className="font-semibold tabular-nums">{pct(t.estimateVariancePercent)}</dd><dd className="text-[11px] text-[var(--muted)]">{mins(t.absoluteVarianceMinutes)} over {t.plannedItemsCompared} planned ticket-day{t.plannedItemsCompared === 1 ? '' : 's'}</dd></div>
-                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Planned actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={() => setDrill('planned-actual')} className="hover:underline">{dur(t.plannedActualSeconds)}</button></dd></div>
-                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Reactive actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={() => setDrill('reactive')} className="hover:underline">{dur(t.reactiveActualSeconds)}</button></dd></div>
+                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Planned actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={() => setDrill('planned-actual')} aria-label={`Planned actual: ${dur(t.plannedActualSeconds)}. Show the records`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dur(t.plannedActualSeconds)}</button></dd></div>
+                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Reactive actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={() => setDrill('reactive')} aria-label={`Reactive actual: ${dur(t.reactiveActualSeconds)}. Show the records`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dur(t.reactiveActualSeconds)}</button></dd></div>
               </dl>
             </Panel>
           </div>
@@ -654,9 +669,16 @@ export function WorkforceAnalyticsView() {
           </Panel>
         </>
       )}
-      {drill && data && <DrillDown kind={drill} query={query} timeZone={data.period.timeZone} onClose={() => setDrill(null)} />}
+      {drill && data && <DrillDown kind={drill} query={query} timeZone={data.period.timeZone} onClose={() => setDrill(null)} linkQs={personQs(filters)} />}
     </div>
   );
+}
+
+/** Back to the dashboard with the period and the work filters this page was opened with. */
+export function BackToAnalytics({ children }: { children: ReactNode }) {
+  const sp = useSearchParams();
+  const s = sp.toString();
+  return <Link href={`/dashboard/workforce/analytics${s ? `?${s}` : ''}`} className="inline-flex items-center gap-1 text-sm text-[var(--muted)] hover:text-[var(--fg)]">{children}</Link>;
 }
 
 // ---- one person ------------------------------------------------------------------------------------------------------
@@ -669,7 +691,7 @@ const itemCols: Col<import('@/lib/api').AnalyticsWorkItem>[] = [
   { key: 'variance', label: 'Variance', value: (i) => `${signed(i.varianceMinutes)}${i.variancePercent != null ? ` (${i.variancePercent > 0 ? '+' : ''}${pct(i.variancePercent)})` : ''}`, sort: (i) => i.varianceMinutes ?? 0, right: true },
   { key: 'entries', label: 'Entries', value: (i) => String(i.entries), sort: (i) => i.entries, right: true },
   { key: 'days', label: 'Days', value: (i) => String(i.days), sort: (i) => i.days, right: true },
-  { key: 'state', label: 'State', value: (i) => (i.finished ? 'Finished' : 'Open'), sort: (i) => (i.finished ? 1 : 0) },
+  { key: 'state', label: 'State', value: (i) => (!i.ticketVisible ? '—' : i.finished ? 'Finished' : 'Open'), sort: (i) => (!i.ticketVisible ? -1 : i.finished ? 1 : 0) },
 ];
 
 export function TechnicianAnalyticsView({ appUserId, self }: { appUserId: string; self: boolean }) {
@@ -681,12 +703,12 @@ export function TechnicianAnalyticsView({ appUserId, self }: { appUserId: string
     enabled: filters.period !== 'custom' || !!(filters.from && filters.to),
   });
   const [drill, setDrill] = useState<AnalyticsWorkKind | null>(null);
-  const [show, setShow] = useState<'all' | 'completed' | 'open' | 'reactive'>('all');
+  const [show, setShow] = useState<'all' | 'finished' | 'open' | 'reactive'>('all');
   const series = useMemo(() => (data ? dailySeries(data.daily) : null), [data]);
   const f = data?.person.figures;
   const items = useMemo(() => {
     if (!data) return [];
-    return data.items.filter((i) => show === 'all' || (show === 'completed' ? i.finished : show === 'open' ? !i.finished : i.reactiveActualSeconds > 0));
+    return data.items.filter((i) => show === 'all' || (show === 'finished' ? i.ticketVisible && i.finished : show === 'open' ? i.ticketVisible && !i.finished : i.reactiveActualSeconds > 0));
   }, [data, show]);
   const title = data ? `${data.person.displayName}` : '';
 
@@ -712,7 +734,7 @@ export function TechnicianAnalyticsView({ appUserId, self }: { appUserId: string
             <Figure label="Capacity utilization" value={pct(f.capacityUtilizationPercent)} sub="actual ÷ capacity" title="How much of the capacity was spent on recorded work. Operational, not a score" />
             <Figure label="Completed" value={String(f.completedWork)} sub="unique work items" title="Work items finished in the period and credited to this person" onOpen={() => setDrill('completed')} />
             <Figure label="Reactive" value={dur(f.reactiveActualSeconds)} sub={`${pct(f.reactiveSharePercent)} of actual`} title="Time on work with nothing planned that day" onOpen={() => setDrill('reactive')} />
-            <Figure label="Variance" value={signed(f.varianceMinutes)} sub={f.variancePercent != null ? `${f.variancePercent > 0 ? '+' : ''}${pct(f.variancePercent)}` : 'nothing planned'} title="Actual − planned; neither sign is good or bad" />
+            <Figure label="Variance" value={signed(f.varianceMinutes)} sub={f.variancePercent != null ? `${f.variancePercent > 0 ? '+' : ''}${pct(f.variancePercent)} of ${mins(f.plannedToDateMinutes)} planned${data.period.endsInFuture ? ' so far' : ''}` : f.plannedMinutes > 0 ? 'nothing was due yet' : 'nothing planned'} title="Recorded time − what was planned up to today; neither sign is good or bad" />
             <Figure label="Estimate variance" value={pct(f.estimateVariancePercent)} sub={`${mins(f.absoluteVarianceMinutes)} over ${f.plannedItemsCompared} planned day${f.plannedItemsCompared === 1 ? '' : 's'}`} title="Σ |actual − planned| ÷ Σ planned, over the days that had a plan. Not a quality score" />
             <Figure label="Client work" value={dur(f.clientSeconds)} sub={`internal ${dur(f.internalSeconds)} · monitoring ${dur(f.monitoringSeconds)}`} title="Recorded time by kind of ticket" />
             <Figure label="Marked billable" value={dur(f.billableSeconds)} sub="as marked when logged" title="Entries marked billable; invoicing is the PSA's" />
@@ -729,7 +751,7 @@ export function TechnicianAnalyticsView({ appUserId, self }: { appUserId: string
           <Panel title="Work in this period" hint={`Each ticket once, with its planned and recorded time${data.itemsTruncated ? ' (the first 200 by recorded time; open a card above for everything)' : ''}.`}
             right={
               <div role="group" aria-label="Show" className="flex flex-wrap gap-1 text-xs">
-                {([['all', 'All'], ['completed', 'Completed'], ['open', 'Open'], ['reactive', 'Reactive']] as const).map(([k, label]) => (
+                {([['all', 'All'], ['finished', 'Finished'], ['open', 'Open'], ['reactive', 'Reactive']] as const).map(([k, label]) => (
                   <button key={k} type="button" aria-pressed={show === k} onClick={() => setShow(k)} className={`rounded-full border px-2.5 py-0.5 ${show === k ? 'border-brand bg-brand text-brand-fg' : 'border-[var(--border)]'}`}>{label}</button>
                 ))}
               </div>
@@ -757,7 +779,7 @@ export function TechnicianAnalyticsView({ appUserId, self }: { appUserId: string
           </Panel>
         </>
       )}
-      {drill && data && <DrillDown kind={drill} query={query} timeZone={data.person.timeZone} onClose={() => setDrill(null)} />}
+      {drill && data && <DrillDown kind={drill} query={query} timeZone={data.person.timeZone} onClose={() => setDrill(null)} linkQs={personQs(filters)} />}
     </div>
   );
 }

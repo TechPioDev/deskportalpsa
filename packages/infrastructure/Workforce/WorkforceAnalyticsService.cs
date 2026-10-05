@@ -154,14 +154,15 @@ public sealed class WorkforceAnalyticsService(
             .Select(i =>
             {
                 var m = f.Tickets[i.TicketId];
-                var plannedMin = i.PlannedMinutes;
-                var actualMin = (int)Math.Round(i.ActualSeconds / 60.0, MidpointRounding.AwayFromZero);
+                // As the cards: the plan up to today against all the recorded time, whatever the kind filter.
+                var due = i.PlannedDueMinutes;
+                var recorded = (int)Math.Round(i.RecordedSeconds / 60.0, MidpointRounding.AwayFromZero);
                 return new AnalyticsWorkItemDto(i.TicketId, m.Visible ? m.Reference : HiddenWork, m.Visible ? m.Title : null, m.Visible ? m.ClientName : null,
                     m.SourceName, m.Priority, m.Visible, m.Finished, m.FinishedAt,
-                    plannedMin, i.TentativeMinutes, i.ActualSeconds, i.ReactiveSeconds,
-                    plannedMin > 0 ? actualMin - plannedMin : null, plannedMin > 0 ? Pct(actualMin - plannedMin, plannedMin) : null, i.Entries, i.Days.Count);
+                    i.PlannedMinutes, i.TentativeMinutes, i.ActualSeconds, i.ReactiveSeconds,
+                    due > 0 ? recorded - due : null, due > 0 ? Pct(recorded - due, due) : null, i.Entries, i.Days.Count);
             })
-            .OrderByDescending(i => i.ActualSeconds).ThenByDescending(i => i.PlannedMinutes).ThenBy(i => i.Reference, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(i => i.ActualSeconds).ThenByDescending(i => i.PlannedMinutes).ThenBy(i => i.Reference, StringComparer.OrdinalIgnoreCase).ThenBy(i => i.TicketId)
             .ToList();
 
         return new TechnicianAnalyticsDto(f.Period, f.Now, PersonDto(f, p, t.Person(p.Id)),
@@ -201,11 +202,11 @@ public sealed class WorkforceAnalyticsService(
         static decimal H(long minutes) => Math.Round(minutes / 60m, 2);
         static decimal Hs(long seconds) => Math.Round(seconds / 3600m, 2);
         static string P(double? v) => v is { } x ? x.ToString("0.##", CultureInfo.InvariantCulture) : "N/A";
-        string[] figureHeader = ["Capacity (h)", "Planned (h)", "Tentative (h)", "Actual (h)", "Planned actual (h)", "Reactive (h)", "Reactive share %", "Scheduled utilization %", "Capacity utilization %",
+        string[] figureHeader = ["Capacity (h)", "Planned (h)", "Planned to date (h)", "Tentative (h)", "Actual (h)", "Planned actual (h)", "Reactive (h)", "Reactive share %", "Scheduled utilization %", "Capacity utilization %",
             "Variance (h)", "Estimate variance %", "Completed", "Work items", "Billable (h)", "Client work (h)", "Internal work (h)", "Monitoring work (h)", "Over capacity (h)"];
         object?[] Figures(AnalyticsFiguresDto d) =>
         [
-            d.CapacityMinutes is { } c ? H(c) : "N/A", H(d.PlannedMinutes), H(d.TentativeMinutes), Hs(d.ActualSeconds), Hs(d.PlannedActualSeconds), Hs(d.ReactiveActualSeconds),
+            d.CapacityMinutes is { } c ? H(c) : "N/A", H(d.PlannedMinutes), H(d.PlannedToDateMinutes), H(d.TentativeMinutes), Hs(d.ActualSeconds), Hs(d.PlannedActualSeconds), Hs(d.ReactiveActualSeconds),
             P(d.ReactiveSharePercent), P(d.ScheduledUtilizationPercent), P(d.CapacityUtilizationPercent),
             d.VarianceMinutes is { } v ? H(v) : "N/A", P(d.EstimateVariancePercent), d.CompletedWork, d.WorkItems, Hs(d.BillableSeconds), Hs(d.ClientSeconds), Hs(d.InternalSeconds), Hs(d.MonitoringSeconds), H(d.OverCapacityMinutes),
         ];
@@ -276,14 +277,20 @@ public sealed class WorkforceAnalyticsService(
     {
         public string ClientKey => !Visible ? "hidden" : ClientId?.ToString() ?? "none";
         public string ClientLabel => !Visible ? HiddenWork : ClientName ?? NoClient;
-        public string PriorityKey => string.IsNullOrWhiteSpace(Priority) ? "none" : Priority!;
-        public string PriorityLabel => string.IsNullOrWhiteSpace(Priority) ? NotSet : Priority!;
+        public string PriorityKey => !Visible ? "hidden" : string.IsNullOrWhiteSpace(Priority) ? "none" : Priority!;
+        public string PriorityLabel => !Visible ? HiddenWork : string.IsNullOrWhiteSpace(Priority) ? NotSet : Priority!;
+        /// <summary>The source row a ticket's figures go to; one row for everything the caller cannot open.</summary>
+        public string SourceGroupLabel => !Visible ? HiddenWork : SourceName;
     }
     private sealed record Alloc(Guid Id, Guid AppUserId, Guid TicketId, DateOnly Date, int Minutes, bool Confirmed, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
     private sealed record Entry(Guid Id, Guid AppUserId, Guid TicketId, DateOnly Date, DateTimeOffset At, int Seconds, bool Billable, string? WorkType, TimeEntrySyncStatus Sync);
     private sealed record Live(Guid Id, Guid AppUserId, Guid TicketId, DateOnly Date, DateTimeOffset StartedAt, int Seconds, WorkSessionStatus Status);
     private sealed record Done(Guid TicketId, Guid CreditUserId, DateTimeOffset FinishedAt, DateOnly Date);
-    private sealed record OpenWork(Guid TicketId, Guid HolderId, DateTimeOffset? DueAt, bool Unscheduled, string Status);
+    /// <param name="Paused">The SLA clock is paused (waiting on someone): not late, whatever its date says - the boards' rule.</param>
+    private sealed record OpenWork(Guid TicketId, Guid HolderId, DateTimeOffset? DueAt, bool Unscheduled, string Status, bool Paused)
+    {
+        public bool Overdue(DateTimeOffset now) => !Paused && DueAt < now;
+    }
     private sealed record TicketRow(Guid Id, string? Number, ProviderType? Provider, string? External, string Title, Guid? ClientId, Guid? Conn, string? Priority,
         TicketOrigin Origin, string Status, DateTimeOffset? ResolvedAt, DateTimeOffset? ClosedAt, DateTimeOffset? DueAt);
 
@@ -350,7 +357,7 @@ public sealed class WorkforceAnalyticsService(
         var ids = people.Select(p => p.Id).ToList();
 
         // What work: client, source and priority filters, validated against the organization before use.
-        var filter = await TicketFilterAsync(q, ct);
+        var filter = await TicketFilterAsync(q, callerId, ct);
 
         var teamRows = ids.Count == 0 ? [] : await db.UserTeams.AsNoTracking()
             .Join(db.Teams.AsNoTracking(), m => m.TeamId, t => t.Id, (m, t) => new { m.AppUserId, t.Id, t.Name })
@@ -362,20 +369,28 @@ public sealed class WorkforceAnalyticsService(
         // Capacity exactly as Phase 2 computes it, over the period, in a fixed number of queries.
         var calendar = await WorkforceCalendar.LoadAsync(db, NoAllocations.Instance, callerId, orgZoneId, ids, period.From, period.To, null, ct);
         var cap = new Dictionary<(Guid, DateOnly), int>();
+        // Each person's working windows as real time, so a moment inside a night shift can be placed on the shift's day.
+        var windows = new Dictionary<(Guid, DateOnly), Interval>();
         var withoutSchedule = 0;
         foreach (var p in people)
         {
             if (!calendar.HasSchedule(p.Id)) { withoutSchedule++; continue; }
-            if (!p.IsSchedulable) continue;
             foreach (var input in calendar.InputsFor(p.Id))
             {
-                if (input.Date < period.From || input.Date > period.To) continue;
+                if (input.Window is { IsEmpty: false } window && !input.UnavailableAllDay) windows[(p.Id, input.Date)] = window;
+                if (!p.IsSchedulable || input.Date < period.From || input.Date > period.To) continue;
                 cap[(p.Id, input.Date)] = CapacityCalculator.ForDay(input).UsableMinutes;
             }
         }
 
+        // A person-day is a SHIFT date, as capacity counts it: the calendar date in the person's zone, except
+        // that a moment inside a night shift that began the day before belongs to that shift - so its planned
+        // and recorded time is compared with the capacity of the shift it was worked in, not with a day off.
         DateOnly DateOf(Guid person, DateTimeOffset at)
-            => WorkforceCalendar.LocalDate(at, calendar.Zone(calendar.ZoneId(person, WorkforceCalendar.LocalDate(at, TimeZoneInfo.Utc))));
+        {
+            var local = WorkforceCalendar.LocalDate(at, calendar.Zone(calendar.ZoneId(person, WorkforceCalendar.LocalDate(at, TimeZoneInfo.Utc))));
+            return windows.TryGetValue((person, local.AddDays(-1)), out var shift) && shift.Start <= at && at < shift.End ? local.AddDays(-1) : local;
+        }
         bool InRange(DateOnly d) => d >= period.From && d <= period.To;
 
         // Instants wide enough for any zone's version of these dates; rows are then placed on their person-day.
@@ -386,7 +401,8 @@ public sealed class WorkforceAnalyticsService(
         var entries = new List<Entry>();
         var lives = new List<Live>();
         var completed = new List<Done>();
-        List<OpenWork>? open = null;
+        // Empty, not absent, when nobody matches: the dashboard still gets its "right now" figures (all zero).
+        List<OpenWork>? open = withNow ? [] : null;
         var finishedWithoutDate = 0;
         if (ids.Count > 0)
         {
@@ -420,7 +436,10 @@ public sealed class WorkforceAnalyticsService(
                 .Where(t => (t.ResolvedAt ?? t.ClosedAt) >= cLo && (t.ResolvedAt ?? t.ClosedAt) <= cHi)
                 .Where(t => (t.ResolvedByAppUserId != null && ids.Contains(t.ResolvedByAppUserId.Value))
                             || (t.ResolvedByAppUserId == null && t.AssignedAppUserId != null && ids.Contains(t.AssignedAppUserId.Value))
-                            || (t.ResolvedByAppUserId == null && t.AssignedAppUserId == null && t.AssignedTechnicianExternalId != null && t.PsaConnectionId != null));
+                            // Held by a PSA login only: counted when that login is linked to someone in scope. The link is part
+                            // of the query, so a desk's whole year of PSA-side closures is never loaded to be thrown away.
+                            || (t.ResolvedByAppUserId == null && t.AssignedAppUserId == null && t.AssignedTechnicianExternalId != null && t.PsaConnectionId != null
+                                && db.UserPsaIdentities.Any(i => i.PsaConnectionId == t.PsaConnectionId && i.ExternalTechnicianId == t.AssignedTechnicianExternalId && ids.Contains(i.AppUserId))));
             var done = await cq.Select(t => new { t.Id, t.ResolvedByAppUserId, t.AssignedAppUserId, t.AssignedTechnicianExternalId, t.PsaConnectionId, FinishedAt = (t.ResolvedAt ?? t.ClosedAt)!.Value }).ToListAsync(ct);
             var links = await PsaLinks.LoadAsync(db, ct);
             var idSet = ids.ToHashSet();
@@ -439,9 +458,9 @@ public sealed class WorkforceAnalyticsService(
                     .Where(t => t.AssignedAppUserId != null && ids.Contains(t.AssignedAppUserId.Value));
                 open = (await oq.Select(t => new
                 {
-                    t.Id, Holder = t.AssignedAppUserId!.Value, t.SlaDueAt, t.PortalStatus,
+                    t.Id, Holder = t.AssignedAppUserId!.Value, t.SlaDueAt, t.PortalStatus, Paused = t.SlaPausedAt != null,
                     Unscheduled = !db.WorkAllocations.Any(a => a.TicketId == t.Id && a.EndsAt > now && (a.Status == WorkAllocationStatus.Planned || a.Status == WorkAllocationStatus.Tentative)),
-                }).ToListAsync(ct)).Select(t => new OpenWork(t.Id, t.Holder, t.SlaDueAt, t.Unscheduled, t.PortalStatus)).ToList();
+                }).ToListAsync(ct)).Select(t => new OpenWork(t.Id, t.Holder, t.SlaDueAt, t.Unscheduled, t.PortalStatus, t.Paused)).ToList();
             }
         }
 
@@ -465,22 +484,30 @@ public sealed class WorkforceAnalyticsService(
         {
             var soon = now.AddHours(TicketStatusRules.DueSoonHours);
             var week = now.AddDays(7);
-            facts.NowDto = new WorkNowDto(now, open.Count, open.Count(o => o.Unscheduled), open.Count(o => o.DueAt < now),
-                open.Count(o => o.DueAt is { } d && d >= now && WorkforceCalendar.LocalDate(d, orgZone) == today),
-                open.Count(o => o.DueAt is { } d && d >= now && d <= soon),
-                open.Count(o => o.Unscheduled && o.DueAt is { } d && d <= week));
+            facts.NowDto = new WorkNowDto(now, open.Count, open.Count(o => o.Unscheduled), open.Count(o => o.Overdue(now)),
+                open.Count(o => !o.Paused && o.DueAt is { } d && d >= now && WorkforceCalendar.LocalDate(d, orgZone) == today),
+                open.Count(o => !o.Paused && o.DueAt is { } d && d >= now && d <= soon),
+                open.Count(o => o.Unscheduled && !o.Paused && o.DueAt is { } d && d <= week));
         }
         return facts;
     }
 
     private sealed record TicketFilter(IQueryable<Guid>? Ids, Func<IQueryable<Ticket>, IQueryable<Ticket>> Apply);
 
-    /// <summary>The client, source and priority filters as a query over tickets; an id that is not this organization's is "not found".</summary>
-    private async Task<TicketFilter> TicketFilterAsync(AnalyticsQuery q, CancellationToken ct)
+    /// <summary>
+    /// The client, source and priority filters as a query over tickets; an id that is not this
+    /// organization's is "not found". A filter on something a ticket says about itself (its client, its
+    /// PSA connection, its priority) matches only tickets the caller may open: otherwise filtering by a
+    /// client would show how much time went into a ticket the caller cannot see, and so whose it is.
+    /// The kind of work (client / internal / monitoring) is known for every ticket and is not narrowed.
+    /// </summary>
+    private async Task<TicketFilter> TicketFilterAsync(AnalyticsQuery q, Guid callerId, CancellationToken ct)
     {
         var predicates = new List<Func<IQueryable<Ticket>, IQueryable<Ticket>>>();
+        var readsTheTicket = false;
         if (q.ClientId is { } client)
         {
+            readsTheTicket = true;
             if (!await db.ClientCompanies.AnyAsync(c => c.Id == client, ct)) throw new NotFoundException("Client");
             predicates.Add(t => t.Where(x => x.ClientCompanyId == client));
         }
@@ -491,6 +518,7 @@ public sealed class WorkforceAnalyticsService(
             {
                 if (!Guid.TryParse(source[4..], out var connection)) throw new ValidationFailedException("The source is not a PSA connection id.");
                 if (!await db.PsaConnections.AnyAsync(c => c.Id == connection, ct)) throw new NotFoundException("Connection");
+                readsTheTicket = true;
                 predicates.Add(t => t.Where(x => x.PsaConnectionId == connection));
             }
             else predicates.Add(source switch
@@ -505,9 +533,15 @@ public sealed class WorkforceAnalyticsService(
         {
             var priority = q.Priority.Trim().ToUpperInvariant();
             if (priority.Length > 40) throw new ValidationFailedException("The priority filter is too long.");
+            readsTheTicket = true;
             predicates.Add(t => t.Where(x => x.PortalPriority != null && x.PortalPriority.ToUpper() == priority));
         }
         if (predicates.Count == 0) return new TicketFilter(null, t => t);
+        if (readsTheTicket)
+        {
+            var mayOpen = (await tickets.VisibleAsync(db.Tickets.AsNoTracking(), callerId, Permissions.TicketsViewAll, ct)).Select(t => t.Id);
+            predicates.Add(t => t.Where(x => mayOpen.Contains(x.Id)));
+        }
         IQueryable<Ticket> Apply(IQueryable<Ticket> t) { foreach (var p in predicates) t = p(t); return t; }
         return new TicketFilter(Apply(db.Tickets.AsNoTracking()).Select(t => t.Id), Apply);
     }
@@ -534,16 +568,20 @@ public sealed class WorkforceAnalyticsService(
             : await db.ClientCompanies.AsNoTracking().Where(c => clientIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
         foreach (var r in rows)
         {
-            var (sourceKey, sourceName) = r.Origin switch
+            var mayOpen = visible.Contains(r.Id);
+            // What kind of work it is, in general terms: all a caller learns of a ticket they cannot open (as My day and the plan say it).
+            var generic = r.Origin switch { TicketOrigin.Internal => "Team boards", TicketOrigin.Rmm => "Monitoring", _ => WorkPlanService.Source(r.Origin, r.Provider) };
+            var (sourceKey, sourceName) = !mayOpen ? ("hidden", generic) : r.Origin switch
             {
-                TicketOrigin.Internal => ("internal", "Team boards"),
-                TicketOrigin.Rmm => ("monitoring", "Monitoring"),
-                _ => r.Conn is { } c ? ("psa:" + c, connections.GetValueOrDefault(c) ?? WorkPlanService.Source(r.Origin, r.Provider)) : ("client", WorkPlanService.Source(r.Origin, r.Provider)),
+                TicketOrigin.Internal => ("internal", generic),
+                TicketOrigin.Rmm => ("monitoring", generic),
+                _ => r.Conn is { } c ? ("psa:" + c, connections.GetValueOrDefault(c) ?? generic) : ("client", generic),
             };
-            var finished = TicketStatusRules.Finished(r.Status);
-            result[r.Id] = new TicketMeta(r.Id, WorkPlanService.Reference(r.Number, r.Provider, r.External), r.Title, r.ClientId,
-                r.ClientId is { } cid ? clients.GetValueOrDefault(cid) : null, sourceKey, sourceName, Blank(r.Priority), r.Origin,
-                visible.Contains(r.Id), finished, finished ? r.ResolvedAt ?? r.ClosedAt : null, r.DueAt, r.Status);
+            var finished = mayOpen && TicketStatusRules.Finished(r.Status);
+            // Title, client, priority, status, due date and completion are the ticket's own: only for someone who may open it.
+            result[r.Id] = new TicketMeta(r.Id, WorkPlanService.Reference(r.Number, r.Provider, r.External), mayOpen ? r.Title : null, mayOpen ? r.ClientId : null,
+                mayOpen && r.ClientId is { } cid ? clients.GetValueOrDefault(cid) : null, sourceKey, sourceName, mayOpen ? Blank(r.Priority) : null, r.Origin,
+                mayOpen, finished, finished ? r.ResolvedAt ?? r.ClosedAt : null, mayOpen ? r.DueAt : null, mayOpen ? r.Status : "");
         }
         return result;
     }
@@ -561,6 +599,8 @@ public sealed class WorkforceAnalyticsService(
     {
         public bool HasCapacity;
         public long Capacity, Planned, Tentative;
+        /// <summary>Confirmed planned minutes on days up to and including today: what the recorded time is compared with.</summary>
+        public long PlannedDue;
         public long Actual, PlannedActual, Reactive, Live, Billable, Client, Internal, Monitoring;
         /// <summary>Every recorded second whatever the kind filter: what the plan is compared with.</summary>
         public long Recorded;
@@ -571,7 +611,7 @@ public sealed class WorkforceAnalyticsService(
         public readonly HashSet<Guid> Completed = [], Items = [], ReactiveItems = [], People = [];
 
         public void AddCapacity(int minutes) { HasCapacity = true; Capacity += minutes; }
-        public void AddPlanned(int planned, int tentative) { Planned += planned; Tentative += tentative; }
+        public void AddPlanned(int planned, int tentative, bool due) { Planned += planned; Tentative += tentative; if (due) PlannedDue += planned; }
         public void AddOver(int minutes) { if (minutes <= 0) return; Over += minutes; OverDays++; }
         public void AddActual(Guid person, Guid ticket, int seconds, bool planned, int live, int billable, TicketOrigin origin)
         {
@@ -584,10 +624,11 @@ public sealed class WorkforceAnalyticsService(
             Items.Add(ticket);
             People.Add(person);
         }
-        public void AddVariance(int plannedMinutes, int actualSeconds)
+        /// <param name="due">The day is today or earlier: a plan for a later day is not compared with anything yet.</param>
+        public void AddVariance(int plannedMinutes, int actualSeconds, bool due)
         {
             Recorded += actualSeconds;
-            if (plannedMinutes <= 0) return;
+            if (!due || plannedMinutes <= 0) return;
             var actualMinutes = (int)Math.Round(actualSeconds / 60.0, MidpointRounding.AwayFromZero);
             AbsVariance += Math.Abs(actualMinutes - plannedMinutes);
             PlannedCompared += plannedMinutes;
@@ -596,15 +637,16 @@ public sealed class WorkforceAnalyticsService(
 
         public AnalyticsFiguresDto ToDto()
         {
-            var actualMinutes = (int)Math.Round(Actual / 60.0, MidpointRounding.AwayFromZero);
-            // Variance is the plan against all the recorded time: the kind filter narrows what is counted as actual, never what the plan is compared with.
-            var recordedMinutes = (int)Math.Round(Recorded / 60.0, MidpointRounding.AwayFromZero);
+            var actualMinutes = (long)Math.Round(Actual / 60.0, MidpointRounding.AwayFromZero);
+            // Variance is the plan to date against all the recorded time: the kind filter narrows what is counted as actual, never
+            // what the plan is compared with, and work planned for a later day of a running period is not "behind" yet.
+            var recordedMinutes = (long)Math.Round(Recorded / 60.0, MidpointRounding.AwayFromZero);
             int? cap = HasCapacity ? (int)Capacity : null;
             return new AnalyticsFiguresDto(
-                cap, (int)Planned, (int)Tentative,
-                (int)Actual, (int)PlannedActual, (int)Reactive, (int)Live, (int)Billable, (int)Client, (int)Internal, (int)Monitoring,
+                cap, (int)Planned, (int)PlannedDue, (int)Tentative,
+                Actual, PlannedActual, Reactive, Live, Billable, Client, Internal, Monitoring,
                 cap is > 0 ? Pct(Planned, cap.Value) : null, cap is > 0 ? Pct(actualMinutes, cap.Value) : null, Actual > 0 ? Pct(Reactive, Actual) : null,
-                Planned > 0 ? recordedMinutes - (int)Planned : null, Planned > 0 ? Pct(recordedMinutes - Planned, Planned) : null,
+                PlannedDue > 0 ? (int)(recordedMinutes - PlannedDue) : null, PlannedDue > 0 ? Pct(recordedMinutes - PlannedDue, PlannedDue) : null,
                 (int)AbsVariance, PlannedCompared > 0 ? Pct(AbsVariance, PlannedCompared) : null, Compared,
                 (int)Over, OverDays,
                 Completed.Count, Items.Count, ReactiveItems.Count);
@@ -615,6 +657,8 @@ public sealed class WorkforceAnalyticsService(
     {
         public Guid TicketId = ticketId;
         public int PlannedMinutes, TentativeMinutes, ActualSeconds, ReactiveSeconds, Entries;
+        /// <summary>What the item's variance compares: planned up to today, and every recorded second whatever the kind filter.</summary>
+        public int PlannedDueMinutes, RecordedSeconds;
         public readonly HashSet<DateOnly> Days = [];
     }
 
@@ -626,7 +670,8 @@ public sealed class WorkforceAnalyticsService(
         public readonly Dictionary<Guid, Tally> Teams = [];
         public readonly Dictionary<string, (string Name, Tally Tally)> Clients = [], Sources = [], Priorities = [], WorkTypes = [];
         private readonly Dictionary<DateOnly, Tally> _days = [];
-        public readonly Dictionary<(Guid, DateOnly), Tally> Cells = [];
+        /// <summary>The heatmap's cells, kept only when there is a heatmap (a year of a thousand people is 366,000 of them).</summary>
+        public readonly Dictionary<(Guid, DateOnly), (int Planned, int Actual)> Cells = [];
         public readonly Dictionary<Guid, ItemTally> Items = [];
 
         public Tally Person(Guid id) => Get(_people, id);
@@ -652,8 +697,8 @@ public sealed class WorkforceAnalyticsService(
                 yield return t.Person(p);
                 foreach (var team in teamsOf.GetValueOrDefault(p) ?? []) yield return Get(t.Teams, team);
                 yield return t.Day(d);
-                yield return Get(t.Cells, (p, d));
             }
+            var heat = f.Period.Days <= HeatmapMaxDays;
 
             // Planned per person-day and per person-ticket-day, from the allocations themselves.
             var dayPlan = new Dictionary<(Guid, DateOnly), (int Planned, int Tentative)>();
@@ -678,9 +723,10 @@ public sealed class WorkforceAnalyticsService(
                     foreach (var tally in PersonDayTallies(p.Id, d))
                     {
                         if (cap is { } c) tally.AddCapacity(c);
-                        tally.AddPlanned(plan.Planned, plan.Tentative);
+                        tally.AddPlanned(plan.Planned, plan.Tentative, d <= f.Today);
                         if (cap is { } c2) tally.AddOver(plan.Planned - c2);
                     }
+                    if (heat && plan.Planned > 0) t.Cells[(p.Id, d)] = (plan.Planned, 0);
                 }
             }
 
@@ -708,22 +754,30 @@ public sealed class WorkforceAnalyticsService(
                 var actual = itemActual.GetValueOrDefault(key);
                 var counted = f.Kind switch { ActualKindFilter.Planned => planned, ActualKindFilter.Reactive => !planned, _ => true };
                 var seconds = counted ? actual.Seconds : 0;
+                var due = d <= f.Today;
 
                 // Planned minutes reach the client, source and priority rows here (they have no person-day of their own).
-                foreach (var g in new[] { Get(t.Clients, m.ClientKey, m.ClientLabel), Get(t.Sources, m.SourceKey, m.SourceName), Get(t.Priorities, m.PriorityKey, m.PriorityLabel) })
+                foreach (var g in new[] { Get(t.Clients, m.ClientKey, m.ClientLabel), Get(t.Sources, m.SourceKey, m.SourceGroupLabel), Get(t.Priorities, m.PriorityKey, m.PriorityLabel) })
                 {
-                    g.AddPlanned(plan.Planned, plan.Tentative);
+                    g.AddPlanned(plan.Planned, plan.Tentative, due);
                     g.AddActual(p, ticketId, seconds, planned, counted ? actual.Live : 0, counted ? actual.Billable : 0, m.Origin);
-                    g.AddVariance(plan.Planned, actual.Seconds);
+                    g.AddVariance(plan.Planned, actual.Seconds, due);
                 }
                 foreach (var tally in PersonDayTallies(p, d))
                 {
                     tally.AddActual(p, ticketId, seconds, planned, counted ? actual.Live : 0, counted ? actual.Billable : 0, m.Origin);
-                    tally.AddVariance(plan.Planned, actual.Seconds);
+                    tally.AddVariance(plan.Planned, actual.Seconds, due);
+                }
+                if (heat && seconds > 0)
+                {
+                    var cell = t.Cells.GetValueOrDefault((p, d));
+                    t.Cells[(p, d)] = (cell.Planned, cell.Actual + seconds);
                 }
                 if (!t.Items.TryGetValue(ticketId, out var item)) t.Items[ticketId] = item = new ItemTally(ticketId);
                 item.PlannedMinutes += plan.Planned;
                 item.TentativeMinutes += plan.Tentative;
+                if (due) item.PlannedDueMinutes += plan.Planned;
+                item.RecordedSeconds += actual.Seconds;
                 item.ActualSeconds += seconds;
                 if (!planned) item.ReactiveSeconds += seconds;
                 item.Entries += counted ? actual.Entries : 0;
@@ -755,7 +809,7 @@ public sealed class WorkforceAnalyticsService(
                 foreach (var team in teamsOf.GetValueOrDefault(c.CreditUserId) ?? []) Get(t.Teams, team).Completed.Add(c.TicketId);
                 if (c.Date >= f.Period.From && c.Date <= f.Period.To) t.Day(c.Date).Completed.Add(c.TicketId);
                 Get(t.Clients, m.ClientKey, m.ClientLabel).Completed.Add(c.TicketId);
-                Get(t.Sources, m.SourceKey, m.SourceName).Completed.Add(c.TicketId);
+                Get(t.Sources, m.SourceKey, m.SourceGroupLabel).Completed.Add(c.TicketId);
                 Get(t.Priorities, m.PriorityKey, m.PriorityLabel).Completed.Add(c.TicketId);
             }
             return t;
@@ -766,10 +820,12 @@ public sealed class WorkforceAnalyticsService(
 
     /// <summary>The team rows, in name order; with a team filter, that team only (its members' other teams would be half-rows).</summary>
     private static List<AnalyticsGroupDto> TeamGroups(Facts f, Tallies t, Guid? only)
-        => t.Teams.Where(x => only is null || x.Key == only)
-            .OrderBy(x => f.TeamNames.GetValueOrDefault(x.Key, ""), StringComparer.OrdinalIgnoreCase)
-            .Select(x => new AnalyticsGroupDto(x.Key.ToString(), f.TeamNames.GetValueOrDefault(x.Key, "Team"),
-                f.People.Count(p => f.TeamIdsOf.GetValueOrDefault(p.Id)?.Contains(x.Key) == true), x.Value.ToDto())).ToList();
+    {
+        var members = f.TeamIdsOf.Values.SelectMany(teams => teams).GroupBy(team => team).ToDictionary(g => g.Key, g => g.Count());
+        return t.Teams.Where(x => only is null || x.Key == only)
+            .OrderBy(x => f.TeamNames.GetValueOrDefault(x.Key, ""), StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Key)
+            .Select(x => new AnalyticsGroupDto(x.Key.ToString(), f.TeamNames.GetValueOrDefault(x.Key, "Team"), members.GetValueOrDefault(x.Key), x.Value.ToDto())).ToList();
+    }
 
     private static AnalyticsPersonDto PersonDto(Facts f, Person p, Tally t)
         => new(p.Id, p.Name, f.TeamsOf.GetValueOrDefault(p.Id) ?? [], p.IsSchedulable, f.Calendar.HasSchedule(p.Id), f.ZoneOf(p.Id, f.Period.From), t.ToDto());
@@ -777,7 +833,7 @@ public sealed class WorkforceAnalyticsService(
     private static List<AnalyticsGroupDto> Groups(Dictionary<string, (string Name, Tally Tally)> groups, Facts f)
         => groups.Where(g => g.Value.Tally.Actual > 0 || g.Value.Tally.Planned > 0 || g.Value.Tally.Tentative > 0 || g.Value.Tally.Completed.Count > 0)
             .Select(g => new AnalyticsGroupDto(g.Key, g.Value.Name, g.Value.Tally.People.Count, g.Value.Tally.ToDto()))
-            .OrderByDescending(g => g.Figures.ActualSeconds).ThenByDescending(g => g.Figures.PlannedMinutes).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            .OrderByDescending(g => g.Figures.ActualSeconds).ThenByDescending(g => g.Figures.PlannedMinutes).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ThenBy(g => g.Key, StringComparer.Ordinal).ToList();
 
     private static HeatmapDto Heatmap(Facts f, Tallies t)
     {
@@ -787,7 +843,7 @@ public sealed class WorkforceAnalyticsService(
         var rows = shown.Select(p => new HeatmapRowDto(p.Id, p.Name, f.Dates.Select(d =>
         {
             var cell = t.Cells.GetValueOrDefault((p.Id, d));
-            return new HeatmapCellDto(f.CapacityOf(p, d), (int)(cell?.Planned ?? 0), (int)(cell?.Actual ?? 0));
+            return new HeatmapCellDto(f.CapacityOf(p, d), cell.Planned, cell.Actual);
         }).ToList())).ToList();
         return new HeatmapDto(f.Dates, rows, f.People.Count, f.People.Count > shown.Count, null);
     }
@@ -795,12 +851,13 @@ public sealed class WorkforceAnalyticsService(
     private static List<string> Notes(Facts f, Tallies t)
     {
         var notes = new List<string>();
-        if (f.Period.EndsInFuture) notes.Add("This period has not ended: its later days hold capacity but no recorded time yet, so utilization reads low until it is over.");
-        if (t.Total.Live > 0) notes.Add($"{Duration(t.Total.Live)} on clocks still running is included in today's actual time.");
+        if (f.Period.EndsInFuture) notes.Add("This period has not ended: its later days hold capacity but no recorded time yet, so utilization reads low until it is over. Variance compares the recorded time with what was planned up to today.");
+        if (t.Total.Live > 0) notes.Add($"{Duration(t.Total.Live)} on clocks not yet stopped (running or paused) is included in the actual time.");
         if (f.WithoutSchedule > 0) notes.Add($"{People(f.WithoutSchedule)} no working schedule, so their capacity is 0 and their utilization is N/A.");
-        if (f.NotOffered > 0) notes.Add($"{People(f.NotOffered)} not offered for planned work; their recorded time counts, their capacity does not.");
+        if (f.NotOffered > 0) notes.Add($"{(f.NotOffered == 1 ? "1 person is" : $"{f.NotOffered} people are")} not offered for planned work; their recorded time counts, their capacity does not.");
         if (f.FinishedWithoutDate > 0) notes.Add($"{f.FinishedWithoutDate} finished work item{(f.FinishedWithoutDate == 1 ? " has" : "s have")} no completion date and {(f.FinishedWithoutDate == 1 ? "is" : "are")} in no period.");
         if (f.People.Any(p => (f.TeamIdsOf.GetValueOrDefault(p.Id)?.Count ?? 0) > 1)) notes.Add("A person in more than one team appears under each of them; the organization total counts them once.");
+        if (t.Clients.ContainsKey("hidden")) notes.Add("Some recorded or planned time is on work you cannot open: its time counts, and it is listed as one row without its client, source or priority.");
         notes.Add("Time entered directly in a PSA has no portal row and is not in any day's actual time; it reaches the ticket's totals only.");
         if (f.Kind != ActualKindFilter.All) notes.Add($"Only {(f.Kind == ActualKindFilter.Planned ? "planned" : "reactive")} work's recorded time is counted; planned minutes, capacity and variance are unchanged.");
         return notes;
@@ -815,6 +872,8 @@ public sealed class WorkforceAnalyticsService(
         AnalyticsWorkRowDto Row(string rowKind, Guid? id, DateOnly date, DateTimeOffset? at, Guid? person, TicketMeta m, int? minutes, int? seconds, bool? billable, bool? planned, string? status, DateTimeOffset? due, DateTimeOffset? finished)
             => new(rowKind, id, date, at, person, person is { } p ? names.GetValueOrDefault(p) : null, m.Id, m.Visible ? m.Reference : HiddenWork, m.Visible ? m.Title : null,
                 m.Visible ? m.ClientName : null, m.SourceName, m.Priority, m.Visible, minutes, seconds, billable, planned, status, m.Visible ? due : null, finished);
+        // The same order on every page: a full sort, down to the row's own id, since each page is a fresh load.
+        static Guid Tie(AnalyticsWorkRowDto r) => r.Id ?? r.TicketId;
 
         switch (kind)
         {
@@ -822,12 +881,10 @@ public sealed class WorkforceAnalyticsService(
             case AnalyticsWorkKind.PlannedActual:
             case AnalyticsWorkKind.Reactive:
             {
-                bool Wanted(bool planned) => kind switch
-                {
-                    AnalyticsWorkKind.PlannedActual => planned,
-                    AnalyticsWorkKind.Reactive => !planned,
-                    _ => f.Kind switch { ActualKindFilter.Planned => planned, ActualKindFilter.Reactive => !planned, _ => true },
-                };
+                // Both the list asked for and the dashboard's kind filter: a card that reads 0 opens an empty list.
+                bool Wanted(bool planned)
+                    => (kind switch { AnalyticsWorkKind.PlannedActual => planned, AnalyticsWorkKind.Reactive => !planned, _ => true })
+                       && (f.Kind switch { ActualKindFilter.Planned => planned, ActualKindFilter.Reactive => !planned, _ => true });
                 var rows = new List<AnalyticsWorkRowDto>();
                 foreach (var e in f.Entries)
                 {
@@ -843,17 +900,17 @@ public sealed class WorkforceAnalyticsService(
                     rows.Add(Row("live", l.Id, l.Date, l.StartedAt, l.AppUserId, Meta(l.TicketId), (int)Math.Round(l.Seconds / 60.0, MidpointRounding.AwayFromZero), l.Seconds, null, planned,
                         l.Status == WorkSessionStatus.Active ? "Running" : "Paused", null, null));
                 }
-                return rows.OrderByDescending(r => r.Date).ThenByDescending(r => r.At).ThenBy(r => r.PersonName, StringComparer.OrdinalIgnoreCase).ToList();
+                return rows.OrderByDescending(r => r.Date).ThenByDescending(r => r.At).ThenBy(r => r.PersonName, StringComparer.OrdinalIgnoreCase).ThenBy(Tie).ToList();
             }
             case AnalyticsWorkKind.Planned:
             case AnalyticsWorkKind.Tentative:
                 return f.Allocations.Where(a => a.Confirmed == (kind == AnalyticsWorkKind.Planned))
                     .Select(a => Row("allocation", a.Id, a.Date, a.StartsAt, a.AppUserId, Meta(a.TicketId), a.Minutes, null, null, true, a.Confirmed ? "Planned" : "Tentative", null, null))
-                    .OrderByDescending(r => r.Date).ThenByDescending(r => r.At).ThenBy(r => r.PersonName, StringComparer.OrdinalIgnoreCase).ToList();
+                    .OrderByDescending(r => r.Date).ThenByDescending(r => r.At).ThenBy(r => r.PersonName, StringComparer.OrdinalIgnoreCase).ThenBy(Tie).ToList();
             case AnalyticsWorkKind.Completed:
                 return f.Completed
-                    .Select(c => { var m = Meta(c.TicketId); return Row("ticket", c.TicketId, c.Date, c.FinishedAt, c.CreditUserId, m, null, null, null, null, m.Status, null, c.FinishedAt); })
-                    .OrderByDescending(r => r.FinishedAt).ThenBy(r => r.Reference, StringComparer.OrdinalIgnoreCase).ToList();
+                    .Select(c => { var m = Meta(c.TicketId); return Row("ticket", c.TicketId, c.Date, c.FinishedAt, c.CreditUserId, m, null, null, null, null, Blank(m.Status), null, c.FinishedAt); })
+                    .OrderByDescending(r => r.FinishedAt).ThenBy(r => r.Reference, StringComparer.OrdinalIgnoreCase).ThenBy(Tie).ToList();
             default:
             {
                 var open = f.Open ?? [];
@@ -861,11 +918,11 @@ public sealed class WorkforceAnalyticsService(
                 open = kind switch
                 {
                     AnalyticsWorkKind.Unscheduled => open.Where(o => o.Unscheduled).ToList(),
-                    AnalyticsWorkKind.Overdue => open.Where(o => o.DueAt < now).ToList(),
+                    AnalyticsWorkKind.Overdue => open.Where(o => o.Overdue(now)).ToList(),
                     _ => open,
                 };
-                return open.Select(o => { var m = Meta(o.TicketId); return Row("ticket", o.TicketId, f.Today, null, o.HolderId, m, null, null, null, !o.Unscheduled, o.Status, o.DueAt, null); })
-                    .OrderBy(r => r.DueAt ?? DateTimeOffset.MaxValue).ThenBy(r => r.Reference, StringComparer.OrdinalIgnoreCase).ToList();
+                return open.Select(o => { var m = Meta(o.TicketId); return Row("ticket", o.TicketId, f.Today, null, o.HolderId, m, null, null, null, !o.Unscheduled, m.Visible ? o.Status : null, o.DueAt, null); })
+                    .OrderBy(r => r.DueAt ?? DateTimeOffset.MaxValue).ThenBy(r => r.Reference, StringComparer.OrdinalIgnoreCase).ThenBy(Tie).ToList();
             }
         }
     }

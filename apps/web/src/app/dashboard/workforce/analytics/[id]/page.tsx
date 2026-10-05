@@ -1,13 +1,12 @@
 'use client';
 
 import { Suspense } from 'react';
-import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, UserRound } from 'lucide-react';
 import { api } from '@/lib/api';
 import { WorkforceNav } from '@/components/WorkforceCapacity';
-import { TechnicianAnalyticsView } from '@/components/WorkforceAnalytics';
+import { BackToAnalytics, TechnicianAnalyticsView } from '@/components/WorkforceAnalytics';
 
 /** One person's work analytics over a period: their figures, their days and the work behind them. Facts, not a score. */
 export default function TechnicianAnalyticsPage() {
@@ -17,7 +16,7 @@ export default function TechnicianAnalyticsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <Link href="/dashboard/workforce/analytics" className="inline-flex items-center gap-1 text-sm text-[var(--muted)] hover:text-[var(--fg)]"><ChevronLeft size={14} aria-hidden="true" /> Workforce analytics</Link>
+        <Suspense fallback={null}><BackToAnalytics><ChevronLeft size={14} aria-hidden="true" /> Workforce analytics</BackToAnalytics></Suspense>
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight"><UserRound size={22} className="text-brand" aria-hidden="true" /> Technician work analytics</h1>
         <p className="max-w-prose text-sm text-[var(--muted)]">Capacity, planned and recorded work, utilization and the work items behind them, for one person over a period. Operational facts: not attendance, not a performance score.</p>
       </div>

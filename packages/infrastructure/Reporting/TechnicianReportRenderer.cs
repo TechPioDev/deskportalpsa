@@ -52,7 +52,8 @@ public static class TechnicianReportRenderer
             IFormattable f => f.ToString(null, Inv),
             _ => value.ToString() ?? "",
         };
-        if (s.Length > 0 && value is string && "=+-@".Contains(s[0])) s = "'" + s;
+        // "= + - @" start a formula; a leading tab or carriage return is stripped by some spreadsheets, uncovering one behind it.
+        if (s.Length > 0 && value is string && "=+-@\t\r".Contains(s[0])) s = "'" + s;
         return s.IndexOfAny([',', '"', '\n', '\r']) >= 0 ? $"\"{s.Replace("\"", "\"\"")}\"" : s;
     }
 

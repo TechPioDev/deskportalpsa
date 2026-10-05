@@ -49,15 +49,16 @@ public sealed record AnalyticsPeriodDto(string Key, DateOnly From, DateOnly To, 
 /// denominator is null: N/A, never 0 %. Nothing here is a score.
 /// </summary>
 /// <param name="CapacityMinutes">Null where capacity does not apply (a client, a source, a person not offered for planned work).</param>
+/// <param name="PlannedToDateMinutes">Confirmed planned minutes on days up to and including today: what variance compares with, so work planned for later in a running period is not yet "behind".</param>
 /// <param name="LiveSeconds">How much of <paramref name="ActualSeconds"/> is clocks still running.</param>
 /// <param name="BillableSeconds">Entries marked billable when logged; live clocks are not yet marked.</param>
-/// <param name="VarianceMinutes">Actual − planned, only when something was planned.</param>
+/// <param name="VarianceMinutes">All recorded time − planned to date, only when something was planned by today.</param>
 /// <param name="AbsoluteVarianceMinutes">Σ |actual − planned| over person-ticket-days with a plan: estimate variance, not a quality score.</param>
 /// <param name="OverCapacityMinutes">Confirmed planned time beyond a person-day's capacity (an override put it there).</param>
 public sealed record AnalyticsFiguresDto(
-    int? CapacityMinutes, int PlannedMinutes, int TentativeMinutes,
-    int ActualSeconds, int PlannedActualSeconds, int ReactiveActualSeconds, int LiveSeconds, int BillableSeconds,
-    int ClientSeconds, int InternalSeconds, int MonitoringSeconds,
+    int? CapacityMinutes, int PlannedMinutes, int PlannedToDateMinutes, int TentativeMinutes,
+    long ActualSeconds, long PlannedActualSeconds, long ReactiveActualSeconds, long LiveSeconds, long BillableSeconds,
+    long ClientSeconds, long InternalSeconds, long MonitoringSeconds,
     double? ScheduledUtilizationPercent, double? CapacityUtilizationPercent, double? ReactiveSharePercent,
     int? VarianceMinutes, double? VariancePercent,
     int AbsoluteVarianceMinutes, double? EstimateVariancePercent, int PlannedItemsCompared,
@@ -73,7 +74,7 @@ public sealed record AnalyticsGroupDto(string Key, string Name, int People, Anal
 
 public sealed record AnalyticsDayDto(DateOnly Date, AnalyticsFiguresDto Figures);
 
-/// <summary>Open work held by the people in scope as of <paramref name="AsOf"/>: not period-bound.</summary>
+/// <summary>Open work held by the people in scope as of <paramref name="AsOf"/>: not period-bound. The due figures leave out work whose SLA clock is paused, as the boards do.</summary>
 public sealed record WorkNowDto(DateTimeOffset AsOf, int Open, int Unscheduled, int Overdue, int DueToday, int DueSoon, int UnscheduledDue);
 
 /// <summary>Capacity against demand for the period; confirmed and tentative are never merged.</summary>
