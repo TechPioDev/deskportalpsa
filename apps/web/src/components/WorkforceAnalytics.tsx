@@ -163,14 +163,17 @@ function Panel({ title, hint, children, right }: { title: string; hint?: string;
   );
 }
 
-/** One figure. Where a card opens its records, the value itself is the button. */
+/**
+ * One figure. Where a card opens its records, the value itself is the button. It takes focus when
+ * clicked (Safari does not focus a clicked button by itself), so the dialog can hand focus back to it.
+ */
 function Figure({ label, value, sub, title, onOpen }: { label: string; value: string; sub?: string; title: string; onOpen?: () => void }) {
   return (
     <div title={title}>
       <dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">{label}</dt>
       <dd className="text-xl font-semibold tabular-nums">
         {onOpen
-          ? <button type="button" onClick={onOpen} aria-label={`${label}: ${value}. Show the records`} className="rounded text-left underline decoration-dotted underline-offset-4 hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-brand">{value}</button>
+          ? <button type="button" onClick={(e) => { e.currentTarget.focus(); onOpen(); }} aria-label={`${label}: ${value}. Show the records`} className="rounded text-left underline decoration-dotted underline-offset-4 hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-brand">{value}</button>
           : value}
       </dd>
       {sub && <dd className="text-[11px] text-[var(--muted)]">{sub}</dd>}
@@ -598,8 +601,8 @@ export function WorkforceAnalyticsView() {
               <dl className="grid grid-cols-2 gap-2 text-sm">
                 <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Variance</dt><dd className="font-semibold tabular-nums">{signed(t.varianceMinutes)}{t.variancePercent != null && <span className="ml-1 text-xs text-[var(--muted)]">({t.variancePercent > 0 ? '+' : ''}{pct(t.variancePercent)})</span>}</dd></div>
                 <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Estimate variance</dt><dd className="font-semibold tabular-nums">{pct(t.estimateVariancePercent)}</dd><dd className="text-[11px] text-[var(--muted)]">{mins(t.absoluteVarianceMinutes)} over {t.plannedItemsCompared} planned ticket-day{t.plannedItemsCompared === 1 ? '' : 's'}</dd></div>
-                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Planned actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={() => setDrill('planned-actual')} aria-label={`Planned actual: ${dur(t.plannedActualSeconds)}. Show the records`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dur(t.plannedActualSeconds)}</button></dd></div>
-                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Reactive actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={() => setDrill('reactive')} aria-label={`Reactive actual: ${dur(t.reactiveActualSeconds)}. Show the records`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dur(t.reactiveActualSeconds)}</button></dd></div>
+                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Planned actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={(e) => { e.currentTarget.focus(); setDrill('planned-actual'); }} aria-label={`Planned actual: ${dur(t.plannedActualSeconds)}. Show the records`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dur(t.plannedActualSeconds)}</button></dd></div>
+                <div><dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Reactive actual</dt><dd className="font-semibold tabular-nums"><button type="button" onClick={(e) => { e.currentTarget.focus(); setDrill('reactive'); }} aria-label={`Reactive actual: ${dur(t.reactiveActualSeconds)}. Show the records`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dur(t.reactiveActualSeconds)}</button></dd></div>
               </dl>
             </Panel>
           </div>
