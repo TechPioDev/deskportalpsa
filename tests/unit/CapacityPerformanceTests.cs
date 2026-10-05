@@ -54,7 +54,18 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     private sealed class Counter : DbCommandInterceptor
     {
         public int Commands { get; private set; }
-        public void Reset() => Commands = 0;
+        /// <summary>The slowest command since the last reset, for the report: which read to look at when a figure grows.</summary>
+        public (double Ms, string Sql) Slowest { get; private set; }
+        /// <summary>Time the database took to answer, summed: what is left of a read's time is rows travelling and the work in memory.</summary>
+        public double DatabaseMs { get; private set; }
+        public void Reset() { Commands = 0; Slowest = default; DatabaseMs = 0; }
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            DatabaseMs += eventData.Duration.TotalMilliseconds;
+            if (eventData.Duration.TotalMilliseconds > Slowest.Ms) Slowest = (eventData.Duration.TotalMilliseconds, command.CommandText);
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
@@ -382,6 +393,149 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         ((Func<Task>)(() => own.TechnicianAsync(ids[1], ids[2], week))).Should().ThrowAsync<Desk.Application.Common.NotFoundException>().GetAwaiter().GetResult();
         output.WriteLine($"{people} people | filtered overview (client + connection + priority + kind): {narrowed.Commands} queries, {narrowed.Ms} ms | a technician's own, by client: {ownClient.Commands} queries, {ownClient.Ms} ms");
     }
+
+    /// <summary>
+    /// Phase 8: the forecast for everyone over a week and four weeks, one team, a drill-down, the
+    /// comparison with its eight weeks and quality signals, mapping and integration health, and a
+    /// report previewed and exported - each a fixed number of queries however many people, days or
+    /// hours there are, and every query through a real SQL translator.
+    /// </summary>
+    [Theory]
+    [InlineData(50, 1)]
+    [InlineData(100, 2)]
+    [InlineData(500, 3)]
+    public async Task Management_insights_and_reports_cost_the_same_number_of_queries_whatever_the_number_of_people_days_or_hours(int people, int perPerson)
+    {
+        var (db, admin, teamId, skillId, ids) = await SeedAsync(people);
+        var (boardId, tickets, allocations) = await SeedAllocationsAsync(db, admin, ids, perPerson);
+        var entries = await SeedTimeAsync(db, ids, tickets, perPerson);
+        // Every ticket is sized at 100 hours and asks for a skill; one more is routed to a team and held by nobody;
+        // a PSA connection and a recurring ticket exist; the administrator may read integration health and manage boards.
+        var role = await db.Roles.AsNoTracking().SingleAsync();
+        db.Add(new RolePermission { RoleId = role.Id, PermissionKey = Permissions.IntegrationHealthView, Scope = PermissionScope.All });
+        db.Add(new RolePermission { RoleId = role.Id, PermissionKey = Permissions.BoardsManage, Scope = PermissionScope.All });
+        foreach (var t in tickets) db.Add(new WorkPlanning { MspOrganizationId = Org, TicketId = t, RequiredMinutes = 6000, Splittable = true, RequiredSkillId = skillId, UpdatedByUserId = admin });
+        var routed = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Internal, BoardId = boardId, Number = "INT-900001", RequesterName = "Admin", RequesterEmail = "admin@techpio.test",
+            Title = "Routed to a team", PortalStatus = "NEW", AssignedTeamId = teamId, SyncStatus = TicketSyncStatus.Synced,
+        };
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        var connection = new PsaConnection { MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://psa.example.test", CredentialSecretRef = "ref", Status = ConnectionStatus.Healthy };
+        var client = new ClientCompany { MspOrganizationId = Org, PsaConnectionId = connection.Id, Name = "Unknown", ExternalCompanyId = "unknown" };
+        var psaTicket = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection.Id, ExternalTicketId = "9001", AssignedTechnicianExternalId = "tech-9",
+            RequesterName = "ABC", RequesterEmail = "it@abc.test", Title = "Client work", PortalStatus = "Waiting Vendor", PortalPriority = "HIGH",
+            AssignedAppUserId = ids[1], ClientCompanyId = client.Id, SyncStatus = TicketSyncStatus.Error, SlaDueAt = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(17, 0)), zone, true),
+        };
+        db.AddRange(routed, connection, client, psaTicket,
+            new WorkPlanning { MspOrganizationId = Org, TicketId = routed.Id, RequiredMinutes = 300, UpdatedByUserId = admin },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = ids[1], PsaConnectionId = connection.Id, ExternalTechnicianId = "tech-9" },
+            new RecurringTicket { MspOrganizationId = Org, BoardId = boardId, Title = "Weekly check", Frequency = RecurrenceFrequency.Weekly, DayOfWeek = 1, Hour = 9, CreatedByUserId = admin, AssignedAppUserId = ids[0] },
+            new TicketTimeEntry
+            {
+                MspOrganizationId = Org, TicketId = psaTicket.Id, AppUserId = ids[1], Hours = 1m, Billable = true, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Failed,
+                EntryDate = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(18, 0)), zone, true),
+            });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var insights = Analytics(db, admin);
+        var week = new InsightsQuery("custom", Monday, Monday.AddDays(6));
+        var month = new InsightsQuery("custom", Monday, Monday.AddDays(27));
+
+        var forecastWeek = await MeasureAsync(() => insights.ForecastAsync(admin, week));
+        var (slowest, databaseMs) = (_counter.Slowest, _counter.DatabaseMs);
+        var forecastMonth = await MeasureAsync(() => insights.ForecastAsync(admin, month));
+        var forecastTeam = await MeasureAsync(() => insights.ForecastAsync(admin, week with { TeamId = teamId }));
+        var drill = await MeasureAsync(() => insights.ForecastWorkAsync(admin, week, ForecastWorkKind.Unscheduled, 0, 50));
+        var skillList = await MeasureAsync(() => insights.ForecastWorkAsync(admin, week with { SkillId = skillId }, ForecastWorkKind.Skill, 0, 50));
+        var health = await MeasureAsync(() => insights.HealthAsync(admin));
+        var catalogue = await MeasureAsync(() => insights.CatalogueAsync(admin));
+        var preview = await MeasureAsync(() => insights.ReportAsync(admin, "future-capacity", month));
+        var export = await MeasureAsync(() => insights.ExportReportAsync(admin, "future-capacity", month, "xlsx"));
+        var filtered = await MeasureAsync(() => insights.ForecastAsync(admin, week with { ClientId = client.Id, Source = "psa:" + connection.Id, Priority = "high" }));
+
+        output.WriteLine($"{people} people, {allocations} allocations, {entries} time entries | forecast week: {forecastWeek.Commands} queries, {forecastWeek.Ms} ms | forecast four weeks: {forecastMonth.Commands} queries, {forecastMonth.Ms} ms | team week: {forecastTeam.Commands} queries, {forecastTeam.Ms} ms ({forecastTeam.Result.People.Count} people)");
+        output.WriteLine($"{people} people | the week's forecast spent {databaseMs:0} ms waiting for the database | slowest query: {slowest.Ms:0} ms: {OneLine(slowest.Sql, 160)}");
+        output.WriteLine($"{people} people | drill-down: {drill.Commands} queries, {drill.Ms} ms ({drill.Result.Total} rows) | skill list: {skillList.Commands} queries, {skillList.Ms} ms | health: {health.Commands} queries, {health.Ms} ms | catalogue: {catalogue.Commands} queries | report preview: {preview.Commands} queries, {preview.Ms} ms | report xlsx: {export.Commands} queries, {export.Ms} ms ({export.Result.Content.Length / 1024} KB) | filtered forecast: {filtered.Commands} queries, {filtered.Ms} ms");
+
+        // Right at scale. Every weekday holds perPerson planned hours for every person; every ticket is 100 hours less the four weeks planned on it.
+        var remaining = 6000 - perPerson * 60 * 20;
+        var fc = forecastWeek.Result;
+        fc.People.Should().HaveCount(people + 1);
+        (fc.Totals.ConfirmedMinutes, fc.Totals.TentativeMinutes).Should().Be((people * perPerson * 60 * 5, 0));
+        (fc.Totals.UnscheduledMinutes, fc.Totals.UnscheduledItems, fc.Totals.UnestimatedItems).Should().Be((people * remaining + 300, people + 1, 1), "everyone's ticket, the one routed to a team, and the client's unsized one");
+        fc.Totals.ProjectedMinutes.Should().Be(fc.Totals.ConfirmedMinutes + fc.Totals.UnscheduledMinutes);
+        fc.Totals.GapMinutes.Should().Be(fc.Totals.CapacityMinutes - fc.Totals.ProjectedMinutes);
+        fc.People.Sum(p => p.Figures.ConfirmedMinutes).Should().Be(fc.Totals.ConfirmedMinutes, "the rows add up to the total");
+        (fc.People.Sum(p => p.Figures.UnscheduledMinutes) + fc.Unassigned!.UnscheduledMinutes).Should().Be(fc.Totals.UnscheduledMinutes);
+        fc.Daily.Sum(d => d.ConfirmedMinutes).Should().Be(fc.Totals.ConfirmedMinutes);
+        fc.Daily.Sum(d => d.CapacityMinutes ?? 0).Should().Be(fc.Totals.CapacityMinutes);
+        // The same capacity and confirmed demand as the Phase 7 dashboard for the same days.
+        var phase7Week = await MeasureAsync(() => insights.OverviewAsync(admin, new AnalyticsQuery("custom", Monday, Monday.AddDays(6))));
+        output.WriteLine($"{people} people | for comparison, the Phase 7 dashboard for the same week: {phase7Week.Commands} queries, {phase7Week.Ms} ms, {_counter.DatabaseMs:0} ms of it waiting for the database");
+        var phase7 = phase7Week.Result;
+        (fc.Totals.CapacityMinutes, fc.Totals.ConfirmedMinutes).Should().Be((phase7.Demand.AvailableMinutes, phase7.Demand.ConfirmedMinutes));
+        forecastMonth.Result.Totals.ConfirmedMinutes.Should().Be(people * perPerson * 60 * 20);
+        forecastMonth.Result.Totals.UnscheduledMinutes.Should().Be(fc.Totals.UnscheduledMinutes, "what is left to allocate does not depend on the window");
+        fc.Skills.Should().ContainSingle().Which.Should().Match<SkillCapacityDto>(k => k.DemandMinutes == people * remaining && k.DemandItems == people && k.SkilledPeople == (people + 3) / 4);
+        (fc.Recurring!.Definitions, fc.Recurring.Occurrences, forecastMonth.Result.Recurring!.Occurrences).Should().Be((1, 1, 4));
+        fc.AtRisk.Should().Be(new WorkAtRiskDto(0, 0, 1), "the client's ticket is due on Tuesday and has no estimate, so nothing says it cannot fit");
+        (fc.CanSeeHealth, fc.Attention.Any(a => a.Key == "time-not-in-psa"), fc.Attention.Any(a => a.Key.StartsWith("sync:"))).Should().Be((true, true, true), "the connection has never synced");
+        forecastTeam.Result.People.Should().HaveCountLessThan(people + 1);
+        forecastTeam.Result.Unassigned!.UnscheduledMinutes.Should().Be(300);
+        (drill.Result.Total, drill.Result.TotalMinutes, drill.Result.Rows.Count).Should().Be((people + 1, fc.Totals.UnscheduledMinutes, 50));
+        skillList.Result.TotalMinutes.Should().Be(people * remaining);
+        (filtered.Result.Totals.UnestimatedItems, filtered.Result.Totals.ConfirmedMinutes, filtered.Result.Clients.Single().Name).Should().Be((1, 0, "Unknown"));
+        var row = health.Result.Connections.Should().ContainSingle().Subject;
+        (row.Tickets, row.StatusMapping.Mapped, row.StatusMapping.Unmapped.Single(), row.PriorityMapping.Percent, row.TechnicianLinks.Mapped, row.TechnicianLinks.Total, row.PlaceholderClientTickets, row.TicketsInSyncError, row.TimeEntriesFailed, row.Stale)
+            .Should().Be((1, 0, "Waiting Vendor", 100d, 1, 1, 1, 1, 1, true));
+        catalogue.Result.Should().HaveCount(12);
+        (preview.Result.TotalRows, preview.Result.Truncated, preview.Result.Rows.Count).Should().Be((people + 2, people + 2 > WorkforceAnalyticsService.ReportPreviewRows, Math.Min(people + 2, WorkforceAnalyticsService.ReportPreviewRows)));
+        export.Result.Rows.Should().Be(people + 2, "the export holds every row, whatever the preview shows");
+
+        // History, read on the Monday after the four weeks: last week against the one before, eight weeks, quality signals.
+        _clock.Advance(Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(28).ToDateTime(new TimeOnly(9, 0)), zone, true) - _clock.GetUtcNow());
+        var trends = await MeasureAsync(() => insights.TrendsAsync(admin, new InsightsQuery(Compare: "last-week")));
+        var trendsMonth = await MeasureAsync(() => insights.TrendsAsync(admin, new InsightsQuery(Compare: "last-30")));
+        var quality = await MeasureAsync(() => insights.ExportReportAsync(admin, "operational-quality", new InsightsQuery(Compare: "last-30"), "csv"));
+        output.WriteLine($"{people} people | trends last week: {trends.Commands} queries, {trends.Ms} ms | trends last 30 days: {trendsMonth.Commands} queries, {trendsMonth.Ms} ms | quality report csv: {quality.Commands} queries, {quality.Ms} ms");
+        var actualWeek = (double)people * perPerson * 45 * 60 * 5;
+        trends.Result.Totals.Single(x => x.Key == "actual").Should().Match<ComparisonDto>(x => x.Current == actualWeek && x.Previous == actualWeek && x.Change == 0 && x.ChangePercent == 0);
+        trends.Result.Weeks.Should().HaveCount(8);
+        trends.Result.Weeks.Sum(x => x.ActualSeconds).Should().Be((long)actualWeek * 4 + 3600, "four weeks of work and the hour on the client's ticket");
+        trends.Result.Quality.Should().HaveCount(7);
+
+        // Constant whatever the size: the Phase 7 load, the open work, the tickets it points at, skills, recurring work,
+        // failed pushes, connections and permissions, then memory. Measured at 50, 100 and 500 people alike.
+        forecastWeek.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        forecastMonth.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        forecastTeam.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        drill.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        skillList.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        filtered.Commands.Should().BeLessThanOrEqualTo(MaxForecast + 6);
+        health.Commands.Should().BeLessThanOrEqualTo(MaxHealth);
+        catalogue.Commands.Should().BeLessThanOrEqualTo(2);
+        preview.Commands.Should().BeLessThanOrEqualTo(MaxForecast + 4);
+        export.Commands.Should().BeLessThanOrEqualTo(MaxForecast + 6);
+        trends.Commands.Should().BeLessThanOrEqualTo(MaxTrends);
+        trendsMonth.Commands.Should().BeLessThanOrEqualTo(MaxTrends);
+        quality.Commands.Should().BeLessThanOrEqualTo(MaxTrends + 6);
+        foreach (var ms in new[] { forecastWeek.Ms, forecastMonth.Ms, forecastTeam.Ms, drill.Ms, health.Ms, preview.Ms, export.Ms, trends.Ms, trendsMonth.Ms, quality.Ms }) ms.Should().BeLessThan(30_000);
+    }
+
+    /// <summary>A command's text on one line, shortened: enough to recognise the read in a test report.</summary>
+    private static string OneLine(string sql, int max)
+    {
+        var line = string.Join(' ', (sql ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return line.Length <= max ? line : line[..max] + "…";
+    }
+
+    private const int MaxForecast = 53;
+    private const int MaxHealth = 12;
+    private const int MaxTrends = 28;
 
     private async Task<(int Commands, long Ms, T Result)> MeasureAsync<T>(Func<Task<T>> work)
     {

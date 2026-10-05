@@ -55,6 +55,8 @@ public sealed record AnalyticsPeriodDto(string Key, DateOnly From, DateOnly To, 
 /// <param name="VarianceMinutes">All recorded time − planned to date, only when something was planned by today.</param>
 /// <param name="AbsoluteVarianceMinutes">Σ |actual − planned| over person-ticket-days with a plan: estimate variance, not a quality score.</param>
 /// <param name="OverCapacityMinutes">Confirmed planned time beyond a person-day's capacity (an override put it there).</param>
+/// <param name="PlannedComparedMinutes">Confirmed planned minutes of the person-ticket-days that had a plan, up to today: what estimate variance is measured against.</param>
+/// <param name="ComparedActualMinutes">Minutes recorded on those same planned person-ticket-days: like for like with <paramref name="PlannedComparedMinutes"/>.</param>
 public sealed record AnalyticsFiguresDto(
     int? CapacityMinutes, int PlannedMinutes, int PlannedToDateMinutes, int TentativeMinutes,
     long ActualSeconds, long PlannedActualSeconds, long ReactiveActualSeconds, long LiveSeconds, long BillableSeconds,
@@ -63,7 +65,8 @@ public sealed record AnalyticsFiguresDto(
     int? VarianceMinutes, double? VariancePercent,
     int AbsoluteVarianceMinutes, double? EstimateVariancePercent, int PlannedItemsCompared,
     int OverCapacityMinutes, int OverCapacityPersonDays,
-    int CompletedWork, int WorkItems, int ReactiveWorkItems);
+    int CompletedWork, int WorkItems, int ReactiveWorkItems,
+    int PlannedComparedMinutes = 0, int ComparedActualMinutes = 0);
 
 public sealed record AnalyticsPersonDto(
     Guid AppUserId, string DisplayName, IReadOnlyList<string> Teams, bool IsSchedulable, bool HasSchedule, string TimeZone,

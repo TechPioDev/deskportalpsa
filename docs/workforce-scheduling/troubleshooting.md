@@ -55,9 +55,16 @@
 | Capacity utilization reads low on the analytics | The period has not ended, or people have no schedule (the notes say which) | Choose a finished period; set the schedules |
 | "Work you cannot open" on an analytics table | The viewer may not open that ticket | Expected: the time counts, the ticket's identity does not travel |
 | The analytics export answers 403 | The caller lacks `workforce.analytics.export` | An administrator grants it on the role |
+| The forecast's capacity is 0 or low | People have no working schedule, or are not offered for planned work | Set the schedules; the Data and integrations tab says how many |
+| Open work is missing from the forecast | Nobody holds it in the portal (a PSA ticket held only by a PSA login) | Link the PSA login to the person, or assign the work; the Data tab counts it |
+| "Unestimated" is high and "Estimated unscheduled" is 0 | Nobody has sized the work | Set effort from the planning queue or the ticket's Planned work panel |
+| A quality signal says Not available | The completed work carries no such data, or nothing records it | Read "What it rests on" beside it |
+| A report has no Export buttons | The viewer lacks `workforce.analytics.export` | An administrator grants it on the role |
 
 More in [planned-work.md](planned-work.md#troubleshooting),
 [team-scheduler.md](team-scheduler.md#troubleshooting),
 [advanced-planning.md](advanced-planning.md#troubleshooting),
-[work-execution.md](work-execution.md#troubleshooting) and
-[analytics.md](analytics.md#troubleshooting).
+[work-execution.md](work-execution.md#troubleshooting),
+[analytics.md](analytics.md#troubleshooting),
+[insights.md](insights.md#troubleshooting) and
+[reports.md](reports.md#troubleshooting).

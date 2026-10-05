@@ -438,11 +438,122 @@ export type AnalyticsQuery = {
 };
 export type AnalyticsWorkKind = 'actual' | 'planned-actual' | 'reactive' | 'planned' | 'tentative' | 'completed' | 'open' | 'unscheduled' | 'overdue';
 export type AnalyticsExportReport = 'technicians' | 'teams' | 'clients' | 'sources' | 'daily' | 'work';
-function analyticsQs(q: AnalyticsQuery): URLSearchParams {
+function analyticsQs(q: Record<string, string | null | undefined>): URLSearchParams {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v) qs.set(k, v);
   return qs;
 }
+
+// ---- Workforce: management insights and reports (Phase 8, internal only) --------------------------
+// What is ahead (capacity against confirmed, tentative and estimated unscheduled demand), what changed
+// against the period before, what the optional quality data supports, and what needs attention.
+// Deterministic sums over records. Definitions: docs/workforce-scheduling/PHASE8_MANAGEMENT_INSIGHTS_DESIGN.md.
+export const ForecastFiguresSchema = z.object({
+  capacityMinutes: z.number().nullable(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), unscheduledMinutes: z.number(), unscheduledItems: z.number(), unestimatedItems: z.number(),
+  projectedMinutes: z.number(), confirmedRemainingMinutes: z.number().nullable(), gapMinutes: z.number().nullable(), confirmedPercent: z.number().nullable(), projectedPercent: z.number().nullable(),
+});
+export type ForecastFigures = z.infer<typeof ForecastFiguresSchema>;
+/** Severity: 1 info, 2 watch, 3 attention, 4 critical. Set by fixed thresholds; every statement carries its rule and its numbers. */
+export const InsightSchema = z.object({
+  key: z.string(), severity: z.number(), title: z.string(), rule: z.string(), facts: z.array(z.object({ label: z.string(), value: z.string() })),
+  list: z.string().nullable(), targetKind: z.string().nullable(), targetId: z.string().nullable(),
+});
+export type Insight = z.infer<typeof InsightSchema>;
+export const ForecastGroupSchema = z.object({ key: z.string(), name: z.string(), people: z.number(), figures: ForecastFiguresSchema });
+export type ForecastGroup = z.infer<typeof ForecastGroupSchema>;
+export const ForecastPersonSchema = z.object({ appUserId: z.string(), displayName: z.string(), teams: z.array(z.string()), isSchedulable: z.boolean(), hasSchedule: z.boolean(), figures: ForecastFiguresSchema });
+export type ForecastPerson = z.infer<typeof ForecastPersonSchema>;
+export const SkillCapacitySchema = z.object({
+  skillId: z.string(), name: z.string(), demandMinutes: z.number(), demandItems: z.number(), skilledPeople: z.number(), capacityMinutes: z.number(), gapMinutes: z.number(), people: z.array(z.string()),
+});
+export type SkillCapacity = z.infer<typeof SkillCapacitySchema>;
+export const ForecastSchema = z.object({
+  window: AnalyticsPeriodSchema, generatedAt: z.string(), totals: ForecastFiguresSchema, unscheduledOverdueMinutes: z.number(), unscheduledNoDateMinutes: z.number(),
+  coverage: z.object({ openItems: z.number(), estimatedItems: z.number(), unestimatedOpenItems: z.number(), estimatedMinutes: z.number(), scheduledMinutes: z.number(), unscheduledMinutes: z.number(), coveragePercent: z.number().nullable() }),
+  dataQuality: z.object({ people: z.number(), peopleWithoutSchedule: z.number(), peopleNotOffered: z.number(), openHeldItems: z.number(), openWithoutHolder: z.number().nullable(), estimatedWithSkill: z.number(), finishedWithoutDate: z.number() }),
+  atRisk: z.object({ overdue: z.number(), capacityShortfall: z.number(), dueInWindow: z.number() }),
+  daily: z.array(z.object({ date: z.string(), capacityMinutes: z.number().nullable(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), unscheduledDueMinutes: z.number() })),
+  teams: z.array(ForecastGroupSchema), people: z.array(ForecastPersonSchema), unassigned: ForecastFiguresSchema.nullable(),
+  clients: z.array(ForecastGroupSchema), sources: z.array(ForecastGroupSchema), skills: z.array(SkillCapacitySchema),
+  recurring: z.object({
+    definitions: z.number(), occurrences: z.number(),
+    items: z.array(z.object({ id: z.string(), title: z.string(), schedule: z.string(), assigneeName: z.string().nullable(), occurrences: z.number(), next: z.string().nullable() })),
+  }).nullable(),
+  attention: z.array(InsightSchema), notes: z.array(z.string()), seesOthers: z.boolean(), canExport: z.boolean(), canSeeHealth: z.boolean(),
+});
+export type Forecast = z.infer<typeof ForecastSchema>;
+export const ForecastWorkRowSchema = z.object({
+  kind: z.string(), id: z.string().nullable(), ticketId: z.string(), reference: z.string(), title: z.string().nullable(), clientName: z.string().nullable(), source: z.string(), priority: z.string().nullable(),
+  ticketVisible: z.boolean(), appUserId: z.string().nullable(), personName: z.string().nullable(), teamName: z.string().nullable(), date: z.string().nullable(), at: z.string().nullable(),
+  minutes: z.number().nullable(), requiredMinutes: z.number().nullable(), allocatedMinutes: z.number().nullable(), remainingMinutes: z.number().nullable(),
+  dueAt: z.string().nullable(), freeBeforeDueMinutes: z.number().nullable(), risk: z.string().nullable(), skillName: z.string().nullable(), status: z.string().nullable(),
+});
+export type ForecastWorkRow = z.infer<typeof ForecastWorkRowSchema>;
+export const ForecastWorkPageSchema = z.object({
+  kind: z.number(), window: AnalyticsPeriodSchema, total: z.number(), totalMinutes: z.number(), skip: z.number(), take: z.number(), rows: z.array(ForecastWorkRowSchema),
+});
+export type ForecastWorkPage = z.infer<typeof ForecastWorkPageSchema>;
+export type ForecastWorkList = 'confirmed' | 'tentative' | 'unscheduled' | 'unestimated' | 'at-risk' | 'overdue' | 'unassigned' | 'skill';
+export const ComparisonSchema = z.object({
+  key: z.string(), label: z.string(), unit: z.string(), current: z.number().nullable(), previous: z.number().nullable(), change: z.number().nullable(), changePercent: z.number().nullable(),
+});
+export type Comparison = z.infer<typeof ComparisonSchema>;
+export const GroupComparisonSchema = z.object({
+  key: z.string(), name: z.string(), currentSeconds: z.number(), previousSeconds: z.number(), changeSeconds: z.number(), changePercent: z.number().nullable(),
+  currentReactiveSeconds: z.number(), currentCompleted: z.number(), previousCompleted: z.number(), currentWorkItems: z.number(),
+});
+export type GroupComparison = z.infer<typeof GroupComparisonSchema>;
+export const EstimateVarianceRowSchema = z.object({
+  key: z.string(), name: z.string(), plannedMinutes: z.number(), actualMinutes: z.number(), varianceMinutes: z.number(), variancePercent: z.number().nullable(),
+  absoluteVarianceMinutes: z.number(), estimateVariancePercent: z.number().nullable(), ticketDays: z.number(),
+});
+export type EstimateVarianceRow = z.infer<typeof EstimateVarianceRowSchema>;
+/** Quality: 0 not available, 1 partial, 2 high: how complete the data behind the figure is, with the reason. */
+export const QualitySignalSchema = z.object({
+  key: z.string(), name: z.string(), definition: z.string(), quality: z.number(), qualityReason: z.string(),
+  met: z.number().nullable(), eligible: z.number().nullable(), percent: z.number().nullable(), population: z.number(),
+  previousMet: z.number().nullable(), previousEligible: z.number().nullable(), previousPercent: z.number().nullable(),
+});
+export type QualitySignal = z.infer<typeof QualitySignalSchema>;
+export const TrendsSchema = z.object({
+  current: AnalyticsPeriodSchema, previous: AnalyticsPeriodSchema, generatedAt: z.string(), totals: z.array(ComparisonSchema),
+  weeks: z.array(z.object({
+    from: z.string(), to: z.string(), partial: z.boolean(), actualSeconds: z.number(), plannedActualSeconds: z.number(), reactiveSeconds: z.number(),
+    reactiveSharePercent: z.number().nullable(), completed: z.number(), workItems: z.number(),
+  })),
+  clients: z.array(GroupComparisonSchema), sources: z.array(GroupComparisonSchema),
+  byCategory: z.array(EstimateVarianceRowSchema), byClient: z.array(EstimateVarianceRowSchema), bySource: z.array(EstimateVarianceRowSchema),
+  quality: z.array(QualitySignalSchema), attention: z.array(InsightSchema),
+  sync: z.array(z.object({ connection: z.string(), lastSuccessfulSyncAt: z.string().nullable() })), notes: z.array(z.string()),
+});
+export type Trends = z.infer<typeof TrendsSchema>;
+export const MappingCoverageSchema = z.object({ mapped: z.number(), total: z.number(), percent: z.number().nullable(), unmapped: z.array(z.string()) });
+export const ConnectionInsightSchema = z.object({
+  connectionId: z.string(), name: z.string(), provider: z.string(), status: z.string(), isEnabled: z.boolean(), lastSuccessfulSyncAt: z.string().nullable(), lastHealthCheckAt: z.string().nullable(),
+  hasError: z.boolean(), stale: z.boolean(), tickets: z.number(), statusMapping: MappingCoverageSchema, priorityMapping: MappingCoverageSchema, technicianLinks: MappingCoverageSchema,
+  placeholderClientTickets: z.number(), ticketsInSyncError: z.number(), timeEntriesFailed: z.number(), timeEntriesPending: z.number(),
+});
+export type ConnectionInsight = z.infer<typeof ConnectionInsightSchema>;
+export const IntegrationInsightsSchema = z.object({ generatedAt: z.string(), connections: z.array(ConnectionInsightSchema), attention: z.array(InsightSchema) });
+export type IntegrationInsights = z.infer<typeof IntegrationInsightsSchema>;
+export const WorkforceReportDefinitionSchema = z.object({
+  key: z.string(), category: z.string(), title: z.string(), description: z.string(), periodKind: z.string(), filters: z.array(z.string()), needsIntegrationHealth: z.boolean(),
+});
+export type WorkforceReportDefinition = z.infer<typeof WorkforceReportDefinitionSchema>;
+const ReportFactSchema = z.object({ label: z.string(), value: z.string() });
+/** A report as previewed. A cell is text, a number or null (not applicable); a column's kind says how to show it. */
+export const WorkforceReportSchema = z.object({
+  definition: WorkforceReportDefinitionSchema, period: AnalyticsPeriodSchema.nullable(), generatedAt: z.string(), applied: z.array(ReportFactSchema), summary: z.array(ReportFactSchema),
+  columns: z.array(z.object({ key: z.string(), label: z.string(), kind: z.string() })), rows: z.array(z.array(z.union([z.string(), z.number(), z.null()]))),
+  totalRows: z.number(), truncated: z.boolean(), notes: z.array(z.string()),
+  sync: z.array(z.object({ connection: z.string(), lastSuccessfulSyncAt: z.string().nullable() })), canExport: z.boolean(),
+});
+export type WorkforceReport = z.infer<typeof WorkforceReportSchema>;
+/** What insights and reports are asked for: a forecast window, a history period or a comparison, with the same people and work filters as the dashboard. */
+export type InsightsQuery = {
+  window?: string | null; from?: string | null; to?: string | null; compare?: string | null; period?: string | null; by?: string | null;
+  teamId?: string | null; departmentId?: string | null; appUserId?: string | null; clientId?: string | null; source?: string | null; priority?: string | null;
+};
 
 // ---- Workforce: advanced planning (internal only) ----------------------------------------------
 export const PlanningRequirementSchema = z.object({
@@ -849,6 +960,26 @@ export const api = {
     const qs = analyticsQs(q);
     qs.set('report', report);
     return `${BFF_BASE}/api/workforce/analytics/export?${qs}`;
+  },
+  // ── Management insights and reports (Phase 8) ── reads only; an export needs its own permission.
+  insightsForecast: (q: InsightsQuery) => request(`/api/workforce/insights/forecast?${analyticsQs(q)}`, ForecastSchema) as Promise<Forecast>,
+  insightsForecastWork: (q: InsightsQuery, list: ForecastWorkList, skillId: string | null, skip = 0, take = 50) => {
+    const qs = analyticsQs(q);
+    qs.set('list', list);
+    if (skillId) qs.set('skillId', skillId);
+    qs.set('skip', String(skip));
+    qs.set('take', String(take));
+    return request(`/api/workforce/insights/forecast/work?${qs}`, ForecastWorkPageSchema) as Promise<ForecastWorkPage>;
+  },
+  insightsTrends: (q: InsightsQuery) => request(`/api/workforce/insights/trends?${analyticsQs(q)}`, TrendsSchema) as Promise<Trends>,
+  insightsHealth: () => request('/api/workforce/insights/health', IntegrationInsightsSchema) as Promise<IntegrationInsights>,
+  workforceReports: () => request('/api/workforce/reports', z.array(WorkforceReportDefinitionSchema)) as Promise<WorkforceReportDefinition[]>,
+  workforceReport: (key: string, q: InsightsQuery) => request(`/api/workforce/reports/${encodeURIComponent(key)}?${analyticsQs(q)}`, WorkforceReportSchema) as Promise<WorkforceReport>,
+  /** A report file through the BFF (which attaches the session); fetched as a blob by the page. */
+  workforceReportExportUrl: (key: string, q: InsightsQuery, format: 'csv' | 'xlsx') => {
+    const qs = analyticsQs(q);
+    qs.set('format', format);
+    return `${BFF_BASE}/api/workforce/reports/${encodeURIComponent(key)}/export?${qs}`;
   },
   // ── Advanced planning ── tentative work, what the work needs, the queue, previews.
   confirmPlannedWork: (id: string, body: { version: number; overrideReason?: string | null }) =>

@@ -75,6 +75,8 @@ export function WorkforceNav() {
       { href: '/dashboard/workforce/capacity', label: 'Team capacity' },
       { href: '/dashboard/workforce/find', label: 'Find available technician' },
       { href: '/dashboard/workforce/analytics', label: 'Workforce analytics' },
+      { href: '/dashboard/workforce/insights', label: 'Management insights' },
+      { href: '/dashboard/workforce/reports', label: 'Reports' },
     ] : []),
   ];
   return (
