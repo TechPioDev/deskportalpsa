@@ -21,24 +21,24 @@ import { fmtDuration } from '@/components/WorkTime';
  * bookmarked and shared inside the team.
  */
 
-const field = 'rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm outline-none focus:border-brand disabled:opacity-60';
-const btn = 'inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg)] disabled:opacity-50';
-const card = 'rounded-xl border border-[var(--border)] bg-[var(--surface)]';
-const th = 'px-3 py-2 font-medium';
-const COLORS = { capacity: '#94a3b8', planned: '#3b82f6', actual: '#22c55e', reactive: '#f59e0b', tentative: '#a78bfa' };
+export const field = 'rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm outline-none focus:border-brand disabled:opacity-60';
+export const btn = 'inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg)] disabled:opacity-50';
+export const card = 'rounded-xl border border-[var(--border)] bg-[var(--surface)]';
+export const th = 'px-3 py-2 font-medium';
+export const COLORS = { capacity: '#94a3b8', planned: '#3b82f6', actual: '#22c55e', reactive: '#f59e0b', tentative: '#a78bfa' };
 
 // ---- formatting ----------------------------------------------------------------------------------------
 
 /** A percentage as the screen says it: one decimal when it has one, "N/A" when there was nothing to divide by. */
 export const pct = (v: number | null | undefined) => (v == null ? 'N/A' : `${Math.round(v * 10) / 10}%`);
 /** Seconds as hours and minutes, "0m" for nothing. */
-const dur = (s: number) => (s > 0 ? fmtDuration(s) : '0m');
+export const dur = (s: number) => (s > 0 ? fmtDuration(s) : '0m');
 /** Minutes as hours and minutes, "0m" for nothing. */
-const mins = (m: number | null | undefined) => (m == null ? '—' : m > 0 ? hours(m) : '0m');
-const signed = (m: number | null | undefined) => (m == null ? 'N/A' : m === 0 ? '0m' : `${m > 0 ? '+' : '−'}${hours(Math.abs(m))}`);
-const toHours = (seconds: number) => Math.round((seconds / 3600) * 10) / 10;
-const minToHours = (m: number) => Math.round((m / 60) * 10) / 10;
-const fmtAt = (iso: string, timeZone: string) => {
+export const mins = (m: number | null | undefined) => (m == null ? '—' : m > 0 ? hours(m) : '0m');
+export const signed = (m: number | null | undefined) => (m == null ? 'N/A' : m === 0 ? '0m' : `${m > 0 ? '+' : '−'}${hours(Math.abs(m))}`);
+export const toHours = (seconds: number) => Math.round((seconds / 3600) * 10) / 10;
+export const minToHours = (m: number) => Math.round((m / 60) * 10) / 10;
+export const fmtAt = (iso: string, timeZone: string) => {
   try { return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone }); } catch { return iso; }
 };
 
@@ -52,7 +52,7 @@ export const PERIODS: [string, string][] = [
   ['this-week', 'This week'], ['last-week', 'Last week'], ['today', 'Today'], ['yesterday', 'Yesterday'],
   ['this-month', 'This month'], ['last-month', 'Last month'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['custom', 'Custom range'],
 ];
-const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+export const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 /** The filters, read from and written to the query string: a bookmarked view is the same view. */
 export function useAnalyticsFilters(): [AnalyticsFilters, (patch: Partial<AnalyticsFilters>) => void] {
@@ -146,12 +146,12 @@ export function AnalyticsFilterBar({ filters, onChange, options, hidePeople, rig
 
 // ---- small pieces --------------------------------------------------------------------------------------------
 
-function Alert({ error }: { error: unknown }) {
+export function Alert({ error }: { error: unknown }) {
   const message = error instanceof ApiError || error instanceof Error ? error.message : 'Something went wrong.';
   return <p role="alert" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">{message}</p>;
 }
 
-function Panel({ title, hint, children, right }: { title: string; hint?: string; children: ReactNode; right?: ReactNode }) {
+export function Panel({ title, hint, children, right }: { title: string; hint?: string; children: ReactNode; right?: ReactNode }) {
   return (
     <section aria-label={title} className={`${card} p-4`}>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
@@ -167,7 +167,7 @@ function Panel({ title, hint, children, right }: { title: string; hint?: string;
  * One figure. Where a card opens its records, the value itself is the button. It takes focus when
  * clicked (Safari does not focus a clicked button by itself), so the dialog can hand focus back to it.
  */
-function Figure({ label, value, sub, title, onOpen }: { label: string; value: string; sub?: string; title: string; onOpen?: () => void }) {
+export function Figure({ label, value, sub, title, onOpen }: { label: string; value: string; sub?: string; title: string; onOpen?: () => void }) {
   return (
     <div title={title}>
       <dt className="text-[11px] uppercase tracking-wide text-[var(--muted)]">{label}</dt>
@@ -192,7 +192,7 @@ function personQs(f: AnalyticsFilters): string {
 }
 
 /** Phones get cards, not a wide table. */
-function useNarrow(): boolean {
+export function useNarrow(): boolean {
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
@@ -206,10 +206,10 @@ function useNarrow(): boolean {
 
 // ---- charts: inline SVG, each with a table alternative ----------------------------------------------------
 
-type Series = { name: string; values: number[]; color: string };
+export type Series = { name: string; values: number[]; color: string };
 
 /** Grouped bars per label (a day, a person), one bar per series, with a y-grid; the table beside it says the same numbers. */
-function GroupedBars({ labels, series, unit, ariaLabel, height = 200 }: { labels: string[]; series: Series[]; unit: string; ariaLabel: string; height?: number }) {
+export function GroupedBars({ labels, series, unit, ariaLabel, height = 200 }: { labels: string[]; series: Series[]; unit: string; ariaLabel: string; height?: number }) {
   const width = 640;
   const padL = 36, padB = 22, padT = 8, padR = 6;
   const max = Math.max(1, ...series.flatMap((s) => s.values));
@@ -290,7 +290,7 @@ function HeatmapGrid({ heatmap, metric, qs }: { heatmap: HeatmapData; metric: 'a
 
 // ---- tables -----------------------------------------------------------------------------------------------------
 
-type Col<T> = { key: string; label: string; value: (row: T) => string; sort: (row: T) => number | string; right?: boolean; title?: string };
+export type Col<T> = { key: string; label: string; value: (row: T) => string; sort: (row: T) => number | string; right?: boolean; title?: string };
 
 function useSort<T>(initial: string) {
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: initial, dir: 1 });
@@ -307,7 +307,7 @@ function useSort<T>(initial: string) {
 }
 
 /** A sortable table of figures: the reader chooses the order; nothing is pre-ranked. */
-function FigureTable<T>({ caption, rows, cols, keyOf, initialSort, narrowTitle }: { caption: string; rows: T[]; cols: Col<T>[]; keyOf: (row: T) => string; initialSort: string; narrowTitle: (row: T) => ReactNode }) {
+export function FigureTable<T>({ caption, rows, cols, keyOf, initialSort, narrowTitle }: { caption: string; rows: T[]; cols: Col<T>[]; keyOf: (row: T) => string; initialSort: string; narrowTitle: (row: T) => ReactNode }) {
   const { sort, apply, toggle } = useSort<T>(initialSort);
   const narrow = useNarrow();
   const sorted = apply(rows, cols);
@@ -382,17 +382,8 @@ const personCols: Col<AnalyticsPerson>[] = [
 
 // ---- drill-down ------------------------------------------------------------------------------------------------
 
-const KIND_LABEL: Record<AnalyticsWorkKind, string> = {
-  actual: 'Recorded work', 'planned-actual': 'Recorded work that was planned', reactive: 'Reactive work', planned: 'Planned work', tentative: 'Tentative work',
-  completed: 'Completed work', open: 'Open work right now', unscheduled: 'Unscheduled work right now', overdue: 'Overdue work right now',
-};
-
-/** The records behind a card, paged on the server; the list's total is the card's figure. */
-export function DrillDown({ kind, query, timeZone, onClose, linkQs = '' }: { kind: AnalyticsWorkKind; query: AnalyticsQuery; timeZone: string; onClose: () => void; linkQs?: string }) {
-  const [skip, setSkip] = useState(0);
-  const take = 50;
-  const { data, isLoading, error } = useQuery({ queryKey: ['analytics-work', kind, query, skip], queryFn: () => api.analyticsWork(query, kind, skip, take), retry: false, placeholderData: (prev) => prev });
-  // A modal dialog: focus moves into it, Tab stays inside it, Escape closes it, and focus goes back to the card that opened it.
+/** A modal dialog's manners: focus moves into it, Tab stays inside it, Escape closes it, and focus goes back to whatever opened it. */
+export function useDialogFocus(onClose: () => void) {
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
@@ -412,6 +403,20 @@ export function DrillDown({ kind, query, timeZone, onClose, linkQs = '' }: { kin
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); opener?.focus?.(); };
   }, []);
+  return box;
+}
+
+const KIND_LABEL: Record<AnalyticsWorkKind, string> = {
+  actual: 'Recorded work', 'planned-actual': 'Recorded work that was planned', reactive: 'Reactive work', planned: 'Planned work', tentative: 'Tentative work',
+  completed: 'Completed work', open: 'Open work right now', unscheduled: 'Unscheduled work right now', overdue: 'Overdue work right now',
+};
+
+/** The records behind a card, paged on the server; the list's total is the card's figure. */
+export function DrillDown({ kind, query, timeZone, onClose, linkQs = '' }: { kind: AnalyticsWorkKind; query: AnalyticsQuery; timeZone: string; onClose: () => void; linkQs?: string }) {
+  const [skip, setSkip] = useState(0);
+  const take = 50;
+  const { data, isLoading, error } = useQuery({ queryKey: ['analytics-work', kind, query, skip], queryFn: () => api.analyticsWork(query, kind, skip, take), retry: false, placeholderData: (prev) => prev });
+  const box = useDialogFocus(onClose);
   const timeKind = kind === 'actual' || kind === 'planned-actual' || kind === 'reactive';
   const allocationKind = kind === 'planned' || kind === 'tentative';
   const total = data ? (timeKind ? `${data.total} records · ${dur(data.totalSeconds)}` : allocationKind ? `${data.total} pieces of work · ${mins(data.totalMinutes)}` : `${data.total} work items`) : '';
@@ -480,7 +485,7 @@ function WorkRow({ r, timeZone, timeKind, allocationKind, linkQs }: { r: Analyti
 // ---- export --------------------------------------------------------------------------------------------------------
 
 /** A CSV through the BFF, fetched as a blob so the session goes with it; the file name is the server's. */
-async function downloadCsv(url: string, fallbackName: string): Promise<string | null> {
+export async function downloadCsv(url: string, fallbackName: string): Promise<string | null> {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     try { const body = await res.json(); return body?.detail ?? body?.title ?? `Export failed (${res.status}).`; } catch { return `Export failed (${res.status}).`; }
