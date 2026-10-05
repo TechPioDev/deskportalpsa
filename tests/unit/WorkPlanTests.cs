@@ -40,7 +40,7 @@ public partial class WorkPlanTests
     private static DateTimeOffset At(DateOnly date, string hm) => TimeZones.WallToUtc(date.ToDateTime(TimeOnly.Parse(hm)), Tz, true);
 
     private sealed record Services(WorkPlanService Plans, CapacityService Capacity, WorkScheduleService Schedules, CapacityExceptionService Exceptions, WorkAllocationReleaser Releaser,
-        WorkTimeService Time, TicketTimeWriter Writer, TicketScopeQuery Scope, AuditWriter Audit);
+        WorkTimeService Time, TicketTimeWriter Writer, TicketScopeQuery Scope, AuditWriter Audit, WorkforceAnalyticsService Analytics);
 
     private sealed record World(DeskDbContext Db, string DbName, AppUser Admin, AppUser Lead, AppUser Jason, AppUser Abbie, AppUser Sam, AppUser Outsider,
         Team Noc, Board Board, Ticket JasonsTicket, Ticket OpenTicket, Ticket SamsTicket, Ticket Autotask, Ticket ConnectWise, TestClock Clock)
@@ -65,7 +65,8 @@ public partial class WorkPlanTests
             var writer = new TicketTimeWriter(db, null!, audit);
             var time = new WorkTimeService(db, access, capacity, scope, plans, new StubResolver(connector ?? new StubConnector()), writer, permissions, gate, audit, clock);
             return new Services(plans, capacity, new WorkScheduleService(db, access, audit, clock), new CapacityExceptionService(db, access, audit, clock),
-                new WorkAllocationReleaser(db, audit, clock), time, writer, scope, audit);
+                new WorkAllocationReleaser(db, audit, clock), time, writer, scope, audit,
+                new WorkforceAnalyticsService(db, access, capacity, scope, permissions, audit, clock));
         }
     }
 
@@ -83,7 +84,8 @@ public partial class WorkPlanTests
         }
         var all = PermissionScope.All;
         var admin = R("Administrator", RoleType.MspAdministrator, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all), (Permissions.BoardsManage, all),
-            (Permissions.ScheduleView, all), (Permissions.WorkforceManage, all), (Permissions.AvailabilityManage, all), (Permissions.ScheduleManage, all), (Permissions.ScheduleOverride, all));
+            (Permissions.ScheduleView, all), (Permissions.WorkforceManage, all), (Permissions.AvailabilityManage, all), (Permissions.ScheduleManage, all), (Permissions.ScheduleOverride, all),
+            (Permissions.WorkforceAnalyticsExport, all));
         var lead = R("Team lead", RoleType.Manager, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all), (Permissions.BoardsManage, all),
             (Permissions.ScheduleView, PermissionScope.Team), (Permissions.AvailabilityManage, PermissionScope.Team), (Permissions.ScheduleManage, PermissionScope.Team));
         var tech = R("Technician", RoleType.Technician, (Permissions.TicketsViewAssigned, PermissionScope.Assigned), (Permissions.TicketsCreate, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all),

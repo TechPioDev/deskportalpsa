@@ -52,8 +52,12 @@
 | The clock stopped but no time entry appeared | Under a minute, or discarded | Add the time by hand if it was real |
 | "Not in the PSA yet" on My day | The entry's push failed or is pending | Retry from the ticket's time panel |
 | "Say why the time is being changed (at least 5 characters)." | A lead changing someone else's time without a reason | Give the reason |
+| Capacity utilization reads low on the analytics | The period has not ended, or people have no schedule (the notes say which) | Choose a finished period; set the schedules |
+| "Work you cannot open" on an analytics table | The viewer may not open that ticket | Expected: the time counts, the ticket's identity does not travel |
+| The analytics export answers 403 | The caller lacks `workforce.analytics.export` | An administrator grants it on the role |
 
 More in [planned-work.md](planned-work.md#troubleshooting),
 [team-scheduler.md](team-scheduler.md#troubleshooting),
-[advanced-planning.md](advanced-planning.md#troubleshooting) and
-[work-execution.md](work-execution.md#troubleshooting).
+[advanced-planning.md](advanced-planning.md#troubleshooting),
+[work-execution.md](work-execution.md#troubleshooting) and
+[analytics.md](analytics.md#troubleshooting).

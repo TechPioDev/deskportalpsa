@@ -101,6 +101,14 @@ public static class Permissions
     /// </summary>
     public const string ScheduleOverride = "schedule.override";
 
+    /// <summary>
+    /// Export workforce analytics (Phase 7) as a file: named people's capacity, planned and recorded
+    /// time, utilization and completed work leave the system in a CSV. Reading the dashboard needs
+    /// only schedule.view (and reaches the people its scope reaches); taking it out of the system is
+    /// a separate right, audited on every export. Staff only.
+    /// </summary>
+    public const string WorkforceAnalyticsExport = "workforce.analytics.export";
+
     /// <summary>Every claim, used to grant the full set to super-administrators.</summary>
     public static readonly IReadOnlyList<string> All = new[]
     {
@@ -112,7 +120,7 @@ public static class Permissions
         ReportsView, ProductivityViewTeam, ProductivityViewOwn,
         IntegrationHealthView, JobsManage, AuditView, SecurityConfigView, EnquiriesView,
         BoardsManage,
-        ScheduleView, WorkforceManage, AvailabilityManage, ScheduleManage, ScheduleOverride,
+        ScheduleView, WorkforceManage, AvailabilityManage, ScheduleManage, ScheduleOverride, WorkforceAnalyticsExport,
     };
 
     /// <summary>
@@ -146,6 +154,8 @@ public static class Permissions
             (BoardsManage, PermissionScope.All),
             (ScheduleView, PermissionScope.All), (WorkforceManage, PermissionScope.All),
             (AvailabilityManage, PermissionScope.All), (ScheduleManage, PermissionScope.All), (ScheduleOverride, PermissionScope.All),
+            // Phase 7: administrators may export the workforce analytics.
+            (WorkforceAnalyticsExport, PermissionScope.All),
         ],
 
         RoleType.Manager =>
@@ -161,6 +171,8 @@ public static class Permissions
             (AvailabilityManage, PermissionScope.All),
             // Managers put work into anyone's time, and may override a conflict with a reason.
             (ScheduleManage, PermissionScope.All), (ScheduleOverride, PermissionScope.All),
+            // Phase 7: managers read the workforce analytics through schedule.view and may export them.
+            (WorkforceAnalyticsExport, PermissionScope.All),
         ],
 
         RoleType.Technician =>
