@@ -148,6 +148,18 @@ Phase 6 (`WorkforceTimeController`; details in [work-execution.md](work-executio
 `POST plan/{id}/reassign`; a `PUT` that keeps the start and changes only the end is audited as
 `workforce.allocation.resized`.
 
+Phase 7 (`WorkforceAnalyticsController`; details in [analytics.md](analytics.md#api)):
+
+| Route | Permission | Notes |
+|---|---|---|
+| `GET analytics/filters` | schedule.view | The filter lists the caller may use |
+| `GET analytics/overview?period&from&to&teamId&departmentId&appUserId&clientId&source&priority&kind` | schedule.view | The dashboard: totals, open work now, capacity against demand, people, teams, clients, sources, priorities, work types, daily, heatmap, freshness, notes; one filter context |
+| `GET analytics/people/{id}?…` | schedule.view | One person's figures, breakdowns, days and work items |
+| `GET analytics/work?list=…&skip&take&…` | schedule.view | The records behind a card, paged, with the whole set's totals |
+| `GET analytics/export?report=…&…` | workforce.analytics.export | A CSV of one table under the same filters; audited |
+
+Every analytics action is a GET; no table and no cache were added.
+
 `/api/me` carries `features.workforce`.
 
 ## Engine
@@ -163,6 +175,10 @@ infra       WorkforceCalendar    reads schedules, exceptions, planned work and h
                                  also team over a run of dates (ForTeamRangeAsync, TeamRangeQuery -> TeamRangeDto,
                                  MaxTeamRangeDays = 14): the scheduler's rows and their days
             CapacityExceptionService
+            WorkforceAnalyticsService   Phase 7: one load per request (people in scope, the capacity calendar, allocations, entries,
+                                 live clocks, finished and open work, the tickets behind them, visibility) in a fixed number
+                                 of queries, then every figure, breakdown, drill-down and export tallied from those rows in
+                                 memory (Tallies.Over); periods resolved in the organization's zone (ResolvePeriod, pure)
             WorkTimeService      the clock (start / pause / resume / stop under the person's gate), a day as planned against
                                  actual, team today; writes time through Tickets.TicketTimeWriter (Phase 6)
             WorkforceAccess      who the caller may see (schedule.view scope) and plan for (schedule.manage scope),
@@ -205,6 +221,14 @@ web         lib/timeline.ts      the scheduler's arithmetic (Phase 4): a wall ti
   panel on a ticket for staff with `schedule.view`, with **Plan this work**. The Users → person page
   does not carry the Plan tab. Components: `WorkforcePlan.tsx` (`PlanAgenda`, `UnscheduledWorkList`,
   `TicketPlanPanel`, the dialogs).
+- Phase 7: **Workforce analytics** under Workforce (`/dashboard/workforce/analytics`, for someone
+  who can see more than themselves) with the filter bar in the query string, the cards, capacity
+  against demand, the daily trend, the technician / team / client / source / priority / work-type
+  tables, the heatmap and the drill-down dialog; **Technician work analytics**
+  (`/dashboard/workforce/analytics/{id}`); **My analytics** (`/dashboard/workforce/my-analytics`,
+  everyone). Components: `WorkforceAnalytics.tsx` (`WorkforceAnalyticsView`, `TechnicianAnalyticsView`,
+  `AnalyticsFilterBar`, `useAnalyticsFilters`, `DrillDown`, `GroupedBars`, `HeatmapGrid`, `FigureTable`).
+  No dependency was added: the charts are inline SVG with a table alternative each.
 - Phase 4: **Team schedule** under Workforce (`/dashboard/workforce/schedule?date=&view=`, shown in
   the sub-navigation only to someone who can see more than themselves, beside Team capacity and
   Find): the day board (people down the side, the organization's day across the top, free windows,

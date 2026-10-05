@@ -359,6 +359,91 @@ export const TeamTodayPersonSchema = z.object({
 export const TeamTodaySchema = z.object({ date: z.string(), timeZone: z.string(), people: z.array(TeamTodayPersonSchema), plannedMinutes: z.number(), actualSeconds: z.number(), working: z.number(), paused: z.number() });
 export type TeamToday = z.infer<typeof TeamTodaySchema>;
 
+// ---- Workforce: analytics (Phase 7, internal only) ------------------------------------------------
+// Facts over a period for the people the viewer's schedule.view scope reaches. Minutes for capacity
+// and planned time, seconds for actual time (the screen rounds); a ratio with nothing to divide by is
+// null and shown as N/A. Nothing here is a score. Definitions: docs/workforce-scheduling/PHASE7_ANALYTICS_METRIC_SPEC.md.
+export const AnalyticsFiguresSchema = z.object({
+  capacityMinutes: z.number().nullable(), plannedMinutes: z.number(), plannedToDateMinutes: z.number(), tentativeMinutes: z.number(),
+  actualSeconds: z.number(), plannedActualSeconds: z.number(), reactiveActualSeconds: z.number(), liveSeconds: z.number(), billableSeconds: z.number(),
+  clientSeconds: z.number(), internalSeconds: z.number(), monitoringSeconds: z.number(),
+  scheduledUtilizationPercent: z.number().nullable(), capacityUtilizationPercent: z.number().nullable(), reactiveSharePercent: z.number().nullable(),
+  varianceMinutes: z.number().nullable(), variancePercent: z.number().nullable(),
+  absoluteVarianceMinutes: z.number(), estimateVariancePercent: z.number().nullable(), plannedItemsCompared: z.number(),
+  overCapacityMinutes: z.number(), overCapacityPersonDays: z.number(),
+  completedWork: z.number(), workItems: z.number(), reactiveWorkItems: z.number(),
+});
+export type AnalyticsFigures = z.infer<typeof AnalyticsFiguresSchema>;
+export const AnalyticsPeriodSchema = z.object({ key: z.string(), from: z.string(), to: z.string(), timeZone: z.string(), label: z.string(), days: z.number(), endsInFuture: z.boolean() });
+export type AnalyticsPeriod = z.infer<typeof AnalyticsPeriodSchema>;
+export const AnalyticsPersonSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), teams: z.array(z.string()), isSchedulable: z.boolean(), hasSchedule: z.boolean(), timeZone: z.string(), figures: AnalyticsFiguresSchema,
+});
+export type AnalyticsPerson = z.infer<typeof AnalyticsPersonSchema>;
+export const AnalyticsGroupSchema = z.object({ key: z.string(), name: z.string(), people: z.number(), figures: AnalyticsFiguresSchema });
+export type AnalyticsGroup = z.infer<typeof AnalyticsGroupSchema>;
+export const AnalyticsDaySchema = z.object({ date: z.string(), figures: AnalyticsFiguresSchema });
+export type AnalyticsDay = z.infer<typeof AnalyticsDaySchema>;
+export const WorkNowSchema = z.object({ asOf: z.string(), open: z.number(), unscheduled: z.number(), overdue: z.number(), dueToday: z.number(), dueSoon: z.number(), unscheduledDue: z.number() });
+export const CapacityDemandSchema = z.object({ availableMinutes: z.number(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), projectedMinutes: z.number(), shortageMinutes: z.number(), remainingConfirmedMinutes: z.number() });
+export const HeatmapSchema = z.object({
+  dates: z.array(z.string()),
+  rows: z.array(z.object({ appUserId: z.string(), displayName: z.string(), cells: z.array(z.object({ capacityMinutes: z.number().nullable(), plannedMinutes: z.number(), actualSeconds: z.number() })) })),
+  peopleTotal: z.number(), truncated: z.boolean(), unavailable: z.string().nullable(),
+});
+export type Heatmap = z.infer<typeof HeatmapSchema>;
+export const AnalyticsOverviewSchema = z.object({
+  period: AnalyticsPeriodSchema, generatedAt: z.string(), totals: AnalyticsFiguresSchema, now: WorkNowSchema, demand: CapacityDemandSchema,
+  people: z.array(AnalyticsPersonSchema), teams: z.array(AnalyticsGroupSchema), clients: z.array(AnalyticsGroupSchema), sources: z.array(AnalyticsGroupSchema),
+  priorities: z.array(AnalyticsGroupSchema), workTypes: z.array(AnalyticsGroupSchema), daily: z.array(AnalyticsDaySchema), heatmap: HeatmapSchema,
+  sync: z.array(z.object({ connection: z.string(), lastSuccessfulSyncAt: z.string().nullable() })), notes: z.array(z.string()),
+  seesOthers: z.boolean(), canExport: z.boolean(),
+});
+export type AnalyticsOverview = z.infer<typeof AnalyticsOverviewSchema>;
+export const AnalyticsWorkItemSchema = z.object({
+  ticketId: z.string(), reference: z.string(), title: z.string().nullable(), clientName: z.string().nullable(), source: z.string(), priority: z.string().nullable(),
+  ticketVisible: z.boolean(), finished: z.boolean(), finishedAt: z.string().nullable(),
+  plannedMinutes: z.number(), tentativeMinutes: z.number(), actualSeconds: z.number(), reactiveActualSeconds: z.number(),
+  varianceMinutes: z.number().nullable(), variancePercent: z.number().nullable(), entries: z.number(), days: z.number(),
+});
+export type AnalyticsWorkItem = z.infer<typeof AnalyticsWorkItemSchema>;
+export const TechnicianAnalyticsSchema = z.object({
+  period: AnalyticsPeriodSchema, generatedAt: z.string(), person: AnalyticsPersonSchema,
+  clients: z.array(AnalyticsGroupSchema), sources: z.array(AnalyticsGroupSchema), workTypes: z.array(AnalyticsGroupSchema), priorities: z.array(AnalyticsGroupSchema),
+  daily: z.array(AnalyticsDaySchema), items: z.array(AnalyticsWorkItemSchema), itemsTruncated: z.boolean(), notes: z.array(z.string()),
+});
+export type TechnicianAnalytics = z.infer<typeof TechnicianAnalyticsSchema>;
+export const AnalyticsWorkRowSchema = z.object({
+  kind: z.string(), id: z.string().nullable(), date: z.string(), at: z.string().nullable(), appUserId: z.string().nullable(), personName: z.string().nullable(),
+  ticketId: z.string(), reference: z.string(), title: z.string().nullable(), clientName: z.string().nullable(), source: z.string(), priority: z.string().nullable(), ticketVisible: z.boolean(),
+  minutes: z.number().nullable(), seconds: z.number().nullable(), billable: z.boolean().nullable(), plannedWork: z.boolean().nullable(), status: z.string().nullable(),
+  dueAt: z.string().nullable(), finishedAt: z.string().nullable(),
+});
+export type AnalyticsWorkRow = z.infer<typeof AnalyticsWorkRowSchema>;
+export const AnalyticsWorkPageSchema = z.object({
+  kind: z.number(), period: AnalyticsPeriodSchema, total: z.number(), totalSeconds: z.number(), totalMinutes: z.number(), skip: z.number(), take: z.number(), rows: z.array(AnalyticsWorkRowSchema),
+});
+export type AnalyticsWorkPage = z.infer<typeof AnalyticsWorkPageSchema>;
+export const AnalyticsFilterOptionsSchema = z.object({
+  teams: z.array(WorkforceGroupSchema), departments: z.array(WorkforceGroupSchema),
+  people: z.array(z.object({ key: z.string(), name: z.string() })), clients: z.array(z.object({ key: z.string(), name: z.string() })),
+  sources: z.array(z.object({ key: z.string(), name: z.string() })), priorities: z.array(z.string()),
+  seesOthers: z.boolean(), canExport: z.boolean(), timeZone: z.string(),
+});
+export type AnalyticsFilterOptions = z.infer<typeof AnalyticsFilterOptionsSchema>;
+/** The dashboard's filter context, as the query string carries it; the server resolves the period in the organization's zone. */
+export type AnalyticsQuery = {
+  period?: string | null; from?: string | null; to?: string | null;
+  teamId?: string | null; departmentId?: string | null; appUserId?: string | null; clientId?: string | null; source?: string | null; priority?: string | null; kind?: string | null;
+};
+export type AnalyticsWorkKind = 'actual' | 'planned-actual' | 'reactive' | 'planned' | 'tentative' | 'completed' | 'open' | 'unscheduled' | 'overdue';
+export type AnalyticsExportReport = 'technicians' | 'teams' | 'clients' | 'sources' | 'daily' | 'work';
+function analyticsQs(q: AnalyticsQuery): URLSearchParams {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v) qs.set(k, v);
+  return qs;
+}
+
 // ---- Workforce: advanced planning (internal only) ----------------------------------------------
 export const PlanningRequirementSchema = z.object({
   ticketId: z.string(), requiredMinutes: z.number().nullable(), earliestStart: z.string().nullable(), latestEnd: z.string().nullable(), splittable: z.boolean(),
@@ -746,6 +831,24 @@ export const api = {
     if (q.skills?.length) qs.set('skills', q.skills.join(','));
     if (q.matchAll === false) qs.set('matchAll', 'false');
     return request(`/api/workforce/team-today?${qs}`, TeamTodaySchema) as Promise<TeamToday>;
+  },
+  // ── Workforce analytics (Phase 7) ── reads only; the export needs its own permission.
+  analyticsFilters: () => request('/api/workforce/analytics/filters', AnalyticsFilterOptionsSchema) as Promise<AnalyticsFilterOptions>,
+  analyticsOverview: (q: AnalyticsQuery) => request(`/api/workforce/analytics/overview?${analyticsQs(q)}`, AnalyticsOverviewSchema) as Promise<AnalyticsOverview>,
+  analyticsTechnician: (appUserId: string, q: AnalyticsQuery) =>
+    request(`/api/workforce/analytics/people/${appUserId}?${analyticsQs(q)}`, TechnicianAnalyticsSchema) as Promise<TechnicianAnalytics>,
+  analyticsWork: (q: AnalyticsQuery, kind: AnalyticsWorkKind, skip = 0, take = 50) => {
+    const qs = analyticsQs(q);
+    qs.set('list', kind);
+    qs.set('skip', String(skip));
+    qs.set('take', String(take));
+    return request(`/api/workforce/analytics/work?${qs}`, AnalyticsWorkPageSchema) as Promise<AnalyticsWorkPage>;
+  },
+  /** A CSV through the BFF (which attaches the session); fetched as a blob by the page. */
+  analyticsExportUrl: (q: AnalyticsQuery, report: AnalyticsExportReport) => {
+    const qs = analyticsQs(q);
+    qs.set('report', report);
+    return `${BFF_BASE}/api/workforce/analytics/export?${qs}`;
   },
   // ── Advanced planning ── tentative work, what the work needs, the queue, previews.
   confirmPlannedWork: (id: string, body: { version: number; overrideReason?: string | null }) =>

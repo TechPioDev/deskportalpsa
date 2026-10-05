@@ -158,6 +158,13 @@ public class EndpointAuthorizationTests
         { nameof(WorkforceTimeController), nameof(WorkforceTimeController.Stop), [Permissions.TicketsLogTime] },
         { nameof(WorkforceTimeController), nameof(WorkforceTimeController.MyDay), [Permissions.ScheduleView] },
         { nameof(WorkforceTimeController), nameof(WorkforceTimeController.TeamToday), [Permissions.ScheduleView] },
+        // Phase 7: the analytics are schedule reads (the scope decides whose figures); the export, which
+        // carries named people's figures out of the system, needs its own key.
+        { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Filters), [Permissions.ScheduleView] },
+        { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Overview), [Permissions.ScheduleView] },
+        { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Technician), [Permissions.ScheduleView] },
+        { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Work), [Permissions.ScheduleView] },
+        { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Export), [Permissions.WorkforceAnalyticsExport] },
         // The ticket time panel, which a stopped clock writes through: every action needs tickets.time.log.
         { nameof(TicketTimeController), nameof(TicketTimeController.List), [Permissions.TicketsLogTime] },
         { nameof(TicketTimeController), nameof(TicketTimeController.LogTime), [Permissions.TicketsLogTime] },
@@ -177,7 +184,7 @@ public class EndpointAuthorizationTests
             .Select(p => p.Key).Concat([Permissions.TicketsCreate, Permissions.TicketsAddPublicNote]).ToHashSet();
         // Every controller under api/workforce - found by route, so one added later is covered too.
         var workforce = Controllers.Where(c => (c.GetCustomAttribute<RouteAttribute>()?.Template ?? "").StartsWith("api/workforce", StringComparison.Ordinal)).ToList();
-        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController), typeof(WorkforcePlanController), typeof(WorkforceTimeController)]);
+        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController), typeof(WorkforcePlanController), typeof(WorkforceTimeController), typeof(WorkforceAnalyticsController)]);
         foreach (var controller in workforce)
         {
             controller.GetCustomAttributes<AuthorizeAttribute>().Should().NotBeEmpty($"{controller.Name} is never anonymous");
@@ -217,6 +224,9 @@ public class EndpointAuthorizationTests
             typeof(WorkforceTimeController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
         foreach (var name in new[] { nameof(WorkforceTimeController.Start), nameof(WorkforceTimeController.Pause), nameof(WorkforceTimeController.Resume), nameof(WorkforceTimeController.Stop) })
             typeof(WorkforceTimeController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("POST");
+        // Phase 7: analytics are reads only, the export included; nothing on the dashboard changes anything.
+        foreach (var name in new[] { nameof(WorkforceAnalyticsController.Filters), nameof(WorkforceAnalyticsController.Overview), nameof(WorkforceAnalyticsController.Technician), nameof(WorkforceAnalyticsController.Work), nameof(WorkforceAnalyticsController.Export) })
+            typeof(WorkforceAnalyticsController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
     }
 
     [Fact]
@@ -225,7 +235,7 @@ public class EndpointAuthorizationTests
         // A ticket a client can see does not make its planning visible. The shapes the ticket API and
         // the client portal return must not grow a field about schedules, capacity or who is planned
         // when - whatever a later phase adds to the internal side.
-        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override", "RequiredMinutes", "WaitingReason", "PlanToken", "Shortage", "Session", "Segment", "ActualSeconds", "MyDay", "TeamToday", "Variance"];
+        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override", "RequiredMinutes", "WaitingReason", "PlanToken", "Shortage", "Session", "Segment", "ActualSeconds", "MyDay", "TeamToday", "Variance", "Heatmap", "Reactive", "Analytics"];
         var clientFacing = typeof(Desk.Application.Tickets.TicketDetailDto).Assembly.GetTypes().Where(t =>
             t.Namespace is "Desk.Application.Tickets" or "Desk.Application.ControlPanel" or "Desk.Application.Knowledge" or "Desk.Application.Attachments"
             && !t.IsInterface && !t.IsEnum && !t.Name.StartsWith('<')).ToList();

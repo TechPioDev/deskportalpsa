@@ -67,18 +67,20 @@ export function WorkforceNav() {
     { href: '/dashboard/workforce', label: 'People' },
     { href: '/dashboard/workforce/my-plan', label: 'My plan' },
     { href: '/dashboard/workforce/my-capacity', label: 'My capacity' },
+    { href: '/dashboard/workforce/my-analytics', label: 'My analytics' },
     ...(seesOthers ? [
       { href: '/dashboard/workforce/team-today', label: 'Team today' },
       { href: '/dashboard/workforce/schedule', label: 'Team schedule' },
       { href: '/dashboard/workforce/queue', label: 'Planning queue' },
       { href: '/dashboard/workforce/capacity', label: 'Team capacity' },
       { href: '/dashboard/workforce/find', label: 'Find available technician' },
+      { href: '/dashboard/workforce/analytics', label: 'Workforce analytics' },
     ] : []),
   ];
   return (
     <nav aria-label="Workforce" className="flex flex-wrap gap-1 border-b border-[var(--border)]">
       {items.map((i) => {
-        const on = pathname === i.href;
+        const on = pathname === i.href || (i.href !== '/dashboard/workforce' && pathname.startsWith(i.href + '/'));
         return (
           <Link key={i.href} href={i.href} aria-current={on ? 'page' : undefined}
             className={`border-b-2 px-3 py-2 text-sm font-medium ${on ? 'border-brand text-[var(--fg)]' : 'border-transparent text-[var(--muted)] hover:text-[var(--fg)]'}`}>
