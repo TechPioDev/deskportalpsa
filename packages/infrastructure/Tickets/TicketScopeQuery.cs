@@ -146,43 +146,29 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
     private async Task<Expression<Func<Ticket, bool>>> AssignedOnlyAsync(
         Guid appUserId, bool includeUnclaimed, CancellationToken ct)
     {
-        var me = await db.AppUsers.AsNoTracking()
-            .Where(u => u.Id == appUserId)
-            .Select(u => u.ExternalTechnicianId)
-            .FirstOrDefaultAsync(ct);
-        var linked = !string.IsNullOrEmpty(me);
-
-        // Written out per case rather than composed from a shared helper: a predicate that calls a
-        // method cannot be translated to SQL, and one built from captured booleans reads worse than
-        // the four sentences it replaces. "Unclaimed" means nobody has it on EITHER side — a ticket
-        // the PSA assigned to the integration's own API user carries an external id and so is not
-        // unclaimed, which is right: it belongs to whoever the portal gave it to, and showing it in
-        // everyone's queue would invite two technicians onto the same work.
         // A ticket this person raised is theirs too (only internal tickets record a raiser): a
         // technician who logs a job for the team must not watch it vanish the moment it is saved.
-        return (linked, includeUnclaimed) switch
-        {
-            (true, false) => Where(t =>
-                t.AssignedAppUserId == appUserId || t.AssignedTechnicianExternalId == me
-                || t.CreatedByUserId == appUserId),
-            (true, true) => Where(t =>
-                t.AssignedAppUserId == appUserId || t.AssignedTechnicianExternalId == me
-                || t.CreatedByUserId == appUserId
-                || (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)),
-            (false, false) => Where(t => t.AssignedAppUserId == appUserId || t.CreatedByUserId == appUserId),
-            (false, true) => Where(t =>
-                t.AssignedAppUserId == appUserId || t.CreatedByUserId == appUserId
-                || (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)),
-        };
+        var mine = Where(t => t.AssignedAppUserId == appUserId || t.CreatedByUserId == appUserId);
+        if (HeldByLogin(await PsaLoginsAsync([appUserId], ct)) is { } byLogin)
+            mine = Or(mine, byLogin);
+
+        // "Unclaimed" means nobody has it on EITHER side - a ticket the PSA assigned to the
+        // integration's own API user carries an external id and so is not unclaimed, which is right:
+        // it belongs to whoever the portal gave it to, and showing it in everyone's queue would
+        // invite two technicians onto the same work.
+        return includeUnclaimed
+            ? Or(mine, Where(t => t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null))
+            : mine;
     }
 
     /// <summary>
-    /// Department/Team scope, resolved via the assigned technician's department/team membership —
+    /// Department/Team scope, resolved via the assigned technician's department/team membership -
     /// Ticket carries no department/team of its own (see the Phase 1 design note on why one was
-    /// deliberately not added), so this is a join through AppUser.ExternalTechnicianId.
+    /// deliberately not added), so this is a join through each member's portal account and through
+    /// the PSA logins they are linked to.
     ///
     /// An unassigned ticket has no technician and so cannot join to anything, but per the explicit
-    /// product decision it must stay visible rather than vanish from the unclaimed queue — so the
+    /// product decision it must stay visible rather than vanish from the unclaimed queue - so the
     /// membership match is OR'd with "unassigned", not AND'd.
     /// </summary>
     private async Task<Expression<Func<Ticket, bool>>> GroupOrUnassignedAsync(
@@ -204,15 +190,57 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
             : await db.UserDepartments.AsNoTracking().Where(ud => groupIds.Contains(ud.DepartmentId))
                 .Select(ud => ud.AppUserId).Distinct().ToListAsync(ct);
 
-        var technicianIds = await db.AppUsers.AsNoTracking()
-            .Where(u => memberIds.Contains(u.Id) && u.ExternalTechnicianId != null)
-            .Select(u => u.ExternalTechnicianId!)
-            .Distinct().ToListAsync(ct);
-
-        return Where(t =>
+        var shared = Where(t =>
             (t.AssignedAppUserId == null && t.AssignedTechnicianExternalId == null)
-            || (t.AssignedAppUserId != null && memberIds.Contains(t.AssignedAppUserId.Value))
-            || (t.AssignedTechnicianExternalId != null && technicianIds.Contains(t.AssignedTechnicianExternalId!)));
+            || (t.AssignedAppUserId != null && memberIds.Contains(t.AssignedAppUserId.Value)));
+        return HeldByLogin(await PsaLoginsAsync(memberIds, ct)) is { } byLogin ? Or(shared, byLogin) : shared;
+    }
+
+    /// <summary>
+    /// The PSA logins these people are linked to, each with its connection - never a login alone.
+    /// The same id on another PSA account is a different login and usually a different person, so
+    /// matching on the id by itself would show one technician another's tickets as soon as a desk
+    /// has two accounts. (It used to be read from a single id kept on the person, which no code
+    /// ever filled in: a linked technician was shown nothing the PSA had assigned them.)
+    ///
+    /// A link to the account a connection writes AS is left out, as <see cref="PsaLinks"/> does:
+    /// that account holds the whole portal team's work, so treating it as one person's login would
+    /// hand them everyone's.
+    /// </summary>
+    private async Task<IReadOnlyList<(Guid Connection, string Login)>> PsaLoginsAsync(
+        IReadOnlyCollection<Guid> appUserIds, CancellationToken ct)
+    {
+        var rows = await db.UserPsaIdentities.AsNoTracking()
+            .Where(i => appUserIds.Contains(i.AppUserId))
+            .Select(i => new { i.PsaConnectionId, i.ExternalTechnicianId })
+            .ToListAsync(ct);
+        if (rows.Count == 0) return [];
+
+        var account = await IntegrationIdentity.LoadAsync(db, ct);
+        return rows
+            .Where(r => !string.IsNullOrWhiteSpace(r.ExternalTechnicianId)
+                        && !account.IsAccount(r.PsaConnectionId, r.ExternalTechnicianId))
+            .Select(r => (r.PsaConnectionId, r.ExternalTechnicianId.Trim()))
+            .Distinct()
+            .ToList();
+    }
+
+    /// <summary>
+    /// "The PSA assigned it to one of these logins": one clause per connection, OR'd, each a plain
+    /// local-array Contains. Null when there are no logins, so the caller adds nothing.
+    /// </summary>
+    private static Expression<Func<Ticket, bool>>? HeldByLogin(IReadOnlyList<(Guid Connection, string Login)> logins)
+    {
+        Expression<Func<Ticket, bool>>? combined = null;
+        foreach (var group in logins.GroupBy(l => l.Connection))
+        {
+            var connectionId = group.Key;
+            var ids = group.Select(l => l.Login).ToArray();
+            Expression<Func<Ticket, bool>> clause = t =>
+                t.PsaConnectionId == connectionId && ids.Contains(t.AssignedTechnicianExternalId!);
+            combined = combined is null ? clause : Or(combined, clause);
+        }
+        return combined;
     }
 
     /// <summary>

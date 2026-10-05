@@ -112,12 +112,14 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
 
         var identity = new ClaimsIdentity();
 
-        // Who this is, in both id spaces. Emitted here because this is the one place per request
-        // that already has the AppUser loaded — anything scoping data to "this person's own work"
-        // would otherwise re-query for it on every call site.
+        // Who this is. Emitted here because this is the one place per request that already has the
+        // AppUser loaded — anything scoping data to "this person's own work" would otherwise
+        // re-query for it on every call site.
+        //
+        // Only the portal id. A person's PSA logins are per connection (UserPsaIdentity) and are
+        // looked up where they are needed; a single technician id in the token could only ever be
+        // right for one PSA account, and would name somebody else on a second.
         identity.AddClaim(new Claim(CurrentUser.UserIdClaim, user.Id.ToString()));
-        if (!string.IsNullOrEmpty(user.ExternalTechnicianId))
-            identity.AddClaim(new Claim(CurrentUser.TechnicianClaim, user.ExternalTechnicianId));
 
         var isPlatform = roles.Any(r => r.BuiltInType == RoleType.PlatformSuperAdministrator);
         if (isPlatform)
