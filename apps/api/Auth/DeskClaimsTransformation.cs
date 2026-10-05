@@ -51,7 +51,8 @@ public sealed class DeskClaimsTransformation(
             {
                 var invited = await OnlyInvitationAsync(
                     db.AppUsers.Include(u => u.Roles)
-                        .Where(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower()),
+                        .Where(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower())
+                        .OrderBy(u => u.Id),
                     "staff");
                 if (invited is not null)
                 {
@@ -113,8 +114,10 @@ public sealed class DeskClaimsTransformation(
     /// bound. It used to be an exception on every request instead: the person could not sign in at
     /// all, and nothing said why.
     /// </summary>
-    private async Task<T?> OnlyInvitationAsync<T>(IQueryable<T> waiting, string kind) where T : class
+    private async Task<T?> OnlyInvitationAsync<T>(IOrderedQueryable<T> waiting, string kind) where T : class
     {
+        // Two rows are enough to know there is more than one. Ordered, because a row limit without
+        // an order is a query the database may answer differently each time, and says so in the log.
         var found = await waiting.Take(2).ToListAsync();
         if (found.Count > 1)
             logger?.LogWarning(
@@ -216,7 +219,8 @@ public sealed class DeskClaimsTransformation(
             {
                 var invited = await OnlyInvitationAsync(
                     db.ClientUsers.IgnoreQueryFilters()
-                        .Where(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower()),
+                        .Where(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower())
+                        .OrderBy(u => u.Id),
                     "client");
                 if (invited is not null)
                 {

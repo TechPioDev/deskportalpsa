@@ -39,32 +39,34 @@ public sealed class ConnectorEndpointPolicy(bool allowInsecure, bool blockPrivat
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host)
             || uri.Scheme is not ("http" or "https"))
             throw new ValidationFailedException("The API address is not a web address. It should start with https://");
+        // Everything wrong with it, in one answer. Reported one at a time, an address with three
+        // problems took three saves to get right.
+        var problems = new List<string>();
         if (!string.IsNullOrEmpty(uri.UserInfo))
-            throw new ValidationFailedException(
-                "Leave the user name and password out of the API address. Enter the credentials in their own fields.");
+            problems.Add("Leave the user name and password out of the API address. Enter the credentials in their own fields.");
         if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
-            throw new ValidationFailedException("The API address cannot contain ? or #.");
+            problems.Add("The API address cannot contain ? or #.");
 
-        if (allowInsecure) return value;
+        if (!allowInsecure)
+        {
+            if (uri.Scheme != "https")
+                problems.Add("The API address must start with https://. Over plain http the connection's credentials would be sent unencrypted.");
 
-        if (uri.Scheme != "https")
-            throw new ValidationFailedException(
-                "The API address must start with https://. Over plain http the connection's credentials would be sent unencrypted.");
+            var host = uri.IdnHost;
+            if (!allowedHosts.Contains(host))
+            {
+                // One sentence about the host, not two: an Autotask address that is not Autotask's is
+                // wrong whichever network it is on.
+                if (provider == ProviderType.AutotaskPsa && !IsUnder(host, "autotask.net"))
+                    problems.Add("An Autotask API address is on autotask.net - for example https://webservices5.autotask.net. "
+                                 + "Use the address of your own Autotask zone.");
+                else if (blockPrivate && IsPrivate(host))
+                    problems.Add("That address is on a private or reserved network. A PSA on a private network has to be allowed by "
+                                 + "whoever runs this server (Connectors:AllowedHosts).");
+            }
+        }
 
-        var host = uri.IdnHost;
-        if (allowedHosts.Contains(host)) return value;
-
-        if (blockPrivate && IsPrivate(host))
-            throw new ValidationFailedException(
-                "That address is on a private or reserved network. A PSA on a private network has to be allowed by "
-                + "whoever runs this server (Connectors:AllowedHosts).");
-
-        if (provider == ProviderType.AutotaskPsa && !IsUnder(host, "autotask.net"))
-            throw new ValidationFailedException(
-                "An Autotask API address is on autotask.net - for example https://webservices5.autotask.net. "
-                + "Use the address of your own Autotask zone.");
-
-        return value;
+        return problems.Count == 0 ? value : throw new ValidationFailedException(string.Join(" ", problems));
     }
 
     private static bool IsUnder(string host, string domain)

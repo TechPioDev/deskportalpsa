@@ -4,22 +4,28 @@ Datto Autotask PSA integration over the REST API v1.0. Wave-1 reference connecto
 
 ## Connection setup
 A `PsaConnection` with `Provider = AutotaskPsa` and `ApiEndpoint` set to the account's **zone base
-URL** (e.g. `https://webservices2.autotask.net/atservicesrest/`). Credentials are encrypted at rest
-and referenced by `CredentialSecretRef`; the credential fields required are:
+URL** (e.g. `https://webservices2.autotask.net/atservicesrest/`). The address is checked when it is
+saved: it must be `https` and on `autotask.net`, because the credentials below are sent to it on
+every call. Credentials are encrypted at rest and referenced by `CredentialSecretRef`; the
+credential fields required are:
 
 | Key | Value |
 |---|---|
 | `ApiIntegrationCode` | API tracking identifier |
 | `UserName` | API user (resource) name |
 | `Secret` | API user secret |
-| `WebhookSecret` | (optional) HMAC secret for inbound webhook validation |
+| `WebhookSecret` | HMAC secret for inbound deliveries. Without one, no delivery is accepted |
 
 The factory reads these from the secret store and configures an HttpClient; raw secrets never touch
 the database or logs.
 
 ## Capabilities
 Create/update tickets, public + internal notes, attachments, time entries, SLA data, custom fields,
-companies/contacts/technicians, queues, incremental sync, inbound webhooks. Max page size 500.
+companies/contacts/technicians, queues, incremental sync. Max page size 500.
+
+Inbound deliveries use the portal's own signed format (`X-Timestamp`, and `X-Signature` = hex
+HMAC-SHA256 of `"{timestamp}.{body}"`), not Autotask's webhook format. Polling is how changes
+arrive today; Autotask-native webhooks are a later Phase 9 slice.
 
 ## Field semantics & limitations
 - **Statuses / priorities / queues are numeric picklist ids.** The connector transmits values
@@ -30,6 +36,11 @@ companies/contacts/technicians, queues, incremental sync, inbound webhooks. Max 
   mirrored to the portal.
 - **No native create-idempotency.** Autotask cannot dedupe by an arbitrary key, so duplicate-create
   protection is enforced at the platform layer (sync-event idempotency), not in the connector.
+- **A ticket carries its queue's id beside the name** (`QueueOrBoardId`). A connection's queue
+  limit holds ids, and is checked against the id.
+- **The tenant-wide attachment sweep reads every page** (500 a page, up to 20 pages a run) and
+  reports whether its list is complete. Stored files are removed only when a complete list no
+  longer contains them.
 - **Query payloads are PascalCase** (`MaxRecords`, `Filter`) — the connector overrides the default
   camelCase JSON policy to match Autotask.
 

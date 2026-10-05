@@ -57,6 +57,16 @@ public class ConnectorEndpointTests
         act.Should().Throw<ValidationFailedException>().WithMessage(because);
     }
 
+    [Fact]
+    public void Everything_wrong_with_an_address_is_said_at_once()
+    {
+        // Three problems used to mean three saves, each refused for the next reason.
+        var act = () => ConnectorEndpointPolicy.Strict.Validate(ProviderType.ConnectWisePsa, "http://admin:pw@10.0.0.5/api?x=1");
+
+        act.Should().Throw<ValidationFailedException>()
+            .WithMessage("*credentials*").WithMessage("*cannot contain*").WithMessage("*https://*").WithMessage("*private*");
+    }
+
     [Theory]
     [InlineData("https://127.0.0.1")]
     [InlineData("https://localhost")]
