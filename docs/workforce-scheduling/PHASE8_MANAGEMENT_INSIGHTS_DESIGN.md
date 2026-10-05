@@ -164,9 +164,14 @@ and technician. Capacity is counted for people offered for planned work, as ever
 | Schedule coverage | Σ min(RequiredMinutes, allocated) ÷ Σ RequiredMinutes over open estimated work; N/A when nothing is estimated | derived |
 
 **Eligible work** is open work held by a person in scope, or held by nobody and routed to a team
-those people belong to, whose planning window allows it to start by the window's last day
-(`EarliestStart` is empty or not later). Work routed to a team with no holder is shown as its own
-row ("Not yet assigned"), counted in its team and in the totals, and in no person's row.
+in scope, whose planning window allows it to start by the window's last day (`EarliestStart` is
+empty or not later). Work routed to a team with no holder is shown as its own row ("Not yet
+assigned"), counted in its team and in the totals, and in no person's row.
+
+**Which teams' unheld work.** Every team for a caller whose `schedule.view` reaches everyone; the
+caller's **own** teams for a narrower scope (never the other teams a colleague happens to belong
+to); none for someone who sees only themselves. A question about one person or one department is
+about held work only, because unheld work has neither.
 
 **Why tentative is subtracted from remaining effort here** although the planning queue's own
 *remaining* ignores it: pencilled-in work is already counted as tentative demand. Subtracting only
@@ -200,7 +205,7 @@ the rest as "no due date in this window". It is never spread across days by gues
 | **Confirmed remaining** | **40 h** | 20 h |
 | **Projected demand** | **90 h** | **115 h** |
 | **Capacity gap** | **+10 h** | **−15 h** |
-| Attention | none | "projected 15 h over capacity" |
+| Attention list | Watch: "projected demand takes 90% of capacity; 10 h is left" (the 90 % threshold, reached exactly) | Attention: "projected demand is 15 h over capacity" |
 
 ## 7. Team, technician, client, source and skill views
 
@@ -299,7 +304,10 @@ Thresholds are constants in one place (`InsightThresholds`). They are fixed in t
 making them configurable per organization waits for a business need, and would be audited.
 
 "Free time on the days up to the due date" is the planning queue's existing rule for *not enough
-capacity before the due date*, applied to all due work instead of the queue's first 100 items.
+capacity before the due date*, applied to all due work instead of the queue's first 100 items. It
+is evaluated for work due **within the window**: for work due before the window opens, the free
+time that matters lies outside what the window knows, so nothing is claimed about it (work already
+past its due date is listed as overdue whatever the window).
 
 ## 11. Data quality, mapping health, integration health
 

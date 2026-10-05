@@ -165,6 +165,15 @@ public class EndpointAuthorizationTests
         { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Technician), [Permissions.ScheduleView] },
         { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Work), [Permissions.ScheduleView] },
         { nameof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Export), [Permissions.WorkforceAnalyticsExport] },
+        // Phase 8: management insights and report previews are schedule reads too; mapping and integration
+        // health keeps its existing key; a report leaves the system only with the export key.
+        { nameof(WorkforceInsightsController), nameof(WorkforceInsightsController.Forecast), [Permissions.ScheduleView] },
+        { nameof(WorkforceInsightsController), nameof(WorkforceInsightsController.ForecastWork), [Permissions.ScheduleView] },
+        { nameof(WorkforceInsightsController), nameof(WorkforceInsightsController.Trends), [Permissions.ScheduleView] },
+        { nameof(WorkforceInsightsController), nameof(WorkforceInsightsController.Health), [Permissions.IntegrationHealthView] },
+        { nameof(WorkforceReportsController), nameof(WorkforceReportsController.Catalogue), [Permissions.ScheduleView] },
+        { nameof(WorkforceReportsController), nameof(WorkforceReportsController.Preview), [Permissions.ScheduleView] },
+        { nameof(WorkforceReportsController), nameof(WorkforceReportsController.Export), [Permissions.WorkforceAnalyticsExport] },
         // The ticket time panel, which a stopped clock writes through: every action needs tickets.time.log.
         { nameof(TicketTimeController), nameof(TicketTimeController.List), [Permissions.TicketsLogTime] },
         { nameof(TicketTimeController), nameof(TicketTimeController.LogTime), [Permissions.TicketsLogTime] },
@@ -184,7 +193,8 @@ public class EndpointAuthorizationTests
             .Select(p => p.Key).Concat([Permissions.TicketsCreate, Permissions.TicketsAddPublicNote]).ToHashSet();
         // Every controller under api/workforce - found by route, so one added later is covered too.
         var workforce = Controllers.Where(c => (c.GetCustomAttribute<RouteAttribute>()?.Template ?? "").StartsWith("api/workforce", StringComparison.Ordinal)).ToList();
-        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController), typeof(WorkforcePlanController), typeof(WorkforceTimeController), typeof(WorkforceAnalyticsController)]);
+        workforce.Should().Contain([typeof(WorkforceController), typeof(WorkforceCapacityController), typeof(WorkforcePlanController), typeof(WorkforceTimeController), typeof(WorkforceAnalyticsController),
+            typeof(WorkforceInsightsController), typeof(WorkforceReportsController)]);
         foreach (var controller in workforce)
         {
             controller.GetCustomAttributes<AuthorizeAttribute>().Should().NotBeEmpty($"{controller.Name} is never anonymous");
@@ -227,6 +237,39 @@ public class EndpointAuthorizationTests
         // Phase 7: analytics are reads only, the export included; nothing on the dashboard changes anything.
         foreach (var name in new[] { nameof(WorkforceAnalyticsController.Filters), nameof(WorkforceAnalyticsController.Overview), nameof(WorkforceAnalyticsController.Technician), nameof(WorkforceAnalyticsController.Work), nameof(WorkforceAnalyticsController.Export) })
             typeof(WorkforceAnalyticsController).GetMethod(name)!.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal("GET");
+        // Phase 8: insights and reports are reads, every one of them; a report is never stored, scheduled or sent from here.
+        foreach (var controller in new[] { typeof(WorkforceInsightsController), typeof(WorkforceReportsController) })
+        {
+            var actions = Actions().Where(a => a.Controller == controller).ToList();
+            actions.Should().NotBeEmpty();
+            foreach (var action in actions)
+                action.Action.GetCustomAttributes<HttpMethodAttribute>().Single().HttpMethods.Should().Equal(["GET"], Name(action));
+        }
+    }
+
+    [Fact]
+    public void A_person_who_sees_schedules_cannot_export_a_report_or_read_integration_health_without_those_keys()
+    {
+        // The controller's requirement lets a schedule reader in; these three actions ask for more, and the
+        // more specific requirement is the one that applies (and the service checks it again).
+        foreach (var (controller, name, key) in new[]
+                 {
+                     (typeof(WorkforceReportsController), nameof(WorkforceReportsController.Export), Permissions.WorkforceAnalyticsExport),
+                     (typeof(WorkforceAnalyticsController), nameof(WorkforceAnalyticsController.Export), Permissions.WorkforceAnalyticsExport),
+                     (typeof(WorkforceInsightsController), nameof(WorkforceInsightsController.Health), Permissions.IntegrationHealthView),
+                 })
+        {
+            var action = Actions().Single(a => a.Controller == controller && a.Action.Name == name);
+            Required(action).Should().BeEquivalentTo([key], Name(action));
+            // Both requirements apply together: the action's attribute does not replace the controller's.
+            controller.GetCustomAttribute<RequirePermissionAttribute>()!.Policy.Should().Be(PermissionPolicyProvider.For([Permissions.ScheduleView]));
+        }
+        // Who holds the export key: managers and administrators, and no technician or client role.
+        foreach (var role in Enum.GetValues<Desk.Domain.Enums.RoleType>())
+        {
+            var holds = Permissions.ForRole(role).Any(p => p.Key == Permissions.WorkforceAnalyticsExport);
+            holds.Should().Be(role is Desk.Domain.Enums.RoleType.Manager or Desk.Domain.Enums.RoleType.MspAdministrator or Desk.Domain.Enums.RoleType.PlatformSuperAdministrator, role.ToString());
+        }
     }
 
     [Fact]
@@ -235,7 +278,8 @@ public class EndpointAuthorizationTests
         // A ticket a client can see does not make its planning visible. The shapes the ticket API and
         // the client portal return must not grow a field about schedules, capacity or who is planned
         // when - whatever a later phase adds to the internal side.
-        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override", "RequiredMinutes", "WaitingReason", "PlanToken", "Shortage", "Session", "Segment", "ActualSeconds", "MyDay", "TeamToday", "Variance", "Heatmap", "Reactive", "Analytics"];
+        string[] forbidden = ["Capacity", "Schedul", "Allocat", "Availability", "FreeSlot", "WorkingWindow", "Utilization", "Skill", "Planned", "Tentative", "MyPlan", "Override", "RequiredMinutes", "WaitingReason", "PlanToken", "Shortage", "Session", "Segment", "ActualSeconds", "MyDay", "TeamToday", "Variance", "Heatmap", "Reactive", "Analytics",
+            "Forecast", "Insight", "Projected", "Unestimated", "Unscheduled", "CapacityGap", "DataQuality", "QualitySignal", "Coverage"];
         var clientFacing = typeof(Desk.Application.Tickets.TicketDetailDto).Assembly.GetTypes().Where(t =>
             t.Namespace is "Desk.Application.Tickets" or "Desk.Application.ControlPanel" or "Desk.Application.Knowledge" or "Desk.Application.Attachments"
             && !t.IsInterface && !t.IsEnum && !t.Name.StartsWith('<')).ToList();
