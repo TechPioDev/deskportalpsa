@@ -58,6 +58,17 @@ async function estimate(page: Page, ticketId: string, minutes: number) {
   const res = await ask(() => page.request.put(api(`/workforce/plan/requirements/${ticketId}`), { data: { requiredMinutes: minutes, splittable: true } }));
   expect(res.ok(), `estimated: ${res.status()} ${await res.text()}`).toBeTruthy();
 }
+/**
+ * Finishes the work a test raised. The desk's "unscheduled" lists hold the hundred most urgent open
+ * items, and every browser shares one desk: open work left behind here would eventually crowd
+ * another spec's ticket off its list.
+ */
+async function tidy(page: Page, ...work: { id: string }[]) {
+  for (const t of work) {
+    const res = await ask(() => page.request.post(api(`/tickets/${t.id}/status`), { data: { status: 'CLOSED', resolution: 'Insights test finished' } }));
+    expect(res.ok(), `closed: ${res.status()} ${await res.text()}`).toBeTruthy();
+  }
+}
 async function forecast(page: Page, qs = windowQs()): Promise<Forecast> {
   const res = await ask(() => page.request.get(api(`/workforce/insights/forecast?${qs}`)));
   expect(res.ok(), `forecast: ${res.status()} ${await res.text()}`).toBeTruthy();
@@ -205,10 +216,17 @@ test('management reads the forecast, opens the records behind it, sees why somet
   await expect(page).toHaveURL(/source=internal/);
   await page.getByRole('button', { name: 'Reset' }).click();
   await expect(page).not.toHaveURL(/window=|source=/);
+
+  // Finished work is no demand: closing the three takes exactly their effort and their count back out.
+  const open = await forecast(page);
+  await tidy(page, planned, waiting, unsized);
+  const closed = await forecast(page);
+  expect(open.totals.unscheduledMinutes - closed.totals.unscheduledMinutes).toBe(120 + 240);
+  expect(open.totals.unestimatedItems - closed.totals.unestimatedItems).toBe(1);
 });
 
 test('the report center previews a report under its filters and exports the same rows as CSV and XLSX', async ({ page }) => {
-  const { who } = await seed(page);
+  const { who, planned, waiting, unsized } = await seed(page);
   const catalogue = await (await ask(() => page.request.get(api('/workforce/reports')))).json() as { key: string; category: string; title: string }[];
   expect(catalogue.map((r) => r.key)).toEqual(expect.arrayContaining(['workforce-utilization', 'technician-work-summary', 'team-work-summary', 'capacity-demand', 'future-capacity', 'client-workload',
     'planned-vs-actual', 'reactive-work', 'estimate-variance', 'work-sources', 'operational-quality']));
@@ -286,6 +304,7 @@ test('the report center previews a report under its filters and exports the same
     ['/workforce/insights/forecast?appUserId=00000000-0000-0000-0000-000000000001', 404], ['/workforce/insights/forecast?clientId=00000000-0000-0000-0000-000000000001', 404],
   ] as const)
     expect((await ask(() => page.request.get(api(path)))).status(), path).toBe(status);
+  await tidy(page, planned, waiting, unsized);
 });
 
 test('a person who sees only their own schedule gets their own forecast, no export and no integration health', async ({ page }) => {
@@ -321,6 +340,7 @@ test('a person who sees only their own schedule gets their own forecast, no expo
   await expect(page.getByRole('region', { name: 'Preview' })).toContainText(person.displayName);
   await expect(page.getByRole('button', { name: 'Export CSV' })).toHaveCount(0);
   await exitView(page);
+  await tidy(page, theirs);
 });
 
 test('an account without the scheduling permission is refused the insights and report pages and every endpoint', async ({ page }) => {
@@ -342,12 +362,13 @@ test('an account without the scheduling permission is refused the insights and r
     '/workforce/reports/future-capacity', '/workforce/reports/future-capacity/export?format=csv', '/workforce/reports/operational-quality/export?format=xlsx'])
     expect((await ask(() => page.request.get(api(path)))).status(), path).toBe(403);
   await exitView(page);
+  await tidy(page, work);
 });
 
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 375, height: 740 } });
   test('insights stack their cards, show technicians as cards, and a report scrolls inside its own frame', async ({ page }) => {
-    const { who } = await seed(page);
+    const { who, planned, waiting, unsized } = await seed(page);
     await go(page, `/dashboard/workforce/insights?${windowQs()}`);
     await expect(page.getByRole('heading', { name: 'Management insights' })).toBeVisible();
     await expect(figure(page, 'Projected demand')).toBeVisible();
@@ -360,5 +381,6 @@ test.describe('on a phone', () => {
     await go(page, `/dashboard/workforce/reports/future-capacity?${windowQs()}`);
     await expect(page.getByRole('region', { name: 'Preview' })).toContainText(who.displayName);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), 'the table scrolls in its own frame, not the page').toBeLessThanOrEqual(375);
+    await tidy(page, planned, waiting, unsized);
   });
 });
