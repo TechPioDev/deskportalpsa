@@ -503,9 +503,12 @@ public partial class WorkPlanTests
         var w = await WorldAsync();
         var admin = w.As(w.Admin);
         var weekdays = new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday };
-        // Abbie works nights, 18:00 to 03:00 the next morning; Sam works days in New York.
-        await admin.Schedules.SaveAsync(w.Admin.Id, w.Abbie.Id, new WorkScheduleInput(null, Zone, weekdays.Select(d => new WorkDayInput(d, "18:00", "03:00", [])).ToList()));
-        await admin.Schedules.SaveAsync(w.Admin.Id, w.Sam.Id, new WorkScheduleInput(null, "America/New_York",
+        // Abbie works nights, 18:00 to 03:00 the next morning; Sam works days in New York. Both from Saturday 3 January, named
+        // outright: "today" is a different date in New York than in Mohali at the moment the world begins, and a schedule
+        // saved "from today" starts on its own zone's today.
+        var from = Monday.AddDays(-2);
+        await admin.Schedules.SaveAsync(w.Admin.Id, w.Abbie.Id, new WorkScheduleInput(from, Zone, weekdays.Select(d => new WorkDayInput(d, "18:00", "03:00", [])).ToList()));
+        await admin.Schedules.SaveAsync(w.Admin.Id, w.Sam.Id, new WorkScheduleInput(from, "America/New_York",
             weekdays.Select(d => new WorkDayInput(d, "08:30", "17:30", [new WorkBreakDto("12:30", "13:30")])).ToList()));
         w.Db.ChangeTracker.Clear();
         // Friday night's shift runs into Saturday: three hours planned and one recorded after midnight, inside it.
