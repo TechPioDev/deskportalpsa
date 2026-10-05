@@ -56,9 +56,8 @@ public sealed class ConnectionSyncRunner(
             var connector = await resolver.ResolveAsync(psaConnectionId, ct);
             // Asked once per run, not per ticket: it decides whether time aggregates are worth pulling.
             var capabilities = await connector.GetCapabilitiesAsync(ct);
-            var rules = await db.FieldMappings.AsNoTracking()
-                .Where(m => m.Provider == connection.Provider && m.IsActive)
-                .ToListAsync(ct);
+            var rules = await ConnectionMappingRules.LoadAsync(
+                db, connection.MspOrganizationId, connection.Provider, connection.Id, ct);
 
             do
             {

@@ -97,8 +97,7 @@ public sealed class TicketStatusWriter(
         if (string.IsNullOrEmpty(ticket.ExternalTicketId))
             throw new ValidationFailedException("This ticket is not yet synced to the PSA.");
 
-        var rules = await db.FieldMappings.AsNoTracking()
-            .Where(m => m.Provider == provider && m.IsActive).ToListAsync(ct);
+        var rules = await Sync.ConnectionMappingRules.LoadAsync(db, ticket.MspOrganizationId, provider, connectionId, ct);
         var ctx = new MappingContext { Provider = provider, PsaConnectionId = connectionId, QueueOrBoardKey = ticket.QueueOrBoard };
 
         // Portal → PSA value (name). Fall back to the raw portal value when no rule matches. The

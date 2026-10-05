@@ -86,9 +86,8 @@ public sealed class TicketResyncService(
         var company = await db.ClientCompanies.FirstOrDefaultAsync(c => c.Id == ticket.ClientCompanyId, ct)
             ?? throw new NotFoundException("Client company");
 
-        var rules = await db.FieldMappings.AsNoTracking()
-            .Where(m => m.Provider == connection.Provider && m.IsActive)
-            .ToListAsync(ct);
+        var rules = await ConnectionMappingRules.LoadAsync(
+            db, connection.MspOrganizationId, connection.Provider, connection.Id, ct);
         var ctx = new MappingContext
         {
             Provider = connection.Provider,

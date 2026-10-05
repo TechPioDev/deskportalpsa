@@ -82,7 +82,13 @@ public sealed class MappingEngine : IMappingEngine
         return src is not null && string.Equals(src, value, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool ScopeApplies(FieldMapping r, MappingContext ctx) => r.Scope switch
+    // A rule that names a connection is that connection's rule at EVERY scope. Only the connection
+    // scope used to check, so a queue or ticket-type rule written for one PSA account also decided
+    // values for another account of the same provider that happened to use the same key.
+    private static bool ScopeApplies(FieldMapping r, MappingContext ctx)
+        => (r.PsaConnectionId is not { } owner || owner == ctx.PsaConnectionId) && ScopeMatches(r, ctx);
+
+    private static bool ScopeMatches(FieldMapping r, MappingContext ctx) => r.Scope switch
     {
         MappingScope.PlatformDefault => true,
         MappingScope.ProviderDefault => true,

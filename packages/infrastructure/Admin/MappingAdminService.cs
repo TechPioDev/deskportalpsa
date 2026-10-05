@@ -29,6 +29,23 @@ public sealed class MappingAdminService(
 
     public async Task<MappingRuleDto> UpsertAsync(UpsertMappingInput input, string? changeNote, CancellationToken ct = default)
     {
+        // A rule that names a connection must name one this caller can see, of the provider the rule
+        // is for. The id used to be stored as sent: a rule could be filed against a connection of
+        // another organization, where the scheduled sync - which reads across organizations - would
+        // have applied it.
+        if (input.PsaConnectionId is { } connectionId)
+        {
+            var provider = await db.PsaConnections.AsNoTracking()
+                .Where(c => c.Id == connectionId)
+                .Select(c => (ProviderType?)c.Provider)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new ValidationFailedException("That PSA connection does not exist.");
+            if (provider != input.Provider)
+                throw new ValidationFailedException("That connection belongs to a different PSA than this rule.");
+        }
+        else if (input.Scope == MappingScope.ConnectionOverride)
+            throw new ValidationFailedException("A rule for one connection has to name the connection.");
+
         FieldMapping rule;
         if (input.Id is { } id)
         {
