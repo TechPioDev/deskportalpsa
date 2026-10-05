@@ -10,4 +10,10 @@ namespace Desk.Application.Connectors;
 public interface IConnectorResolver
 {
     Task<IServiceManagementConnector> ResolveAsync(Guid psaConnectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Whether a connector exists for this provider. More PSAs are named than can be connected
+    /// today, and a connection to one of the others could never sync.
+    /// </summary>
+    bool Supports(Desk.Domain.Enums.ProviderType provider) => true;
 }

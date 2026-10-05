@@ -83,15 +83,19 @@ public static class DependencyInjection
         services.AddScoped<IConnectorFactory, AutotaskConnectorFactory>();
         services.AddScoped<IConnectorFactory, ConnectWiseConnectorFactory>();
 
-        // Optional SSRF egress guard on connector HttpClients (blocks private/reserved hosts).
-        if (config.GetValue("Connectors:BlockPrivateEgress", false))
+        services.AddSingleton(Security.ConnectorEndpointPolicy.From(config));
+
+        // SSRF egress guard on connector HttpClients (blocks private/reserved hosts). On unless this
+        // is local mode or the operator says otherwise - see EgressGuard.IsEnabled. The API and the
+        // worker both come through here, so neither can be left out by a missing setting.
+        if (EgressGuard.IsEnabled(config))
         {
-            var allowed = new HashSet<string>(
-                config.GetSection("Connectors:AllowedHosts").Get<string[]>() ?? [],
-                StringComparer.OrdinalIgnoreCase);
+            var allowed = EgressGuard.AllowedHosts(config);
             services.AddTransient(_ => new EgressGuard(allowed));
-            services.AddHttpClient("autotask").AddHttpMessageHandler(sp => sp.GetRequiredService<EgressGuard>());
-            services.AddHttpClient("connectwise").AddHttpMessageHandler(sp => sp.GetRequiredService<EgressGuard>());
+            foreach (var client in new[] { "autotask", "connectwise" })
+                services.AddHttpClient(client)
+                    .ConfigurePrimaryHttpMessageHandler(() => EgressGuard.PinnedHandler(allowed))
+                    .AddHttpMessageHandler(sp => sp.GetRequiredService<EgressGuard>());
         }
 
         // Assistant. The HttpClient is named and its base address fixed here, so the service can
@@ -164,7 +168,7 @@ public static class DependencyInjection
             Username = config["Email:Smtp:Username"], Password = config["Email:Smtp:Password"],
             From = config["Email:Smtp:From"], FromName = config["Email:Smtp:FromName"] is { Length: > 0 } n ? n : "Desk Portal",
             Security = config["Email:Smtp:Security"] is { Length: > 0 } sec ? sec : "StartTls",
-            BlockPrivateHosts = config.GetValue("Connectors:BlockPrivateEgress", false),
+            BlockPrivateHosts = EgressGuard.IsEnabled(config),
         });
         services.AddScoped<Desk.Application.Common.IEmailSender, Desk.Infrastructure.Email.SmtpEmailSender>();
         services.AddScoped<Desk.Application.Common.IEmailSettingsService, Desk.Infrastructure.Email.EmailSettingsService>();
