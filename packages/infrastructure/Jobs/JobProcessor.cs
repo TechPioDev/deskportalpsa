@@ -24,8 +24,13 @@ public sealed class JobProcessor(
 
     public async Task<BackgroundJobStatus> ProcessAsync(BackgroundJob job, CancellationToken ct = default)
     {
-        job.Status = BackgroundJobStatus.Running;
-        job.Attempts++;
+        // Taken through the queue, it is already marked running and counted as an attempt.
+        // Handed straight here, it is marked now.
+        if (job.Status != BackgroundJobStatus.Running)
+        {
+            job.Status = BackgroundJobStatus.Running;
+            job.Attempts++;
+        }
 
         try
         {
@@ -59,7 +64,18 @@ public sealed class JobProcessor(
 
     private async Task<BackgroundJobStatus> SaveAndReturn(BackgroundJob job, CancellationToken ct)
     {
-        await db.SaveChangesAsync(ct);
+        job.LeaseExpiresAt = null;
+        job.Version++;
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        {
+            // The handler ran past its lease and another worker took the job. It is theirs to
+            // finish and to record; what this one would have written is let go of.
+            db.Entry(job).State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+        }
         return job.Status;
     }
 }

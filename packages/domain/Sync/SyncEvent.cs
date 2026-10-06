@@ -38,4 +38,13 @@ public class BackgroundJob : TenantEntity
     public int MaxAttempts { get; set; } = 5;
     public DateTimeOffset? NextAttemptAt { get; set; }
     public string? LastError { get; set; }
+
+    /// <summary>
+    /// Until when the worker that took this job holds it. Past that with the job still running,
+    /// the worker stopped, and the job is taken again.
+    /// </summary>
+    public DateTimeOffset? LeaseExpiresAt { get; set; }
+
+    /// <summary>Raised on every change and checked on save: of two workers taking one job, one is refused.</summary>
+    public int Version { get; set; }
 }

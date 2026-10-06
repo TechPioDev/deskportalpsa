@@ -710,6 +710,53 @@ public sealed class RelationalQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task What_the_worker_asks_for_requested_syncs_and_due_jobs_translates()
+    {
+        var asked = new PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Asked", Provider = ProviderType.ConnectWisePsa, ApiEndpoint = "https://cw.example/",
+            CredentialSecretRef = "mem://asked", Status = ConnectionStatus.Healthy, IsEnabled = true, SyncRequestedAt = _clock.GetUtcNow().AddMinutes(-30),
+        };
+        var pausedSince = new PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Asked, then paused", Provider = ProviderType.ConnectWisePsa, ApiEndpoint = "https://cw2.example/",
+            CredentialSecretRef = "mem://paused", Status = ConnectionStatus.Healthy, IsEnabled = true,
+            SyncRequestedAt = _clock.GetUtcNow().AddMinutes(-30), SyncPausedAt = _clock.GetUtcNow(),
+        };
+        _db.PsaConnections.AddRange(asked, pausedSince);
+        Desk.Domain.Sync.BackgroundJob Job(BackgroundJobStatus status, DateTimeOffset? notBefore = null, DateTimeOffset? lease = null) => new()
+        {
+            MspOrganizationId = Org, JobType = "t", PayloadJson = "{}", Status = status, NextAttemptAt = notBefore, LeaseExpiresAt = lease,
+        };
+        var due = Job(BackgroundJobStatus.Queued);
+        var later = Job(BackgroundJobStatus.Queued, notBefore: _clock.GetUtcNow().AddHours(1));
+        var held = Job(BackgroundJobStatus.Running, lease: _clock.GetUtcNow().AddMinutes(3));
+        var abandoned = Job(BackgroundJobStatus.Running, lease: _clock.GetUtcNow().AddMinutes(-3));
+        _db.BackgroundJobs.AddRange(due, later, held, abandoned, Job(BackgroundJobStatus.Succeeded));
+        await _db.SaveChangesAsync();
+
+        (await Desk.Infrastructure.Sync.SyncRequests.Pending(_db.PsaConnections.AsNoTracking()).OrderBy(c => c.SyncRequestedAt).Select(c => c.Name).ToListAsync())
+            .Should().Equal("Asked");
+
+        var queue = new Desk.Infrastructure.Jobs.JobQueue(_db, _clock);
+        (await queue.DueAsync(20)).Should().BeEquivalentTo([due.Id, abandoned.Id]);
+        (await queue.ClaimAsync(abandoned.Id))!.Attempts.Should().Be(1);
+        (await queue.ClaimAsync(held.Id)).Should().BeNull();
+        (await queue.DueAsync(20)).Should().Equal(due.Id);
+
+        var audit = new AuditWriter(_db, User, _tenant, _clock);
+        var state = await new SyncHealthService(_db, audit, _clock).StateAsync(asked.Id);
+        // SQLite keeps a time to the millisecond, so near enough is the same moment.
+        state.RequestedAt.Should().BeCloseTo(asked.SyncRequestedAt!.Value, TimeSpan.FromSeconds(1));
+        state.RequestedFull.Should().BeFalse();
+
+        var attention = new AttentionService(_db, _tenant, new NoResync(), new NoMail(), audit, _clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AttentionService>.Instance);
+        (await attention.ListAsync()).Items.Where(i => i.Kind == "sync-request-waiting").Should().ContainSingle()
+            .Which.Title.Should().Contain("\"Asked\"");
+    }
+
+    [Fact]
     public async Task Mapping_health_its_preview_and_applying_it_translate()
     {
         var connection = new PsaConnection

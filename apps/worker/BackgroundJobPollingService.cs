@@ -8,7 +8,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Desk.Worker;
 
 /// <summary>
-/// Claims due background jobs and runs each through <see cref="JobProcessor"/>, which applies the
+/// Takes due background jobs through <see cref="JobQueue"/>, one at a time and each for this
+/// worker alone, and runs each through <see cref="JobProcessor"/>, which applies the
 /// retry / backoff / dead-letter policy. Runs under platform scope to discover jobs across all
 /// tenants; each handler narrows to its job's tenant before touching tenant-scoped data.
 /// </summary>
@@ -47,19 +48,18 @@ public sealed class BackgroundJobPollingService(
         var handlers = scope.ServiceProvider.GetServices<IJobHandler>();
         var processor = new JobProcessor(db, handlers, clock);
 
-        var now = clock.GetUtcNow();
-        var due = await db.BackgroundJobs
-            .Where(j => j.Status == BackgroundJobStatus.Queued
-                        && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
-            .OrderBy(j => j.CreatedAt)
-            .Take(20)
-            .ToListAsync(ct);
+        var queue = new JobQueue(db, clock);
+        var due = await queue.DueAsync(20, ct);
 
         if (due.Count == 0) return;
         logger.LogInformation("Processing {Count} due background job(s)", due.Count);
 
-        foreach (var job in due)
+        foreach (var id in due)
         {
+            // Taken before it is run, and saved as taken: another worker reading the same list
+            // is refused this one and goes on to the next.
+            var job = await queue.ClaimAsync(id, ct);
+            if (job is null) continue;
             var result = await processor.ProcessAsync(job, ct);
             if (result == BackgroundJobStatus.DeadLettered)
                 logger.LogWarning("Job {JobId} ({Type}) dead-lettered: {Error}", job.Id, job.JobType, job.LastError);

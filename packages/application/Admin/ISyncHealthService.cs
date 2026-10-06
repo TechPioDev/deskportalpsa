@@ -18,7 +18,9 @@ public sealed record SyncFailureDto(
 /// <param name="Running">A run is in progress right now.</param>
 public sealed record SyncStateDto(
     Guid ConnectionId, DateTimeOffset? Watermark, bool ReadInProgress, int PagesReadSoFar, bool Running,
-    int OpenFailures, int NeedsReview, IReadOnlyList<SyncRunDto> Runs);
+    int OpenFailures, int NeedsReview, IReadOnlyList<SyncRunDto> Runs,
+    // A sync someone asked for that has not finished: waiting for the worker, or being run by it.
+    DateTimeOffset? RequestedAt = null, bool RequestedFull = false);
 
 /// <summary>
 /// What a connection's sync has done and what it could not do. Read-only apart from the two things

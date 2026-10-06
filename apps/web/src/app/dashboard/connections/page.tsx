@@ -1,10 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plug, Plus, ShieldCheck, ChevronDown, Globe, Copy, Ticket, Users, Contact, RefreshCw, Activity, Upload, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
-import type { ConnectionSummary, ConnectionFields } from '@/lib/types';
+import type { ConnectionSummary, ConnectionFields, SyncRun } from '@/lib/types';
 import { SyncSettings } from './SyncSettings';
 import { SyncActivity } from './SyncActivity';
 import { ConnectionWizard } from './ConnectionWizard';
@@ -25,6 +25,7 @@ const TONE = {
 // (set up or not, switched on, paused, rejected by the PSA, syncing now), so this page never has
 // to guess it from the parts.
 const SETUP = 0;
+const SYNCING = 2;
 const AUTH_REQUIRED = 5;
 const STATE: Record<number, { label: string; tone: keyof typeof TONE }> = {
   0: { label: 'Setup', tone: 'warn' },
@@ -51,7 +52,15 @@ const LIFECYCLE_DONE: Record<LifecycleAction, string> = {
 
 export default function ConnectionsPage() {
   const qc = useQueryClient();
-  const { data, isError } = useQuery({ queryKey: ['connections'], queryFn: api.connections });
+  const { data, isError, dataUpdatedAt } = useQuery({
+    queryKey: ['connections'],
+    queryFn: api.connections,
+    // A sync that has been asked for, or is running, is watched until it has finished. Nothing else moves.
+    refetchInterval: (q) => (q.state.data?.some((c) => c.syncRequestedAt !== null || Number(c.state) === SYNCING) ? 4000 : false),
+  });
+  // Syncs asked for from this page and not yet seen to finish, with when each was asked. The
+  // list in hand at that moment was read before the request, and says nothing about it.
+  const [awaiting, setAwaiting] = useState<Record<string, number>>({});
 
   // What can be connected comes from the server: each connector says what it needs, so a field
   // added to one appears here without this page changing. The PSAs with no connector yet are
@@ -181,6 +190,17 @@ export default function ConnectionsPage() {
     mutationFn: (v: { id: string; full: boolean }) => api.syncConnection(v.id, v.full),
     onSuccess: (r, v) => {
       const id = v.id;
+      if ('queued' in r) {
+        // Asked for, not run: the worker starts it within seconds, and a first import of a
+        // large PSA takes minutes. The card is followed until it is done.
+        setResults((m) => ({
+          ...m,
+          [id]: { ok: true, msg: `${r.full ? 'A re-sync of everything' : 'A sync'} has been asked for. It starts within a few seconds, and this card follows it.` },
+        }));
+        setAwaiting((m) => ({ ...m, [id]: Date.now() }));
+        ['connections', 'connection-sync-state'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+        return;
+      }
       const parts = [`${v.full ? 'Re-synced all' : 'Synced'} · ${r.created} new, ${r.updated} updated (${r.fetched} fetched)`];
       const failed = r.failed ?? 0;
       const recovered = r.recovered ?? 0;
@@ -201,6 +221,22 @@ export default function ConnectionsPage() {
         : { ok: false, msg: e instanceof Error ? `Sync failed: ${e.message}` : 'Sync failed' },
     })),
   });
+
+  // A sync asked for here has finished: neither waiting nor running, in a list read after it
+  // was asked for. Say what its last run did, and refresh every page that reads synced data.
+  useEffect(() => {
+    const done = (data ?? []).filter((c) =>
+      awaiting[c.id] !== undefined && dataUpdatedAt > awaiting[c.id] && c.syncRequestedAt === null && Number(c.state) !== SYNCING);
+    if (done.length === 0) return;
+    setAwaiting((m) => Object.fromEntries(Object.entries(m).filter(([id]) => !done.some((c) => c.id === id))));
+    done.forEach((c) => {
+      api.connectionSyncState(c.id)
+        .then((s) => setResults((m) => ({ ...m, [c.id]: s.runs[0] ? runResult(s.runs[0]) : { ok: true, msg: 'The sync has finished.' } })))
+        .catch(() => setResults((m) => ({ ...m, [c.id]: { ok: true, msg: 'The sync has finished. Open Sync activity for what it read.' } })));
+    });
+    ['tickets', 'team', 'trend', 'health', 'notifications', 'audit', 'jobs', 'connection-sync-state'].forEach((k) =>
+      qc.invalidateQueries({ queryKey: [k] }));
+  }, [data, dataUpdatedAt, awaiting, qc]);
 
   const refreshFields = useMutation({
     mutationFn: (id: string) => api.refreshConnectionFields(id),
@@ -490,6 +526,16 @@ function Stat({ icon: Icon, label, value, tint }: { icon: LucideIcon; label: str
 }
 
 /** What a state means for the person looking at it, where the one word is not enough. */
+/** What a finished run did, in the words the card has always used for a sync it ran itself. */
+function runResult(run: SyncRun): { ok: boolean; msg: string } {
+  if (run.status === 'Failed') return { ok: false, msg: `Sync failed: ${run.error ?? 'the reason is on the connection.'}` };
+  const parts = [`Synced · ${run.created} new, ${run.updated} updated (${run.fetched} fetched)`];
+  if (run.status === 'Partial') parts.push('more to read — the sync carries on by itself');
+  if (run.failedRecords > 0) parts.push(`${run.failedRecords} ${run.failedRecords === 1 ? 'record' : 'records'} could not be read and will be tried again`);
+  if (run.recovered > 0) parts.push(`${run.recovered} earlier ${run.recovered === 1 ? 'failure' : 'failures'} went through`);
+  return { ok: run.failedRecords === 0, msg: parts.join(' · ') };
+}
+
 function stateNote(c: ConnectionSummary, state: number | null): string | null {
   switch (state) {
     case SETUP:
@@ -625,6 +671,12 @@ function ConnectionCard({
         {note && (
           <p className={'basis-full text-xs ' + (state === AUTH_REQUIRED ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--muted)]')}>
             <span className="block max-w-3xl">{note}</span>
+          </p>
+        )}
+        {/* Asked for and not yet started. Once it is running the state above says Syncing. */}
+        {c.syncRequestedAt !== null && state !== SYNCING && (
+          <p className="basis-full text-xs text-sky-600 dark:text-sky-400">
+            <span className="block max-w-3xl">A sync has been asked for and starts within a few seconds.</span>
           </p>
         )}
       </div>
