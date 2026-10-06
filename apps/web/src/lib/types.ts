@@ -250,6 +250,8 @@ export const TeamRowSchema = z.object({
   // neither field, and throwing the whole team table away over a missing label helps nobody.
   technicianName: z.string().nullable().default(null),
   appUserId: z.string().nullable().default(null),
+  // One per person. technicianExternalId is not: two PSA accounts can each have a resource 42.
+  key: z.string().nullable().default(null),
 });
 export const TeamResponseSchema = z.object({
   team: z.array(TeamRowSchema),
@@ -268,6 +270,8 @@ export const TechnicianDaySchema = z.object({
   date: z.string(),
   appUserId: z.string().nullable(),
   technicianExternalId: z.string().nullable(),
+  // The PSA account a login belongs to, for someone with no portal account: part of who they are.
+  psaConnectionId: z.string().nullable().default(null),
   name: z.string(),
   hours: z.number(),
   billableHours: z.number(),

@@ -1456,6 +1456,7 @@ export const api = {
     return request(`/api/dashboard/coverage${suffix}`, z.object({
       technicians: z.array(z.object({
         technicianExternalId: z.string(),
+        psaConnectionId: z.string().nullable().default(null),
         technicianName: z.string().nullable(),
         psaHours: z.number(),
         psaEntries: z.number(),

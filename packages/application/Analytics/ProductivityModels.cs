@@ -163,7 +163,9 @@ public sealed record TechnicianMetrics
 /// </param>
 public sealed record TeamComparisonRow(
     string TechnicianExternalId, int Resolved, double SlaCompliancePct, double? Score,
-    string? TechnicianName = null, Guid? AppUserId = null);
+    string? TechnicianName = null, Guid? AppUserId = null,
+    // One per person. TechnicianExternalId alone is not: two PSA accounts can each have a resource 42.
+    string? Key = null);
 
 public sealed record TrendPoint(DateOnly Date, int Created, int Resolved);
 
@@ -184,7 +186,11 @@ public sealed record TechnicianDay(
     decimal Hours, decimal BillableHours, int Resolved, int TicketsTouched,
     decimal InternalHours = 0m, int ResolvedInternal = 0,
     // Of Hours and Resolved, the part opened by monitoring alerts - apart from the team's own boards.
-    decimal MonitoringHours = 0m, int ResolvedMonitoring = 0);
+    decimal MonitoringHours = 0m, int ResolvedMonitoring = 0)
+{
+    /// <summary>The PSA account the login belongs to, where the person has no portal account.</summary>
+    public Guid? PsaConnectionId { get; init; }
+}
 
 /// <summary>
 /// One client's consumption of the desk, for the question management actually asks: where is our
@@ -226,8 +232,11 @@ public sealed record ClientWorkloadPerson(
     int AssignedTickets,
     decimal HoursLogged)
 {
+    /// <summary>The PSA account the login belongs to, where the person has no portal account. Part of who they are.</summary>
+    public Guid? PsaConnectionId { get; init; }
+
     /// <summary>The key a ticket's people carry for this same person, so a name here can filter the ticket list.</summary>
-    public string Key => Desk.Application.Tickets.PersonKey.For(AppUserId, TechnicianExternalId);
+    public string Key => Desk.Application.Tickets.PersonKey.For(AppUserId, PsaConnectionId, TechnicianExternalId);
 }
 
 /// <summary>
@@ -266,7 +275,11 @@ public sealed record PortalCoverageRow(
     int PsaEntries,
     int CorroboratedEntries,
     double? CoveragePct,
-    int PortalEvents);
+    int PortalEvents)
+{
+    /// <summary>The PSA account the login belongs to: the id alone does not say whose it is.</summary>
+    public Guid? PsaConnectionId { get; init; }
+}
 
 /// <summary>
 /// Portal coverage, and the one caveat that decides whether it means anything: the activity log only
