@@ -7,6 +7,8 @@ import {
   ConnectionFieldsSchema, FieldOptionSchema, type ConnectionFields,
   ProviderCatalogEntrySchema, SyncStateSchema, SyncFailureSchema,
   type ProviderCatalogEntry, type SyncState, type SyncFailure,
+  ConnectionCheckReportSchema, ConnectionMappingCoverageSchema, ConnectionPreviewSchema, PreflightSchema,
+  type ConnectionCheckReport, type ConnectionMappingCoverage, type ConnectionPreview, type Preflight,
   MappingRuleSchema, type MappingRule, MappingSnapshotStatusSchema, type MappingSnapshotStatus,
   type TicketDetail, type TicketListItem, type Notification, type Profile,
   type TechnicianResponse, type TeamResponse, type TrendPoint,
@@ -1099,6 +1101,15 @@ export const api = {
     request('/api/admin/connections/providers', z.array(ProviderCatalogEntrySchema)) as Promise<ProviderCatalogEntry[]>,
   archivedConnections: () =>
     request('/api/admin/connections/archived', z.array(ConnectionSummarySchema)) as Promise<ConnectionSummary[]>,
+  /** The test, line by line. It only reads: nothing is written to the PSA. */
+  checkConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/check`, ConnectionCheckReportSchema, { method: 'POST' }) as Promise<ConnectionCheckReport>,
+  connectionMappingCoverage: (id: string) =>
+    request(`/api/admin/connections/${id}/mapping-coverage`, ConnectionMappingCoverageSchema) as Promise<ConnectionMappingCoverage>,
+  connectionPreview: (id: string) =>
+    request(`/api/admin/connections/${id}/preview`, ConnectionPreviewSchema) as Promise<ConnectionPreview>,
+  connectionPreflight: (id: string) =>
+    request(`/api/admin/connections/${id}/preflight`, PreflightSchema) as Promise<Preflight>,
   /** Switches a new connection on for the first time. The server refuses until a test has passed. */
   activateConnection: (id: string) =>
     request(`/api/admin/connections/${id}/activate`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
