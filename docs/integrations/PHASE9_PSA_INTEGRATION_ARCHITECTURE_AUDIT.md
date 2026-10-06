@@ -478,7 +478,7 @@ judged at the end of the last one; each slice reports which gate items it closes
 |---|---|---|
 | **1. Isolation and safety** | Technician identity by connection in ticket visibility, the claim and the rollup; mapping rules loaded by organization and connection, a rule's connection checked at save; the endpoint rule and the guard in both processes; the webhook route refuses a connection with no secret and signs the timestamp; a truncated list never deletes anything; the queue filter; a connection needs a real connector; a first sign-in binds only when unambiguous. No new table | T1, T2, T3 (rollup), T4, S1, S2, S5 (part), D3, D9 |
 | **2a. Sync engine** | Sync cursors, runs and the per-connection lock; a read that runs out of pages is continued; per-record isolation; failed sync records with retry, review and dismissal; routes to read a connection's sync state; one person per PSA login. One migration, additive | S3 (the lock), D1, D2, D5, D6, D7, D10, D11 |
-| **2b. Provider calls** | The shared provider HTTP layer (timeout, per-connection throttle, retry of safe requests honouring `Retry-After`, correlation); full paging of the smaller lists; time-entry reconciliation before a retried push; a job is claimed before it is run | D4, D8, R1, R10, R11 |
+| **2b. Provider calls** | The shared provider HTTP layer (a bound on each attempt, a per-connection budget, retry of what is safe to repeat, `Retry-After` in both forms); every list read to its end; a retried time entry checked against the PSA first | D4, D8, R1, R10 (the transport; the two connectors still map errors separately) |
 | **3. Connections** | States, pause, archive; test before saving a credential; no duplicate account; capabilities from the API; provider catalog; the add-connection wizard with the test matrix, discovery, scope from lists, preview and preflight; sync health and freshness on the connection; filters, views and person keys keyed by connection id | S4–S6, T3 (person keys), T5, T6, R2, R7, R8 |
 | **4. Mapping** | The unmapped register, mapping health, validation and preview; connection-scoped mapping API and screens with history; technician states and suggestions; client mapping (and the decision on one login for two companies); work type; custom fields | R4–R6 |
 | **5. Outbound reliability** | One pending / failed / retry path for local-first writes; reconciliation before any retried create; outbound state on the ticket | D8 (rest), R3 |
@@ -497,7 +497,8 @@ which affects people today, and the security finding, and can be deployed on its
 |---|---|---|
 | 1. Isolation and safety | **Built**, awaiting review and deploy | 116 new tests; 1,389 pass in both time-zone modes, and the 16 PostgreSQL 17 tests pass. T1, T2, T3, T4, S2 and D9 each have tests that were run against the code as audited and fail there; S1, S5 and D3 are covered by tests of the new behaviour. The ticket-visibility predicate, built by hand as one clause per PSA connection, is also run through a SQL translator (`RelationalQueryTests`) and on PostgreSQL 17 (`CapacityPerformanceTests`); before this it had only ever run in memory |
 | 2a. Sync engine | **Built**, stacked on slice 1 (its pull request opens when slice 1 is merged) | 32 more tests; 1,421 pass in both time-zone modes. D1, D2, D5 and D6 were reproduced against the code as audited by a throwaway probe (four tests asserting the defect, all passing there). The run, its lock and its failure store also run through a SQL translator, including a save the database genuinely refuses; on PostgreSQL 17 eight runs started at the same instant end with one, and the migration applies. See [sync-engine.md](sync-engine.md) |
-| 2b to 7 | Not started | |
+| 2b. Provider calls | **Built**, stacked on 2a | 35 more tests; 1,456 pass in both time-zone modes. See [provider-calls.md](provider-calls.md). D8 and D4 were confirmed by reading and are covered by tests of the new behaviour; the two fake PSA servers were corrected where they hid the defects (the ConnectWise fake returned every note whatever page was asked for and had no time entries at all; the Autotask fake kept a created time entry without the id it answered with) |
+| 3 to 7 | Not started. An atomic claim for background jobs (R11) moves to slice 6, where the job queue gets its first real work | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -518,6 +519,16 @@ What slice 2a changes for people:
 - One ticket the portal cannot save no longer blocks the connection; it is listed as a failed record
   and tried again.
 - A PSA login can be linked to one person on a connection. Saving a second link says who holds it.
+
+What slice 2b changes for people:
+
+- A sync of a large PSA paces itself (two requests a second once a burst is spent) instead of being
+  told to stop by the PSA. An ordinary sync is no slower.
+- A PSA that does not answer is given up on after a minute, and a read is tried again by itself.
+- Retrying a time entry whose first push went unanswered no longer risks a second entry in the PSA:
+  the PSA is asked first.
+- Lists longer than one page (more than 500 companies or technicians in Autotask, more than 1,000
+  in ConnectWise) are read in full.
 
 Two decisions taken while building it, recorded because they differ from the first plan:
 
