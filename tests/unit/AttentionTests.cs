@@ -84,6 +84,68 @@ public class AttentionTests
         item.Detail.Should().Contain("401 Unauthorized");
     }
 
+    // A connection now has states the list did not know: still being set up, paused, put away,
+    // locked out by the PSA. Each used to come out as "failed" or "has not synced".
+
+    [Fact]
+    public async Task A_connection_that_was_never_switched_on_is_one_reminder_and_not_a_fault()
+    {
+        var (svc, h, _) = await BuildAsync();
+        var c = Connection(h, ConnectionStatus.Failed, error: "Authentication: ConnectWise rejected the credentials.");
+        (c.InSetup, c.IsEnabled, c.LastSuccessfulSyncAt) = (true, false, null);
+        h.Db.PsaConnections.Add(c);
+        await h.Db.SaveChangesAsync();
+
+        var item = (await svc.ListAsync()).Items.Should().ContainSingle("not 'failed' and 'never synced' as well").Subject;
+        (item.Kind, item.Severity).Should().Be(("connection-setup", "warning"));
+        item.Detail.Should().Contain("rejected the credentials").And.Contain("Test and switch on");
+    }
+
+    [Fact]
+    public async Task A_connection_the_PSA_has_locked_out_says_so_once()
+    {
+        var (svc, h, _) = await BuildAsync();
+        var c = Connection(h, ConnectionStatus.Degraded, syncedAgo: TimeSpan.FromHours(5), error: "401 Unauthorized");
+        c.LastErrorKind = ConnectionStates.Authentication;
+        h.Db.PsaConnections.Add(c);
+        await h.Db.SaveChangesAsync();
+
+        var item = (await svc.ListAsync()).Items.Should().ContainSingle().Subject;
+        (item.Kind, item.Severity).Should().Be(("connection-credentials", "critical"));
+        item.Detail.Should().Contain("automatic sync has stopped");
+    }
+
+    [Fact]
+    public async Task A_paused_connection_is_reported_as_paused_and_only_once_it_has_been_a_while()
+    {
+        var (svc, h, _) = await BuildAsync();
+        var c = Connection(h, syncedAgo: TimeSpan.FromMinutes(40));
+        c.SyncPausedAt = h.Clock.GetUtcNow() - TimeSpan.FromMinutes(30);
+        h.Db.PsaConnections.Add(c);
+        await h.Db.SaveChangesAsync();
+
+        (await svc.ListAsync()).Items.Should().BeEmpty("half an hour is a pause, not something forgotten");
+
+        h.Clock.Advance(TimeSpan.FromHours(5));
+
+        var item = (await svc.ListAsync()).Items.Should().ContainSingle("paused, not 'has not synced'").Subject;
+        item.Kind.Should().Be("sync-paused");
+        item.Title.Should().Contain("paused for 5 hours");
+        item.Detail.Should().NotContain("Sync now");
+    }
+
+    [Fact]
+    public async Task An_archived_connection_is_silent()
+    {
+        var (svc, h, _) = await BuildAsync();
+        var c = Connection(h, ConnectionStatus.Failed, syncedAgo: TimeSpan.FromDays(30), error: "gone");
+        (c.ArchivedAt, c.IsEnabled) = (h.Clock.GetUtcNow(), false);
+        h.Db.PsaConnections.Add(c);
+        await h.Db.SaveChangesAsync();
+
+        (await svc.ListAsync()).Items.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task A_connection_that_stopped_syncing_is_listed_as_stale()
     {
