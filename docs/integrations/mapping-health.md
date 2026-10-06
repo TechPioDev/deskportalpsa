@@ -120,7 +120,10 @@ What applying does and does not touch:
 - Only a ticket whose portal value **is still the PSA's own word** is changed. A status someone set
   in the portal, or one a rule already translated, is not this rule's to rewrite.
 - What the PSA said is kept as it said it. Only the portal's side changes.
-- It works a group and a batch (500) at a time, so a connection of any size is done in bounded steps.
+- It works a value and a batch (500) at a time, so a connection of any size is done in bounded
+  steps and no more than a batch is held in memory. Only where a rule of the field is written for
+  one client or one board are that field's tickets taken a client and a board at a time: the same
+  word can then mean two things on one connection. See [performance.md](performance.md).
 - It is audited as `mapping.applied`, with what changed to what and how many.
 - Nothing is sent to the PSA.
 
