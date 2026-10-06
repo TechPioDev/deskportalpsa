@@ -40,16 +40,32 @@ public sealed partial class ConnectionAdminService(
                 c.Id, c.Name, c.Provider, c.ApiEndpoint, c.TenantIdentifier,
                 c.Status, c.IsEnabled, c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt,
                 c.InSetup, c.SyncPausedAt, c.ArchivedAt, c.LastErrorKind,
-                // Correlated counts: one query for the page rather than three per connection.
-                TicketCount = db.Tickets.Count(t => t.PsaConnectionId == c.Id),
-                CustomerCount = db.ClientCompanies.Count(o => o.PsaConnectionId == c.Id),
-                ContactCount = db.ClientUsers.Count(u => db.ClientCompanies
-                    .Any(o => o.Id == u.ClientCompanyId && o.PsaConnectionId == c.Id)),
                 c.LogoUrl,
                 // The ref itself still never leaves this method — it is resolved to key NAMES below.
                 c.CredentialSecretRef,
             })
             .ToListAsync(ct);
+
+        // What each connection holds, counted for all of them at once. As counts inside the list's
+        // own query they were a pass over the tickets for every connection in it: fourteen seconds
+        // at a hundred connections and half a million tickets, where one pass takes a fraction of one.
+        var tickets = (await db.Tickets.AsNoTracking()
+                .Where(t => t.PsaConnectionId != null)
+                .GroupBy(t => t.PsaConnectionId!.Value)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.Key, x => x.Count);
+        var customers = (await db.ClientCompanies.AsNoTracking()
+                .GroupBy(o => o.PsaConnectionId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.Key, x => x.Count);
+        var contacts = (await db.ClientUsers.AsNoTracking()
+                .Join(db.ClientCompanies, u => u.ClientCompanyId, o => o.Id, (u, o) => o.PsaConnectionId)
+                .GroupBy(connection => connection)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.Key, x => x.Count);
 
         var running = await RunningAsync(ct);
         var result = new List<ConnectionSummary>(rows.Count);
@@ -58,7 +74,7 @@ public sealed partial class ConnectionAdminService(
             result.Add(new ConnectionSummary(
                 c.Id, c.Name, c.Provider, c.ApiEndpoint, c.TenantIdentifier,
                 c.Status, c.IsEnabled, c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt,
-                c.TicketCount, c.CustomerCount, c.ContactCount, c.LogoUrl,
+                tickets.GetValueOrDefault(c.Id), customers.GetValueOrDefault(c.Id), contacts.GetValueOrDefault(c.Id), c.LogoUrl,
                 StoredCredentialKeys: await StoredCredentialKeysAsync(c.CredentialSecretRef, ct),
                 State: ConnectionStates.Of(c.InSetup, c.IsEnabled, c.ArchivedAt, c.SyncPausedAt, c.LastErrorKind,
                     c.Status, c.LastSuccessfulSyncAt, running.Contains(c.Id)),
