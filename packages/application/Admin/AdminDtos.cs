@@ -36,7 +36,9 @@ public sealed record ConnectionSummary(
 public sealed record ProviderCatalogEntry(
     ProviderType Provider, string Name, bool Available,
     string? EndpointExample, string? EndpointHint, string? TenantIdentifierLabel,
-    IReadOnlyList<CredentialFieldDto> Credentials);
+    IReadOnlyList<CredentialFieldDto> Credentials,
+    // Two letters for a connection's tile where no logo has been uploaded.
+    string Mark = "");
 
 public sealed record CredentialFieldDto(string Key, string Label, bool Secret, string? Hint);
 

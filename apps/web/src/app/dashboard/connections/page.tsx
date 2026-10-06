@@ -391,6 +391,9 @@ export default function ConnectionsPage() {
             <ConnectionCard
               key={c.id}
               c={c}
+              // Initials, not a vendor's logo - the portal ships no brand asset it has no licence
+              // for. They come with the catalog, so a new connector needs no entry on this page.
+              mark={(catalog.data ?? []).find((p) => Number(p.provider) === Number(c.provider))?.mark || '?'}
               result={results[c.id]}
               expanded={expandedId === c.id}
               fields={fieldsById[c.id]}
@@ -453,8 +456,6 @@ export default function ConnectionsPage() {
   );
 }
 
-/** Provider mark. Initials, not vendor logos — we ship no brand assets we have no licence for. */
-const PROVIDER_MARK: Record<number, string> = { 1: 'CW', 2: 'AT' };
 
 const HEALTH: Record<number, { dot: string; text: string }> = {
   0: { dot: 'bg-slate-400', text: 'text-[var(--muted)]' },
@@ -516,11 +517,12 @@ function ManageRow({ text, action, onClick, disabled }: { text: string; action: 
 }
 
 function ConnectionCard({
-  c, result, expanded, fields, onTest, testing, onContinueSetup, onSwitchOn, switchingOn, onSync, onResyncAll, syncing,
+  c, mark, result, expanded, fields, onTest, testing, onContinueSetup, onSwitchOn, switchingOn, onSync, onResyncAll, syncing,
   settingsOpen, onToggleSettings, mappingOpen, onToggleMapping, activityOpen, onToggleActivity, manageOpen, onToggleManage, onLifecycle, lifecycleBusy,
   onRefreshFields, refreshingFields, onEdit, onToggleFields,
 }: {
   c: ConnectionSummary;
+  mark: string;
   result?: { ok: boolean; msg: string };
   expanded: boolean;
   fields?: ConnectionFields | 'loading' | 'error';
@@ -577,7 +579,7 @@ function ConnectionCard({
             />
           ) : null}
           <span className={`text-base font-bold tracking-wide text-brand ${c.logoUrl ? 'hidden' : ''}`} aria-hidden="true">
-            {PROVIDER_MARK[Number(c.provider)] ?? '?'}
+            {mark}
           </span>
         </span>
 
