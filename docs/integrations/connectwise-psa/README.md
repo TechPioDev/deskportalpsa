@@ -46,7 +46,14 @@ Auth is HTTP Basic (`base64(CompanyId+PublicKey:PrivateKey)`) plus the `clientId
 
 ## Error mapping
 401 → Authentication · 403 → PermissionDenied · 404 → NotFound · 429 → RateLimited (honours
-`Retry-After`) · 5xx → ProviderError · timeout → Timeout · other 4xx → InvalidRequest.
+`Retry-After`, as seconds or as a time) · 5xx → ProviderError · timeout → Timeout · other 4xx → InvalidRequest.
+
+## Calls
+Paced at 120 requests a minute once a burst is spent; each attempt bounded at 60 seconds; a GET
+repeated on a passing fault, a write never. Every list is read page by page (ordered by id) to its
+end. A retried time entry is first looked for in ConnectWise, matched on hours, charge option,
+notes and a start no earlier than the first attempt; the member is compared only when it was sent
+as an id. See [provider-calls.md](../provider-calls.md).
 
 ## Certification
 Passes the shared `ConnectorCertificationSuite` end-to-end against an in-memory `FakeConnectWiseServer`,

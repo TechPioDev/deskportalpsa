@@ -46,7 +46,14 @@ arrive today; Autotask-native webhooks are a later Phase 9 slice.
 
 ## Error mapping
 401 → Authentication · 403 → PermissionDenied · 404 → NotFound · 429 → RateLimited (honours
-`Retry-After`) · 5xx → ProviderError · timeout → Timeout · other 4xx → InvalidRequest.
+`Retry-After`, as seconds or as a time) · 5xx → ProviderError · timeout → Timeout · other 4xx → InvalidRequest.
+
+## Calls
+Paced at 120 requests a minute once a burst is spent; each attempt bounded at 60 seconds; a query
+(a POST, marked as a read) repeated on a passing fault, a write never. Every list is read to its
+end. A retried time entry is first looked for in Autotask, matched on the resource, hours, charge,
+summary notes (including the placeholder sent for empty notes) and a start no earlier than the
+first attempt allows. See [provider-calls.md](../provider-calls.md).
 
 ## Certification
 The connector passes the shared connector certification suite (`ConnectorCertificationSuite`),

@@ -120,9 +120,9 @@ another connection is another login.
 
 ## What this does not do yet
 
-- Throttling, retrying and timing out the HTTP calls themselves: the next slice. Today a rate limit
-  reaches the run as a failure and is handled as above.
-- Paging the smaller lists (companies, contacts, technicians, a ticket's notes): the next slice.
+- The HTTP calls themselves are paced, bounded and repeated one layer down, and every list is read
+  to its end: see [provider-calls.md](provider-calls.md). What reaches a run as a failure is what
+  that layer could not get through.
 - A screen for runs and failures: the routes are here; the screen comes with the connections work.
 - Notes and attachments have no unique index on the PSA's id. A reply written in the portal and a
   sync reading the same ticket can legitimately race, and an index would turn a rare duplicate into
