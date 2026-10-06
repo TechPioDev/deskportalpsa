@@ -499,7 +499,8 @@ which affects people today, and the security finding, and can be deployed on its
 | 2a. Sync engine | **Built**, stacked on slice 1 (its pull request opens when slice 1 is merged) | 32 more tests; 1,421 pass in both time-zone modes. D1, D2, D5 and D6 were reproduced against the code as audited by a throwaway probe (four tests asserting the defect, all passing there). The run, its lock and its failure store also run through a SQL translator, including a save the database genuinely refuses; on PostgreSQL 17 eight runs started at the same instant end with one, and the migration applies. See [sync-engine.md](sync-engine.md) |
 | 2b. Provider calls | **Built**, stacked on 2a | 35 more tests; 1,456 pass in both time-zone modes. See [provider-calls.md](provider-calls.md). D8 and D4 were confirmed by reading and are covered by tests of the new behaviour; the two fake PSA servers were corrected where they hid the defects (the ConnectWise fake returned every note whatever page was asked for and had no time entries at all; the Autotask fake kept a created time entry without the id it answered with) |
 | 3a. Connection lifecycle | **Built**, stacked on 2b | 37 more tests; 1,493 pass in both time-zone modes, and 2 more browser tests (72 pass in Chromium). The new connection queries also run through a SQL translator in every state, and the migration was applied to a PostgreSQL 17 database from the generated script. See [connections.md](connections.md). S4 and S5 are closed, and the first half of T5 (the same PSA account connected twice). Driven in a browser against a stand-in PSA: a connection whose keys are rejected stays in setup with the reason, corrected keys switch it on, and pause, resume, disable, enable, archive and restore each do what the screen says. One migration, additive (five columns on `psa_connections`) |
-| 3b, 3c, 4 to 7 | Not started. 3b is the add-connection wizard (test matrix, discovery, scope from lists, preview, preflight) and a manual sync that runs in the background; 3c is the keys that still ignore the connection (T3, the rest of T5, T6). An atomic claim for background jobs (R11) moves to slice 6, where the job queue gets its first real work | |
+| 3b. Add-connection wizard | **Built**, stacked on 3a | 13 more tests; 1,506 pass in both time-zone modes, and 73 browser tests pass in Chromium. Three of them drive the wizard: one checks the catalog and each PSA's own fields, one runs against a closed port (the connection stays in setup and the API refuses to switch it on), one from the first step to the last against a stand-in ConnectWise started inside the test, with the real connector making real HTTP calls. In that run the count carries the board that was ticked and not one request other than a GET reaches the PSA. S6 is closed. No migration |
+| 3c, 4 to 7 | Not started. 3c is the keys that still ignore the connection (T3, the rest of T5, T6). A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -549,6 +550,22 @@ What slice 3a changes for people:
 - Editing a disabled connection no longer switches it on.
 - The PSAs that can be connected, and the fields each asks for, come from the connectors. Planned
   PSAs are shown as coming soon and cannot be chosen.
+
+What slice 3b changes for people:
+
+- **Add connection** opens a wizard of nine steps: choose the PSA, details, credentials, test,
+  what the PSA offers, mapping, sync scope, preview, enable. The connection is switched on only at
+  the last step, and a wizard closed part-way is carried on from the connection's card.
+- The test is a list, not a word: authentication, each read the sync needs, and what else the PSA
+  allows. It never writes to the PSA; a write is shown as "not tried".
+- A PSA account that can sign in but cannot read tickets no longer passes the test.
+- Before anything is imported the wizard says how much there is: clients, technicians, open and
+  total tickets under the chosen scope, and how many values have no mapping.
+- Queues or boards to import are ticked from the PSA's own list.
+- A connection whose scope would import nothing, or that is missing a credential, cannot be
+  switched on, and is told why in words.
+- The portal no longer says a PSA supports webhooks, or ConnectWise custom fields, when the
+  connector does not use them yet.
 
 Two decisions taken while building it, recorded because they differ from the first plan:
 

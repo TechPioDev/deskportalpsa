@@ -1,11 +1,12 @@
 # A PSA connection's life
 
-Phase 9, slice 3a. What a connection is at each point between being added and being put away, who
-may move it, and what the portal does and does not do with it meanwhile.
+Phase 9, slices 3a and 3b. What a connection is at each point between being added and being put
+away, who may move it, and what the portal does and does not do with it meanwhile.
 
-The rules live in `ConnectionAdminService` (changes), `ConnectionStates` (the one word for where it
-stands) and `SyncSchedule` (whether the worker reads it). Each rule below has a test in
-`ConnectionLifecycleTests`, `AttentionTests` or `e2e/connections.spec.ts`.
+The rules live in `ConnectionAdminService` (changes; its `Setup` part holds the test, the preview
+and the preflight), `ConnectionStates` (the one word for where it stands) and `SyncSchedule`
+(whether the worker reads it). Each rule below has a test in `ConnectionLifecycleTests`,
+`ConnectionSetupTests`, `AttentionTests` or `e2e/connections.spec.ts`.
 
 ## States
 
@@ -41,17 +42,71 @@ sync that stopped for no reason.
 
 ## Adding a connection
 
-1. **Saved switched off, in setup.** It used to be enabled the moment it was saved, before its
-   credentials had been tried once.
-2. **Tested.** The screen tests it straight away. A connection still in setup is tested with what
-   was just saved, whether or not it is switched on.
-3. **Switched on only if the test passed.** `POST …/activate` refuses a connection the PSA has not
-   accepted, and `POST …/enabled` refuses one still in setup, so there is no order of requests that
-   gets a connection live without a passed test.
+A connection is added through a wizard of nine steps. It is saved, switched off, at the end of the
+third, and switched on only by the ninth. Closing the wizard part-way leaves the connection in
+setup; its card offers **Continue setup**, which opens the wizard at the test.
 
-If the test fails, the connection stays in setup with the PSA's answer on its card. Nothing is read
-or sent. It shows in the needs-attention list as one reminder ("not switched on yet"), not as a
+| Step | What happens | What the server does |
+|---|---|---|
+| 1. Choose PSA | A PSA with a connector is picked. Planned ones are named under "Coming soon" and cannot be | `GET /providers` |
+| 2. Details | Name and API address | |
+| 3. Credentials | The fields that PSA's connector asks for | Saved in setup: `IsEnabled` false, credentials to the secret store |
+| 4. Test | The test, line by line (below). Nothing further until every needed line passes | `POST /{id}/check` |
+| 5. Discover | The queues or boards, statuses, priorities, categories, work types and technicians the PSA lists | `GET /{id}/fields` |
+| 6. Mapping | Each status and priority, and what it becomes in the portal, or **Not mapped** | `GET /{id}/mapping-coverage` |
+| 7. Sync scope | Open and closed tickets, an age limit, and queues or boards ticked from the PSA's own list | `PUT /{id}/settings` |
+| 8. Preview | How much that scope would bring in, and the preflight | `GET /{id}/preview`, `GET /{id}/preflight` |
+| 9. Enable | Switched on, once any warning has been acknowledged | `POST /{id}/activate` |
+
+There is no order of requests that gets a connection live without a passed test: `activate` refuses
+a connection the PSA has not accepted or whose preflight has a failed line, and `enabled` refuses
+one still in setup. A connection that fails its test stays in setup with the PSA's answer; nothing
+is read or sent, and the needs-attention list carries one reminder ("not switched on yet"), not a
 failed connection.
+
+### The test
+
+One call used to stand for all of it: a PSA account that could sign in and read nothing passed, was
+switched on, and failed every sync. The test now tries each thing separately, and **only reads**.
+
+| Line | Needed by the sync | How it is tried |
+|---|---|---|
+| Authentication | yes | The connector's own test call |
+| Read tickets | yes | One ticket is asked for |
+| Read statuses, priorities and queues | yes | The three lists are read |
+| Read technicians | no | The list is read |
+| Read ticket notes, Read time entries | no | On the ticket just read. With no ticket to ask about: **Not tried**, never "pass" |
+| Log time | no | The PSA's own requirements for a time entry are read. Nothing is logged |
+| Update tickets and add notes | no | **Not tried.** A test never changes anything in the PSA; the line says the connector can do it |
+| Webhooks | no | What the connector says. Neither connector claims them until a PSA's own callbacks are understood |
+
+When authentication fails nothing else is tried. When a needed read fails, a connection in setup
+cannot be switched on. A **live** connection is not stopped by a failure that may not be there next
+time (a timeout, a rate limit): the report says what happened, and the sync carries on.
+
+### Mapping, scope and preview
+
+- **Mapping.** Values are looked up the way the sync looks them up, with this connection's rules
+  only. A value no rule maps is shown as not mapped and counted. Nothing is guessed: it arrives as
+  the PSA sends it until someone maps it. Unmapped values do not block; they are a warning the last
+  step asks the administrator to acknowledge.
+- **Scope.** Queues or boards are ticked from the list the PSA gave, not typed as ids. None ticked
+  means all of them.
+- **Preview.** Clients and technicians are counted from the PSA's lists; tickets are counted by
+  asking the PSA for a count (`Tickets/query/count`, `service/tickets/count`) with the filter the
+  sync itself would send, so no ticket is read to make the number. A figure the PSA cannot give is
+  "not known", never zero. Contacts are read client by client during the sync and are not counted
+  beforehand.
+
+### Preflight
+
+| Line | Fails when | Warns when |
+|---|---|---|
+| Connection | It has not passed a test | |
+| Credentials | A field the connector asks for is not stored | |
+| Mapping | | A status or priority the PSA lists has no mapping (they are named) |
+| Sync scope | Neither open nor closed tickets are chosen; a chosen queue or board is not in the PSA's list | The PSA's list could not be read to check against |
+| Conflicts | Another connection holds the same PSA account | Another connection has the same name |
 
 The form's fields are not written into the page. Each connector describes itself: its name, an
 example address, and the credential fields it needs with their labels and which are secret
@@ -119,7 +174,11 @@ All under `/api/admin/connections`, all needing `connections.manage` unless note
 | `GET /archived` | The ones put away |
 | `GET /providers` | Every PSA the portal names, what each needs, and which have no connector |
 | `GET /{id}/capabilities` | What this connection's PSA can do, asked of the connector |
-| `POST /{id}/activate` | Switches a connection on for the first time; refused until a test has passed |
+| `POST /{id}/check` | The test, line by line. Reads only |
+| `GET /{id}/mapping-coverage` | Each status and priority the PSA lists, and what this connection's rules make of it |
+| `GET /{id}/preview` | How much an import would bring in under the connection's scope |
+| `GET /{id}/preflight` | What stands between the connection and being switched on |
+| `POST /{id}/activate` | Switches a connection on for the first time; refused until a test has passed and the preflight has no failed line |
 | `POST /{id}/pause-sync`, `/resume-sync` | Stops and restarts reading |
 | `POST /{id}/enabled` | Switches on or off; refused for a connection in setup or archived |
 | `POST /{id}/archive`, `/restore` | Puts away and brings back |
@@ -131,9 +190,10 @@ One migration, `ConnectionLifecycle`, additive: five nullable-or-defaulted colum
 `AccountKeyHash`). Existing connections are untouched by it: none is in setup, paused or archived,
 and each one's account hash is filled the first time it is needed.
 
-## Not in this slice
+## Not in these slices
 
-The step-by-step wizard (test matrix, discovery, scope chosen from lists, preview, preflight) and a
-manual sync that runs in the background are slice 3b. Keys that still ignore the connection (people
-without a portal account, saved views and filters matched on names, references shown without their
-connection) are slice 3c.
+A manual sync still runs inside the request that asks for it. It is bounded (50 pages a run, and
+one run per connection), and moves to the job queue with the webhook slice, where the queue gets
+its atomic claim. Limits by client or technician are still typed as ids under Sync settings. Keys
+that still ignore the connection (people without a portal account, saved views and filters matched
+on names, references shown without their connection) are slice 3c.
