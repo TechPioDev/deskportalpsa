@@ -175,19 +175,18 @@ public sealed class ConnectWiseConnector(
         return rows;
     }
 
-    public async Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    public async Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default)
     {
-        // ConnectWise pages by number rather than by cursor, so the cursor carries the next page.
-        // Ordered by id: without an explicit order the provider is free to return rows in a
-        // different arrangement between requests, and page 2 of a shifting order silently skips
-        // tickets while repeating others.
-        var page = filter.Cursor is { Length: > 0 } c && int.TryParse(c, out var parsed) && parsed > 1 ? parsed : 1;
-        var query = new Dictionary<string, string>
-        {
-            ["pageSize"] = filter.PageSize.ToString(),
-            ["page"] = page.ToString(),
-            ["orderBy"] = "id asc",
-        };
+        var conditions = TicketConditions(filter);
+        var query = new Dictionary<string, string>();
+        if (conditions.Count > 0) query["conditions"] = string.Join(" and ", conditions);
+        var result = await SendAsync<CwCount>(HttpMethod.Get, BuildPath("service/tickets/count", query), null, ct);
+        return result?.Count;
+    }
+
+    /// <summary>The conditions a read and a count of the same tickets both send, so they cannot differ.</summary>
+    private List<string> TicketConditions(TicketFilter filter)
+    {
         var conditions = new List<string>();
         if (filter.ModifiedSince is { } since)
             conditions.Add($"lastUpdated>[{since.ToUniversalTime():yyyy-MM-ddTHH:mm:ssZ}]");
@@ -205,7 +204,23 @@ public sealed class ConnectWiseConnector(
             conditions.Add("closedFlag=false");
         if (filter.ActiveWithinDays is > 0 and { } days)
             conditions.Add($"lastUpdated>[{clock.GetUtcNow().AddDays(-days):yyyy-MM-ddTHH:mm:ssZ}]");
+        return conditions;
+    }
 
+    public async Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    {
+        // ConnectWise pages by number rather than by cursor, so the cursor carries the next page.
+        // Ordered by id: without an explicit order the provider is free to return rows in a
+        // different arrangement between requests, and page 2 of a shifting order silently skips
+        // tickets while repeating others.
+        var page = filter.Cursor is { Length: > 0 } c && int.TryParse(c, out var parsed) && parsed > 1 ? parsed : 1;
+        var query = new Dictionary<string, string>
+        {
+            ["pageSize"] = filter.PageSize.ToString(),
+            ["page"] = page.ToString(),
+            ["orderBy"] = "id asc",
+        };
+        var conditions = TicketConditions(filter);
         if (conditions.Count > 0)
             query["conditions"] = string.Join(" and ", conditions);
 

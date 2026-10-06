@@ -181,6 +181,9 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
         }
         if (path.EndsWith("service/tickets") && request.Method == HttpMethod.Post)
             return CreateTicket(body);
+        // Before the read of one ticket below, which would take "count" for a ticket id.
+        if (path.EndsWith("service/tickets/count") && request.Method == HttpMethod.Get)
+            return Resp(HttpStatusCode.OK, $"{{\"count\":{FilterTickets(conditions).Count()}}}");
         if (path.Contains("service/tickets/") && request.Method == HttpMethod.Get)
         {
             var id = ExtractTicketId(path);
@@ -337,15 +340,19 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
     private IEnumerable<Dictionary<string, object?>> FilterTickets(string? conditions)
     {
         if (string.IsNullOrEmpty(conditions)) return _tickets;
+        IEnumerable<Dictionary<string, object?>> rows = _tickets;
+        // "Open only", which a count of open tickets depends on.
+        if (conditions.Contains("closedFlag=false"))
+            rows = rows.Where(t => !(t.TryGetValue("closedFlag", out var closed) && closed is true));
         var start = conditions.IndexOf('[');
         var end = conditions.IndexOf(']');
         if (conditions.Contains("lastUpdated>") && start >= 0 && end > start
             && DateTimeOffset.TryParse(conditions[(start + 1)..end], out var cutoff))
         {
-            return _tickets.Where(t =>
+            return rows.Where(t =>
                 DateTimeOffset.TryParse(t["lastUpdated"]?.ToString(), out var lu) && lu > cutoff);
         }
-        return _tickets;
+        return rows;
     }
 
     // ---- helpers ----

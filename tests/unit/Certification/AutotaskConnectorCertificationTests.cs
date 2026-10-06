@@ -615,6 +615,32 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
     }
 
     /// <summary>
+    /// A count asks Autotask how many tickets a filter matches without reading them, and sends the
+    /// filter the read sends. "Open only" has to be asked for here: the sync leaves it to the
+    /// runner, which sees each ticket, and a count sees none.
+    /// </summary>
+    [Fact]
+    public async Task A_count_matches_what_the_same_filter_reads_and_can_count_open_tickets_alone()
+    {
+        var server = new FakeAutotaskServer(Clock);
+        var connector = Build(server);
+        var first = await connector.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "one", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c-1" });
+        await connector.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "two", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c-2" });
+        await connector.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "elsewhere", ExternalCompanyId = "9999", IdempotencyKey = "c-3" });
+        server.CompleteTicket(long.Parse(first.ExternalId!));
+
+        (await connector.CountTicketsAsync(new TicketFilter())).Should().Be(3);
+        (await connector.CountTicketsAsync(new TicketFilter { CompanyIds = [SeededOrganizationId] })).Should().Be(2);
+        (await connector.CountTicketsAsync(new TicketFilter { CompanyIds = [SeededOrganizationId], IncludeClosed = false }))
+            .Should().Be(1, "the completed one is not open");
+        (await connector.GetTicketsAsync(new TicketFilter { CompanyIds = [SeededOrganizationId] })).Items
+            .Should().HaveCount(2, "the read and the count send one filter");
+    }
+
+    /// <summary>
     /// Reference lists are fetched once per connector, not once per ticket.
     ///
     /// GetTimeEntriesAsync runs per ticket and resolves technician and work-type NAMES from whole

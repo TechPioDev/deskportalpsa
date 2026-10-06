@@ -117,25 +117,19 @@ public sealed class AutotaskConnector(
             l.QueueId is > 0 ? l.QueueId!.Value.ToString() : null)).ToList();
     }
 
+    public async Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    {
+        var filters = TicketFilters(filter);
+        // The sync leaves "open only" to the runner, which sees each ticket. A count sees none of
+        // them, so it has to ask: a ticket Autotask has completed carries a completed date.
+        if (!filter.IncludeClosed) filters.Add(new { op = "notExist", field = "completedDate" });
+        var result = await SendAsync<AtQueryCount>(HttpMethod.Post, "V1.0/Tickets/query/count", new { Filter = filters }, ct);
+        return result?.QueryCount;
+    }
+
     public async Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
     {
-        var filters = new List<object>();
-        if (filter.ModifiedSince is { } since)
-            filters.Add(Filter("lastActivityDate", "gte", since.ToUniversalTime().ToString("o")));
-        else
-            filters.Add(Filter("id", "gte", 0));
-        if (filter.ExternalCompanyId is { } company)
-            filters.Add(Filter("companyID", "eq", long.Parse(company)));
-
-        // Import filters. Autotask expresses "in" with the "in" operator over a value list.
-        if (filter.CompanyIds.Count > 0)
-            filters.Add(Filter("companyID", "in", filter.CompanyIds.Select(long.Parse).ToArray()));
-        if (filter.QueueOrBoardIds.Count > 0)
-            filters.Add(Filter("queueID", "in", filter.QueueOrBoardIds.Select(long.Parse).ToArray()));
-        if (filter.AssignedResourceIds.Count > 0)
-            filters.Add(Filter("assignedResourceID", "in", filter.AssignedResourceIds.Select(long.Parse).ToArray()));
-        if (filter.ActiveWithinDays is > 0 and { } days)
-            filters.Add(Filter("lastActivityDate", "gte", clock.GetUtcNow().AddDays(-days).ToString("o")));
+        var filters = TicketFilters(filter);
 
         // Autotask answers a query with the first page and a URL for the next. Following it is the
         // whole of pagination here: without it the import stopped at MaxRecords and reported success,
@@ -158,6 +152,29 @@ public sealed class AutotaskConnector(
         var next = result?.PageDetails?.NextPageUrl;
         var hasMore = !string.IsNullOrWhiteSpace(next);
         return new PaginatedResult<UnifiedTicket>(mapped, hasMore ? next : null, hasMore);
+    }
+
+    /// <summary>The filter a read and a count of the same tickets both send, so they cannot differ.</summary>
+    private List<object> TicketFilters(TicketFilter filter)
+    {
+        var filters = new List<object>();
+        if (filter.ModifiedSince is { } since)
+            filters.Add(Filter("lastActivityDate", "gte", since.ToUniversalTime().ToString("o")));
+        else
+            filters.Add(Filter("id", "gte", 0));
+        if (filter.ExternalCompanyId is { } company)
+            filters.Add(Filter("companyID", "eq", long.Parse(company)));
+
+        // Import filters. Autotask expresses "in" with the "in" operator over a value list.
+        if (filter.CompanyIds.Count > 0)
+            filters.Add(Filter("companyID", "in", filter.CompanyIds.Select(long.Parse).ToArray()));
+        if (filter.QueueOrBoardIds.Count > 0)
+            filters.Add(Filter("queueID", "in", filter.QueueOrBoardIds.Select(long.Parse).ToArray()));
+        if (filter.AssignedResourceIds.Count > 0)
+            filters.Add(Filter("assignedResourceID", "in", filter.AssignedResourceIds.Select(long.Parse).ToArray()));
+        if (filter.ActiveWithinDays is > 0 and { } days)
+            filters.Add(Filter("lastActivityDate", "gte", clock.GetUtcNow().AddDays(-days).ToString("o")));
+        return filters;
     }
 
     public async Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
