@@ -26,6 +26,7 @@ Auth is HTTP Basic (`base64(CompanyId+PublicKey:PrivateKey)`) plus the `clientId
 | Queue / Board | **Service Board** |
 | Technician | **Member** |
 | Category | **Type** |
+| Ticket type / issue type / sub-issue type | **Type** / **Subtype** / **Item** |
 | Ticket title | **summary** (capped at 100 chars) |
 | Status / Priority | nested `{id, name}` references |
 
@@ -41,6 +42,9 @@ Auth is HTTP Basic (`base64(CompanyId+PublicKey:PrivateKey)`) plus the `clientId
   deliveries currently use the portal's own signed format (`X-Timestamp`, and `X-Signature` = hex
   HMAC-SHA256 of `"{timestamp}.{body}"`), not ConnectWise's callback format: polling is how changes
   arrive today, and native callbacks are a later Phase 9 slice.
+- **What a ticket is filed under is read by name**: `type`, `subType` and `item`. A level that is
+  not set arrives as a reference with an empty name, or not at all; either is no level. The type
+  is also still the category, as it was.
 - **A ticket carries its board's id beside the name** (`QueueOrBoardId`). A connection's board
   limit holds ids, and is checked against the id.
 
