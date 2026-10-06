@@ -137,4 +137,67 @@ public class TechnicianProvisioningTests
         apiUser.Blocker.Should().Contain("No email");
         rows.Last().Link.Should().Be(PsaTechnicianLink.Linked, "what is done sorts to the bottom");
     }
+
+    // ---- a login to leave alone -----------------------------------------------------------------
+    //
+    // A PSA login was linked to a portal user or it was not, and "not" read as something still to
+    // do. An API account, or someone who left, sat in that list for good, and the count of
+    // technicians to link stopped meaning anything.
+
+    [Fact]
+    public async Task A_login_can_be_left_alone_and_is_then_listed_last_and_not_as_still_to_do()
+    {
+        var (h, svc, psa) = await BuildAsync();
+        psa.AddTechnician("api-01", "", "API Integration");
+        psa.AddTechnician("29682889", "basit@techpio.test", "Basit Lone");
+
+        await svc.SetIgnoredAsync(Conn, " api-01 ", true, "API Integration");
+
+        var list = await svc.ListAsync(Conn);
+        list.Last().Should().Match<PsaTechnicianDto>(t => t.ExternalId == "api-01" && t.Link == PsaTechnicianLink.Ignored && t.Blocker == null);
+        list.Should().Contain(t => t.ExternalId == "29682889" && t.Link == PsaTechnicianLink.NotInPortal, "the others are unaffected");
+        var row = await h.Db.PsaTechnicianIgnores.SingleAsync();
+        (row.PsaConnectionId, row.ExternalTechnicianId, row.ExternalTechnicianName, row.MspOrganizationId).Should().Be((Conn, "api-01", "API Integration", Org));
+        (await h.Db.AuditLog.SingleAsync(a => a.Action == "psa.technician.ignored")).DetailJson.Should().Contain("api-01");
+
+        // Said twice, it is said once.
+        await svc.SetIgnoredAsync(Conn, "API-01", true, null);
+        (await h.Db.PsaTechnicianIgnores.CountAsync()).Should().Be(1);
+
+        await svc.SetIgnoredAsync(Conn, "api-01", false, null);
+        (await h.Db.PsaTechnicianIgnores.CountAsync()).Should().Be(0);
+        (await svc.ListAsync(Conn)).Should().NotContain(t => t.Link == PsaTechnicianLink.Ignored);
+        (await h.Db.AuditLog.CountAsync(a => a.Action == "psa.technician.unignored")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_login_that_is_someone_cannot_be_ignored_and_linking_an_ignored_login_takes_the_decision_back()
+    {
+        var (h, svc, psa) = await BuildAsync();
+        psa.AddTechnician("29682889", "basit@techpio.test", "Basit Lone");
+        psa.AddTechnician("29682890", "komal@techpio.test", "Komal Sharma");
+        await svc.ProvisionAsync(Conn, "29682889");
+
+        var linked = () => svc.SetIgnoredAsync(Conn, "29682889", true, "Basit Lone");
+        (await linked.Should().ThrowAsync<ValidationFailedException>()).WithMessage("*linked to Basit Lone on Autotask*");
+
+        // Ignored first, then found to be a person after all.
+        await svc.SetIgnoredAsync(Conn, "29682890", true, "Komal Sharma");
+        await svc.ProvisionAsync(Conn, "29682890");
+
+        (await h.Db.PsaTechnicianIgnores.CountAsync()).Should().Be(0, "linked says the login is someone; it cannot also be nobody");
+        var list = await svc.ListAsync(Conn);
+        list.Where(t => t.ExternalId is "29682889" or "29682890").Should().OnlyContain(t => t.Link == PsaTechnicianLink.Linked);
+        list.Should().NotContain(t => t.Link == PsaTechnicianLink.Ignored);
+    }
+
+    [Fact]
+    public async Task Ignoring_is_for_a_connection_of_the_callers_own_organization()
+    {
+        var (h, svc, _) = await BuildAsync();
+
+        await ((Func<Task>)(() => svc.SetIgnoredAsync(Guid.NewGuid(), "api-01", true, null))).Should().ThrowAsync<NotFoundException>();
+        await ((Func<Task>)(() => svc.SetIgnoredAsync(Conn, "  ", true, null))).Should().ThrowAsync<ValidationFailedException>();
+        (await h.Db.PsaTechnicianIgnores.CountAsync()).Should().Be(0);
+    }
 }

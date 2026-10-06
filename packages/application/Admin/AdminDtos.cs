@@ -398,7 +398,9 @@ public sealed record OutboundStatusDto(string PortalValue, string? SendsAs, stri
 
 public sealed record UnlinkedTechnicianDto(string ExternalId, string? Name, int Tickets);
 
-public sealed record TechnicianHealthDto(int Technicians, int Linked, double? LinkedPct, IReadOnlyList<UnlinkedTechnicianDto> Unlinked);
+/// <param name="Ignored">Logins an administrator has said to leave alone. Not counted in the other figures.</param>
+public sealed record TechnicianHealthDto(
+    int Technicians, int Linked, double? LinkedPct, IReadOnlyList<UnlinkedTechnicianDto> Unlinked, int Ignored = 0);
 
 /// <summary>
 /// How well a connection's mapping covers what its PSA sends. <paramref name="Level"/> is Pass,

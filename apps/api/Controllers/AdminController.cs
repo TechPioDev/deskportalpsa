@@ -604,6 +604,18 @@ public sealed class AdminReadController(
     public async Task<IActionResult> PsaTechnicians(Guid psaConnectionId, CancellationToken ct)
         => Ok(await provisioning.ListAsync(psaConnectionId, ct));
 
+    /// <summary>Says a PSA login is to be left alone (an API account, someone who left), or takes that back.</summary>
+    [HttpPut("psa-technicians/{psaConnectionId:guid}/{externalTechnicianId}/ignored")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> IgnoreTechnician(
+        Guid psaConnectionId, string externalTechnicianId, [FromBody] IgnoreTechnicianRequest request, CancellationToken ct)
+    {
+        await provisioning.SetIgnoredAsync(psaConnectionId, externalTechnicianId, request.Ignored, request.Name, ct);
+        return NoContent();
+    }
+
+    public sealed record IgnoreTechnicianRequest(bool Ignored, [System.ComponentModel.DataAnnotations.StringLength(200)] string? Name);
+
     /// <summary>Creates (or links) the portal user for one PSA technician and maps them.</summary>
     [HttpPost("psa-technicians/{psaConnectionId:guid}/{externalTechnicianId}")]
     [RequirePermission(Permissions.UsersManage)]
