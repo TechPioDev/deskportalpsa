@@ -1,10 +1,12 @@
-# Mapping health
+# Mapping health, and mapping what a PSA sends
 
-Phase 9, slice 4a. What a connection's PSA actually sends, set against the mapping rules there are:
-what is unmapped, what the portal is doing with it meanwhile, and how to put it right.
+Phase 9, slices 4a and 4b. What a connection's PSA actually sends, set against the mapping rules
+there are: what is unmapped, what the portal is doing with it meanwhile, and how to put it right.
 
-The code is `ConnectionAdminService.Mapping.cs`; the tests are `MappingHealthTests`, a run through
-a SQL translator in `RelationalQueryTests`, and the last browser test in `e2e/connections.spec.ts`.
+The code is `ConnectionAdminService.Mapping.cs` (the report, the preview, applying) and
+`MappingAdminService.SetInboundAsync` (saying what values become); the tests are
+`MappingHealthTests`, `MappingInboundTests`, a run through a SQL translator in
+`RelationalQueryTests`, and the last browser test in `e2e/connections.spec.ts`.
 The browser test checks the report and the sample and does not sync: in local mode the first sync
 that imports tickets links the demo sign-in to a client, which would change who every later test
 runs as. What applying does to imported tickets is held by the two unit suites.
@@ -65,10 +67,50 @@ says that it is.
 recently synced where there are any; for a connection still being set up, a handful **read from the
 PSA, mapped in memory and not kept**. The add-connection wizard shows this on its mapping step.
 
+## Two directions, two kinds of rule
+
+A PSA has many statuses and the portal has six. So the mapping has two halves that are not mirror
+images:
+
+| | Rule | How many |
+|---|---|---|
+| What the portal **sends** for one of its own statuses | portal value → the PSA's value, direction *portal to provider* or *both ways* | one per portal value |
+| What a PSA value **arrives** as | the PSA's value → portal value, direction *provider to portal* (or the same *both ways* rule) | any number per portal value |
+
+The Field Mapping page used to save only the first kind, and the API found a rule by its portal
+value, so a second PSA status mapped to "in progress" overwrote the first. Production has inbound
+rules for its other PSA statuses and priorities (19 on 6 Oct, counted in the database); they were not made on that page, which
+could not make them.
+
+`PUT /api/admin/mappings/inbound/{connectionId}` (`mappings.manage`) takes any number of
+`{ field, value, portalValue }`:
+
+- any number of PSA values may become one portal value; each is its own inbound rule;
+- where one rule works both ways and only what **arrives** is being changed, the rule keeps its
+  sending half (it becomes *portal to provider*) and a new inbound rule says what arrives. What the
+  portal sends for its own value is never changed from here;
+- a null `portalValue` takes the mapping away: the value then arrives as the PSA wrote it;
+- two rules that both decided what one value arrives as (possible before) are made one;
+- only this connection's own rules are touched;
+- every line is checked before any is saved, and every problem is said at once. A portal value has
+  to be one of the portal's own (`GET /api/admin/mappings/vocabulary`);
+- the set is saved together as **one** version, and audited as `mapping.inbound.changed` with the
+  connection and, for each value, what it was mapped to before and what it is mapped to now.
+
 ## Putting it right
 
-1. Map the value on the Field Mapping page. The links in the report open that page on this
-   connection and the right tab (`/dashboard/mappings?connection={id}&tab=status`).
+1. Map the value on the Field Mapping page, in **What the PSA sends**. The links in the report open
+   that page on this connection and the right tab
+   (`/dashboard/mappings?connection={id}&tab=status`). The section lists every value the PSA sends
+   or lists, with the tickets that hold it, and offers:
+   - a search, and a filter to what is unmapped;
+   - how many are mapped and how many tickets hold an unmapped value;
+   - **Suggest exact matches**: an unmapped value that is the same words as a portal value
+     ("In Progress" and `IN_PROGRESS`). Nothing looser is ever suggested;
+   - ticking several values and mapping them to one portal value.
+
+   Every choice, one at a time, ticked or suggested, is **staged** and shown as a list of changes
+   with what each value was mapped to before. Nothing is saved until that list is saved.
 2. **Apply the mapping to tickets already here** (`POST …/mapping-apply`). A new rule changes what
    the next sync makes of a ticket, and the sync reads only tickets that have changed, so tickets
    already imported would keep the PSA's word until they next changed. Applying re-maps them now.
@@ -86,11 +128,11 @@ What applying does and does not touch:
 
 The statuses and priorities a PSA's values are mapped *to* are listed once on the server, in
 `PortalVocabulary`: `NEW`, `IN_PROGRESS`, `WAITING_CUSTOMER`, `ON_HOLD`, `RESOLVED`, `CLOSED`, and
-`CRITICAL`, `HIGH`, `NORMAL`, `LOW`. The Field Mapping page in the browser still carries its own
-copy of the same two lists; it reads the server's when that page is reworked (slice 4b).
+`CRITICAL`, `HIGH`, `NORMAL`, `LOW`. "What the PSA sends" reads them from the server. The older
+rows on the Field Mapping page (what the portal sends) still carry their own copy of the same two
+lists.
 
-## Not in this slice
+## Not in these slices
 
-Queues, categories and work types keep the PSA's names by design and are not scored. The mapping
-page's own rework (search, filter to unmapped, counts, suggestions, bulk changes with a preview),
-technician states and suggestions, client mapping and custom fields are slices 4b and 4c.
+Queues, categories and work types keep the PSA's names by design and are not scored. Technician
+states and suggestions, client mapping, work types' lower levels and custom fields are slice 4c.
