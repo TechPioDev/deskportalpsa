@@ -202,6 +202,11 @@ public sealed class ConnectionSyncRunner(
                 Progress(tally);
                 await db.SaveChangesAsync(ct);
 
+                // The page is saved, so what it read is let go of. The unit of work otherwise holds
+                // every ticket of the run and every save looks through all of them: the last ticket
+                // of a five-thousand-ticket import cost many times what the first did.
+                await ResetAsync(ct);
+
                 if (next is null) break;
                 if (pagesThisRun >= _options.MaxPagesPerRun) { more = true; break; }
             }

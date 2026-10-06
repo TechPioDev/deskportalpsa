@@ -113,11 +113,15 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         var take = Math.Clamp(query.Take, 1, 200);
         var skip = Math.Max(0, query.Skip);
 
-        var total = await scope.CountAsync(ct);
+        // Counted and summed in one pass. As three queries it was three passes over every ticket
+        // the caller may see, which at half a million of them was most of the page's time.
         // Summed as double: SQLite, which local mode runs, cannot sum decimals, and two decimals of
         // hours survive the round trip.
-        var worked = await scope.SumAsync(t => (double)t.TimeWorkedHours, ct);
-        var billable = await scope.SumAsync(t => (double)t.BillableHours, ct);
+        var totals = (await scope.GroupBy(_ => 1)
+                .Select(g => new { Count = g.Count(), Worked = g.Sum(t => (double)t.TimeWorkedHours), Billable = g.Sum(t => (double)t.BillableHours) })
+                .ToListAsync(ct))
+            .FirstOrDefault();
+        var (total, worked, billable) = (totals?.Count ?? 0, totals?.Worked ?? 0, totals?.Billable ?? 0);
 
         IReadOnlyList<TicketListItem> items = access is not null
             ? await ClientRows(scope.AsNoTracking().OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id).Skip(skip).Take(take)).ToListAsync(ct)
