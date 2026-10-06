@@ -74,6 +74,7 @@ public static class DependencyInjection
         services.AddScoped<ISyncEventStore, SyncEventStore>();
         services.AddScoped<IConnectorResolver, ConnectorResolver>();
         services.AddScoped<IConnectionSyncRunner, ConnectionSyncRunner>();
+        services.AddScoped<Desk.Application.Admin.ISyncHealthService, Desk.Infrastructure.Admin.SyncHealthService>();
 
         // Sync engine + real connectors (Phases 4-5)
         services.AddScoped<ITicketSyncService, TicketSyncService>();

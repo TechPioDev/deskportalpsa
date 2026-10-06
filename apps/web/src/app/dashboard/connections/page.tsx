@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plug, Plus, ShieldCheck, ChevronDown, Globe, Copy, Ticket, Users, Contact, RefreshCw, Activity, Upload, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import type { ConnectionSummary, ConnectionFields } from '@/lib/types';
 import { SyncSettings } from './SyncSettings';
 
@@ -92,12 +92,25 @@ export default function ConnectionsPage() {
     mutationFn: (v: { id: string; full: boolean }) => api.syncConnection(v.id, v.full),
     onSuccess: (r, v) => {
       const id = v.id;
-      setResults((m) => ({ ...m, [id]: { ok: true, msg: `${v.full ? 'Re-synced all' : 'Synced'} · ${r.created} new, ${r.updated} updated (${r.fetched} fetched)` } }));
+      const parts = [`${v.full ? 'Re-synced all' : 'Synced'} · ${r.created} new, ${r.updated} updated (${r.fetched} fetched)`];
+      const failed = r.failed ?? 0;
+      const recovered = r.recovered ?? 0;
+      if (r.moreToRead) parts.push('more to read — the sync carries on by itself');
+      if (failed > 0) parts.push(`${failed} ${failed === 1 ? 'record' : 'records'} could not be read and will be tried again`);
+      if (recovered > 0) parts.push(`${recovered} earlier ${recovered === 1 ? 'failure' : 'failures'} went through`);
+      setResults((m) => ({ ...m, [id]: { ok: failed === 0, msg: parts.join(' · ') } }));
       // Refresh every page that reads synced data.
       ['connections', 'tickets', 'team', 'trend', 'health', 'notifications', 'audit', 'jobs'].forEach((k) =>
         qc.invalidateQueries({ queryKey: [k] }));
     },
-    onError: (e, v) => setResults((m) => ({ ...m, [v.id]: { ok: false, msg: e instanceof Error ? `Sync failed: ${e.message}` : 'Sync failed' } })),
+    onError: (e, v) => setResults((m) => ({
+      ...m,
+      // 409: a run already has this connection. That is not a failure, and pressing again will
+      // not start a second one - it says so instead of "Sync failed".
+      [v.id]: e instanceof ApiError && e.status === 409
+        ? { ok: true, msg: e.message }
+        : { ok: false, msg: e instanceof Error ? `Sync failed: ${e.message}` : 'Sync failed' },
+    })),
   });
 
   const refreshFields = useMutation({
