@@ -363,12 +363,12 @@ becomes material the day a second tenant can add a connection.
 
 | # | Severity | Finding | Evidence |
 |---|---|---|---|
-| D1 | **High** | **A change made during a sync run can be missed for good.** The cursor is set to the time the run **ended**, with no overlap. A ticket read on page 1 and changed again while page 3 is being read has a modified time before the new cursor, so the next run does not ask for it | `ConnectionSyncRunner` (cursor stamped after the loop) |
-| D2 | **High** | **A large import never completes.** At 50 pages the run stops, logs a warning, and still advances the cursor. The remaining tickets are never requested again; a full re-sync reads the same first 5,000 | same |
+| D1 | **High** | **A change made during a sync run can be missed for good.** The cursor is set to the time the run **ended**, with no overlap. A ticket read on page 1 and changed again while page 3 is being read has a modified time before the new cursor, so the next run does not ask for it *(reproduced)* | `ConnectionSyncRunner` (cursor stamped after the loop) |
+| D2 | **High** | **A large import never completes.** At 50 pages the run stops, logs a warning, and still advances the cursor. The remaining tickets are never requested again; a full re-sync reads the same first 5,000 *(reproduced with 5,001 tickets: 5,000 imported, the next run fetched none, the connection showed Healthy)* | same |
 | D3 | **High** | **A full re-sync can delete stored attachments.** On a full sync the runner treats the provider's attachment list as complete and deletes every imported file (row and bytes) missing from it. Autotask's list is **one page of 500**. A connection with more than 500 ticket attachments would lose the rest when someone presses "Re-sync all" *(read, not run; production holds 25)* | `GetRecentAttachmentsAsync` (one page) feeding `ReconcileDeletionsAsync` |
 | D4 | Medium | Every non-ticket list stops at one page without saying so: the 501st company, technician or note is invisible | both connectors |
-| D5 | Medium | A rate limit while reading a ticket's notes or time is swallowed; the run ends Healthy and the cursor moves on, so those notes are not read again until the ticket changes | runner `catch (ConnectorException)` ×6 |
-| D6 | Medium | One ticket that cannot be saved fails the whole run, every run: the connection stays Degraded behind it | no per-record isolation |
+| D5 | Medium | A rate limit while reading a ticket's notes or time is swallowed; the run ends Healthy and the cursor moves on, so those notes are not read again until the ticket changes *(reproduced)* | runner `catch (ConnectorException)` ×6 |
+| D6 | Medium | One ticket that cannot be saved fails the whole run, every run: the connection stays Degraded behind it *(reproduced)* | no per-record isolation |
 | D7 | Medium | The worker and a manual sync can run together on one connection. Tickets are protected by their unique index (one run fails); notes, attachments and time entries have none and can be doubled | no lock; no unique index on the three tables |
 | D8 | Medium | **A retried write can duplicate in the PSA.** Neither connector uses the idempotency key. A time entry whose reply was lost is marked Failed and "Retry" posts it again | `TicketTimeWriter.PushAsync`; connectors' `AddTimeEntryAsync` |
 | D9 | Low | A queue or board filter cannot work: the ids are sent to the provider, and the returned tickets are then compared against the queue's **name**, so every ticket is rejected *(reproduced: `ImportFilterTests`; no filter is set in production)* | runner `Passes` against `QueueOrBoard` |
@@ -477,7 +477,8 @@ judged at the end of the last one; each slice reports which gate items it closes
 | Slice | Content | Closes |
 |---|---|---|
 | **1. Isolation and safety** | Technician identity by connection in ticket visibility, the claim and the rollup; mapping rules loaded by organization and connection, a rule's connection checked at save; the endpoint rule and the guard in both processes; the webhook route refuses a connection with no secret and signs the timestamp; a truncated list never deletes anything; the queue filter; a connection needs a real connector; a first sign-in binds only when unambiguous. No new table | T1, T2, T3 (rollup), T4, S1, S2, S5 (part), D3, D9 |
-| **2. Sync engine** | The shared provider HTTP layer (timeout, throttle, retry, correlation); sync cursors, runs and the per-connection lock; no silent cap; full paging; failed sync records with retry; per-record isolation; unique indexes; time-entry reconciliation before retry; fault-capable fakes and the tests listed as missing in §16 | S3, D1, D2, D4–D8, D10, D11, R1, R10, R11 |
+| **2a. Sync engine** | Sync cursors, runs and the per-connection lock; a read that runs out of pages is continued; per-record isolation; failed sync records with retry, review and dismissal; routes to read a connection's sync state; one person per PSA login. One migration, additive | S3 (the lock), D1, D2, D5, D6, D7, D10, D11 |
+| **2b. Provider calls** | The shared provider HTTP layer (timeout, per-connection throttle, retry of safe requests honouring `Retry-After`, correlation); full paging of the smaller lists; time-entry reconciliation before a retried push; a job is claimed before it is run | D4, D8, R1, R10, R11 |
 | **3. Connections** | States, pause, archive; test before saving a credential; no duplicate account; capabilities from the API; provider catalog; the add-connection wizard with the test matrix, discovery, scope from lists, preview and preflight; sync health and freshness on the connection; filters, views and person keys keyed by connection id | S4–S6, T3 (person keys), T5, T6, R2, R7, R8 |
 | **4. Mapping** | The unmapped register, mapping health, validation and preview; connection-scoped mapping API and screens with history; technician states and suggestions; client mapping (and the decision on one login for two companies); work type; custom fields | R4–R6 |
 | **5. Outbound reliability** | One pending / failed / retry path for local-first writes; reconciliation before any retried create; outbound state on the ticket | D8 (rest), R3 |
@@ -495,7 +496,8 @@ which affects people today, and the security finding, and can be deployed on its
 | Slice | State | Evidence |
 |---|---|---|
 | 1. Isolation and safety | **Built**, awaiting review and deploy | 116 new tests; 1,389 pass in both time-zone modes, and the 16 PostgreSQL 17 tests pass. T1, T2, T3, T4, S2 and D9 each have tests that were run against the code as audited and fail there; S1, S5 and D3 are covered by tests of the new behaviour. The ticket-visibility predicate, built by hand as one clause per PSA connection, is also run through a SQL translator (`RelationalQueryTests`) and on PostgreSQL 17 (`CapacityPerformanceTests`); before this it had only ever run in memory |
-| 2 to 7 | Not started | |
+| 2a. Sync engine | **Built**, stacked on slice 1 (its pull request opens when slice 1 is merged) | 32 more tests; 1,421 pass in both time-zone modes. D1, D2, D5 and D6 were reproduced against the code as audited by a throwaway probe (four tests asserting the defect, all passing there). The run, its lock and its failure store also run through a SQL translator, including a save the database genuinely refuses; on PostgreSQL 17 eight runs started at the same instant end with one, and the migration applies. See [sync-engine.md](sync-engine.md) |
+| 2b to 7 | Not started | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -506,3 +508,23 @@ What slice 1 changes for people, stated here because two of them are visible:
 - The worker now refuses private addresses, as the API already did.
 - A connection limited to certain queues or boards now imports them. No production connection has
   such a limit.
+
+What slice 2a changes for people:
+
+- "Sync now" while a sync is already running says so and starts nothing. It used to start a second
+  run over the same tickets.
+- A large import finishes over several runs instead of stopping at 5,000 tickets, and says "more to
+  read" while it does.
+- One ticket the portal cannot save no longer blocks the connection; it is listed as a failed record
+  and tried again.
+- A PSA login can be linked to one person on a connection. Saving a second link says who holds it.
+
+Two decisions taken while building it, recorded because they differ from the first plan:
+
+- **No unique index on notes or attachments by the PSA's id.** A reply written in the portal and a
+  sync reading the same ticket can legitimately race; an index would turn a rare duplicate note into
+  a failed reply that the PSA had already accepted, and the person would send it again. The lock
+  closes the case that mattered: two syncs.
+- **`app_users.ExternalTechnicianId` is not dropped yet.** Nothing reads it any more, but the
+  previous version of the code selects it, and a zero-downtime deploy runs both versions for a
+  moment. It goes in a later release.
