@@ -125,6 +125,7 @@ public sealed class UserAdminService(
             // The caller resolves the label from the provider's own discovery; only the ID is
             // ever written to the PSA, so a missing or stale label is cosmetic.
             var name = string.IsNullOrWhiteSpace(externalTechnicianName) ? null : externalTechnicianName.Trim();
+            await PsaIdentityRules.EnsureLoginIsFreeAsync(db, psaConnectionId, id, userId, ct);
 
             if (row is null)
             {
