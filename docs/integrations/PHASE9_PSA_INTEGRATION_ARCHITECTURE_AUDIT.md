@@ -503,7 +503,8 @@ which affects people today, and the security finding, and can be deployed on its
 | 3c. What belongs to a connection | **Built**, stacked on 3b | 10 more tests; 1,516 pass in both time-zone modes, and the 73 browser tests pass in Chromium. T3, the rest of T5 and T6 are closed. For T3 each place a person is counted (team table, daily hours, satisfaction, ticket list and its filter, client workload, portal coverage) has a test asserted from what the service returns, and five of the six that the old code can compile fail against it. The pinned query budgets are unchanged. No migration |
 | 4a. Mapping health | **Built**, stacked on 3c | 8 more tests; 1,524 pass in both time-zone modes, and the 73 browser tests pass in Chromium (the wizard's test now also reads the report and the sample). See [mapping-health.md](mapping-health.md). R4 is closed: what a PSA sends that nothing maps is reported with the tickets that hold it and what the portal is doing with them meanwhile, and a new rule can be applied to tickets already imported. Nothing is stored for it; no migration |
 | 4b. Mapping what a PSA sends | **Built**, stacked on 4a | 7 more tests; 1,531 pass in both time-zone modes, and the 73 browser tests pass in Chromium (the wizard's test now maps two statuses on the Field Mapping page, from a suggestion, and checks nothing is saved until the list of changes is). The Field Mapping page could save one rule per portal status, and the API overwrote a second PSA status mapped to the same one: production's inbound rules for its other PSA statuses were not made on that page, which could not make them. Any number of PSA values can now be mapped to one portal value through the product, staged and reviewed before saving, saved as one version and audited with what each value was mapped to before. No migration |
-| 4c, 5 to 7 | Not started. 4c is technician states and suggestions, client mapping (R5), work types (R6) and custom fields. A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
+| 4c. Technicians: linked, not linked, left alone | **Built**, stacked on 4b | 3 more tests; 1,534 pass in both time-zone modes, and the 73 browser tests pass in Chromium (the wizard's test now leaves the PSA's API account alone from the Mapping panel). The list of a PSA's technicians, the suggestion by exact e-mail and the one-at-a-time "Add" were already there. What was missing was a way to say a login is nobody (an API account, someone who left), so the list never emptied. One migration, additive (`psa_technician_ignores`), applied to PostgreSQL 17 from the generated script |
+| Rest of 4, 5 to 7 | Not started. Client mapping (R5) waits on the owner's decision about one client login reaching two companies; work types' lower levels (R6) and custom fields are still to build. Slice 5 waits on the decision about status and assignment leaving write-through. A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -603,6 +604,12 @@ What slice 4b changes for people:
 - Nothing is saved as it is chosen. Changes are listed, with what each value was mapped to before,
   and saved together.
 - The history records who changed what, on which connection, from what to what.
+
+What slice 4c changes for people:
+
+- A PSA login can be marked to be left alone, from Users, Import from PSA, or from a connection's
+  Mapping panel. It is then no longer counted or listed as still to link. Nothing about its tickets
+  or time changes.
 
 Two decisions taken while building it, recorded because they differ from the first plan:
 
