@@ -46,7 +46,7 @@ the provider's own id, stored when the provider accepted them.
 | Resolved / closed dates | PSA → PIO | PSA | Overwritten from the provider | Unchanged |
 | Due date / SLA due (`SlaDueAt`) | PSA → PIO | PSA | From the provider's own target | **PSA authoritative.** PIO never writes an SLA to a PSA |
 | First-response promise, SLA pause | PIO only | PIO | Board and monitoring tickets only | PIO only |
-| Device | PSA → PIO (sent once on create) | PSA | Kept when the provider does not carry it | Unchanged |
+| Device | PSA ↔ PIO | **PSA**, write-through | In: kept when the provider does not carry it. Out: a technician sets or changes it (`TicketDeviceService`, provider first); in ConnectWise the previous configuration is unlinked from the ticket, the configuration itself untouched | Unchanged |
 | Time totals (worked, billable, non-billable) | PSA → PIO | PSA | Recomputed from the provider's entries on each sync of the ticket | Unchanged |
 | Resolution text, resolved-by, reopen count, review state | PIO only | PIO | Never sent | PIO only |
 | Portal custom fields, tasks, links, approvals, satisfaction | PIO only | PIO | Never sent | PIO only. A PSA custom field mapped in Phase 9 is **PSA → PIO, read-only** in its first version |
@@ -64,7 +64,7 @@ the provider's own id, stored when the provider accepted them.
 | Attachment added in the PSA | PSA → PIO, scanned before storage | PSA | Imported by attachment id | Unchanged |
 | Attachment deleted in the PSA | PSA → PIO for imported files only | PSA | `ReconcileDeletionsAsync`; a portal upload is never removed | Unchanged |
 | Time entry logged in PIO (clock or by hand) | PIO → PSA, local first | **PIO keeps its row; the PSA is the record for totals** | `TicketTimeWriter.PushAsync`; `Failed` entries retried from the ticket | Unchanged, plus: a retry after an uncertain failure must look for the entry in the PSA before creating another (see Duplicates) |
-| Time entry changed or deleted in PIO | PIO → PSA, provider first | PSA | `TicketTimeController`; needs `tickets.time.log`, the author or a lead, and a reason when it is someone else's | Unchanged. This is the one destructive outbound operation: a deliberate, permissioned, audited action on one entry, never a consequence of sync |
+| Time entry changed or deleted in PIO | PIO → PSA, provider first | PSA | `TicketTimeController`; needs `tickets.time.log`, the author or a lead, and a reason when it is someone else's | Unchanged. This is the one outbound operation that deletes a record: a deliberate, permissioned, audited action on one entry, never a consequence of sync. (Changing a ticket's device in ConnectWise removes a link, not a record.) The full list of what each connector may call is in [PSA_CONNECTOR_REQUIRED_PERMISSIONS.md](PSA_CONNECTOR_REQUIRED_PERMISSIONS.md) |
 | Time entry logged directly in the PSA | PSA → PIO **as totals and as an internal note only** | PSA | No `ticket_time_entries` row is created for it | Unchanged in Phase 9 (importing PSA-side entries as worklogs is deferred; see the audit) |
 
 ## Clients, contacts, technicians, configuration
