@@ -100,8 +100,15 @@ public sealed class AdminConnectionsController(
     {
         // Under the caller's tenant: another organization's connection is not found, before
         // anything is recorded about it.
-        if (!await db.PsaConnections.AsNoTracking().AnyAsync(c => c.Id == id, ct))
-            return NotFound();
+        var paused = await db.PsaConnections.AsNoTracking()
+            .Where(c => c.Id == id)
+            .Select(c => new { Paused = c.SyncPausedAt != null })
+            .FirstOrDefaultAsync(ct);
+        if (paused is null) return NotFound();
+        // Said in words. A run on a paused connection reads nothing, and "0 fetched" would look
+        // like a sync that found nothing new.
+        if (paused.Paused)
+            throw new Desk.Application.Common.ValidationFailedException("Sync is paused for this connection. Resume it to read from the PSA again.");
         // Recorded as asked for, before it runs: a run that then fails was still requested.
         await audit.WriteAsync("connection.sync.requested", "PsaConnection", id.ToString(), new { full }, ct);
 
@@ -112,6 +119,47 @@ public sealed class AdminConnectionsController(
         await EnsureLocalClientIdentityAsync(id, ct);
         return Ok(result);
     }
+
+    /// <summary>Every PSA the portal names: those that can be connected, with what each needs, and those that are planned.</summary>
+    [HttpGet("providers")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public IActionResult Providers() => Ok(svc.Providers());
+
+    /// <summary>What this connection's PSA can and cannot do, so a screen offers only what will work.</summary>
+    [HttpGet("{id:guid}/capabilities")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Capabilities(Guid id, CancellationToken ct) => Ok(await svc.CapabilitiesAsync(id, ct));
+
+    /// <summary>Switches a new connection on for the first time. Refused until a test has passed.</summary>
+    [HttpPost("{id:guid}/activate")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Activate(Guid id, CancellationToken ct) => Ok(await svc.ActivateAsync(id, ct));
+
+    [HttpPost("{id:guid}/pause-sync")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> PauseSync(Guid id, CancellationToken ct) => Ok(await svc.PauseSyncAsync(id, ct));
+
+    [HttpPost("{id:guid}/resume-sync")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> ResumeSync(Guid id, CancellationToken ct) => Ok(await svc.ResumeSyncAsync(id, ct));
+
+    /// <summary>The connections that have been put away, so that one can be restored.</summary>
+    [HttpGet("archived")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Archived(CancellationToken ct) => Ok(await svc.ArchivedAsync(ct));
+
+    /// <summary>Puts a connection away. Nothing it imported is removed, and it can be restored.</summary>
+    [HttpPost("{id:guid}/archive")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Archive(Guid id, CancellationToken ct)
+    {
+        await svc.ArchiveAsync(id, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:guid}/restore")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Restore(Guid id, CancellationToken ct) => Ok(await svc.RestoreAsync(id, ct));
 
     /// <summary>Where the connection's sync stands: its cursor, its recent runs, what it still owes.</summary>
     [HttpGet("{id:guid}/sync-state")]

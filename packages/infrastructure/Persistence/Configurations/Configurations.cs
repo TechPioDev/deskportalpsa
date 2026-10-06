@@ -37,6 +37,11 @@ public sealed class PsaConnectionConfig : IEntityTypeConfiguration<PsaConnection
         b.Property(x => x.Name).HasMaxLength(200).IsRequired();
         b.Property(x => x.ApiEndpoint).HasMaxLength(500).IsRequired();
         b.Property(x => x.CredentialSecretRef).HasMaxLength(500).IsRequired();
+        b.Property(x => x.LastErrorKind).HasMaxLength(40);
+        b.Property(x => x.AccountKeyHash).HasMaxLength(64);
+        // A database default, so a row written by the previous version of the code - which does
+        // not know the column - is a connection that is not in setup, as every one of its were.
+        b.Property(x => x.InSetup).HasDefaultValue(false);
         b.HasIndex(x => x.MspOrganizationId);
         b.HasOne<MspOrganization>().WithMany(o => o.PsaConnections)
             .HasForeignKey(x => x.MspOrganizationId).OnDelete(DeleteBehavior.Cascade);

@@ -19,6 +19,18 @@ public sealed class ConnectorResolver(DeskDbContext db, IEnumerable<IConnectorFa
 
     public bool Supports(ProviderType provider) => _factories.ContainsKey(provider);
 
+    public IReadOnlyList<ProviderDescriptor> Providers
+        => _factories.Values.Select(f => f.Descriptor).OfType<ProviderDescriptor>().OrderBy(d => d.Name).ToList();
+
+    public string? AccountKey(ProviderType provider, string apiEndpoint, IReadOnlyDictionary<string, string> credentials)
+        => _factories.TryGetValue(provider, out var factory) ? factory.AccountKey(apiEndpoint, credentials) : null;
+
+    public Task<IServiceManagementConnector> ResolveForTrialAsync(
+        Desk.Domain.Tenancy.PsaConnection connection, IReadOnlyDictionary<string, string> credentials, CancellationToken ct = default)
+        => _factories.TryGetValue(connection.Provider, out var factory)
+            ? factory.CreateWithAsync(connection, credentials, ct)
+            : throw new ValidationFailedException($"No connector registered for provider {connection.Provider}.");
+
     public async Task<IServiceManagementConnector> ResolveAsync(Guid psaConnectionId, CancellationToken ct = default)
     {
         var connection = await db.PsaConnections

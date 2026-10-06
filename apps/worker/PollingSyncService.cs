@@ -54,8 +54,8 @@ public sealed class PollingSyncService(
         {
             scope.ServiceProvider.GetRequiredService<TenantContext>().SetPlatformScope();
             var db = scope.ServiceProvider.GetRequiredService<DeskDbContext>();
-            connectionIds = await db.PsaConnections
-                .Where(c => c.IsEnabled && c.Status != ConnectionStatus.Failed)
+            // Which ones is one rule, kept with the sync engine: SyncSchedule.Due.
+            connectionIds = await Desk.Infrastructure.Sync.SyncSchedule.Due(db.PsaConnections)
                 .Select(c => c.Id)
                 .ToListAsync(ct);
         }

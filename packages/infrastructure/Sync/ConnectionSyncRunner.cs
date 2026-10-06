@@ -74,8 +74,9 @@ public sealed class ConnectionSyncRunner(
             ?? throw new NotFoundException("PSA connection");
 
         // Two-way sync off means nothing flows back from the provider: portal → PSA writes still
-        // happen, but an inbound run must not touch the projection.
-        if (!connection.TwoWaySync)
+        // happen, but an inbound run must not touch the projection. Paused and archived say the
+        // same thing for a different reason.
+        if (!connection.TwoWaySync || connection.SyncPausedAt is not null || connection.ArchivedAt is not null)
             return new SyncRunResult(0, 0, 0, 0, 0);
 
         var trigger = request.Full ? SyncRunTrigger.ManualFull : request.Manual ? SyncRunTrigger.Manual : SyncRunTrigger.Scheduled;
@@ -245,6 +246,7 @@ public sealed class ConnectionSyncRunner(
             _connection!.LastHealthCheckAt = now;
             _connection.Status = ConnectionStatus.Healthy;
             _connection.LastError = null;
+            _connection.LastErrorKind = null;
 
             Progress(tally);
             _run!.Status = more ? SyncRunStatus.Partial : SyncRunStatus.Succeeded;
@@ -466,6 +468,9 @@ public sealed class ConnectionSyncRunner(
             {
                 connection.Status = ConnectionStatus.Degraded;
                 connection.LastError = error.Message;
+                // Kept beside the message: "the PSA rejected the credentials" is the one failure
+                // the next run cannot get past, and the one that must not be retried every cycle.
+                connection.LastErrorKind = error is ConnectorException kind ? kind.Kind.ToString() : null;
                 connection.LastHealthCheckAt = now;
             }
             await db.SaveChangesAsync(none);

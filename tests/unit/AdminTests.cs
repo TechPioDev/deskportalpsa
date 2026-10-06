@@ -393,6 +393,9 @@ public class AdminTests
         row.CredentialSecretRef = "desk/psa-credentials/AutotaskPsa/Autotask/2a47afb201f94a759f7645f6b74a845b";
         row.Status = ConnectionStatus.Failed;
         row.LastError = "'Autotask' has no valid stored credentials — edit the connection and re-enter them.";
+        // A connection that had been live for months, not one still being set up.
+        row.InSetup = false;
+        row.IsEnabled = true;
         await h.Db.SaveChangesAsync();
 
         await svc.UpdateAsync(created.Id, new UpdateConnectionInput(
@@ -402,7 +405,8 @@ public class AdminTests
         var healed = await h.Db.PsaConnections.SingleAsync(c => c.Id == created.Id);
         (await store.ReadAsync(healed.CredentialSecretRef))["Secret"].Should().Be("re-entered");
         healed.LastError.Should().BeNull("the recorded failure was about the credentials just replaced");
-        healed.Status.Should().Be(ConnectionStatus.Pending, "only a real successful call may claim Healthy");
+        healed.Status.Should().Be(ConnectionStatus.Healthy,
+            "the re-entered credentials were tried against the PSA before they were kept, and it accepted them");
     }
 
     [Fact]
