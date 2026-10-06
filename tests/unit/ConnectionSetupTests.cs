@@ -329,8 +329,12 @@ public class ConnectionSetupTests
         var w = Build();
         await using var _ = w.H.Db;
         var first = await AddAsync(w, "Main");
-        var id = await AddAsync(w, "Main", "second-company");
+        var id = await AddAsync(w, "Main two", "second-company");
         (await w.Service.CheckAsync(id)).Passed.Should().BeTrue();
+        // Two connections that share a name can no longer be made. Ones from before that rule can
+        // exist, so the line that says so is still there to say it.
+        (await w.H.Db.PsaConnections.SingleAsync(c => c.Id == id)).Name = "Main";
+        await w.H.Db.SaveChangesAsync();
 
         var shared = await w.Service.PreflightAsync(id);
         (shared.CanEnable, shared.Items.Single(i => i.Key == "conflicts").Outcome).Should().Be((true, "Warn"));
