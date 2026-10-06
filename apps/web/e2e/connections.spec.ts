@@ -233,18 +233,30 @@ test('a connection is added a step at a time against a PSA and is switched on on
   await expect(sampleRow.getByText('Not mapped').first()).toBeVisible();
   await expect(card.getByText('read from the PSA just now and not kept')).toBeVisible();
 
-  // Mapped, the report and the sample both say so the next time they are asked.
-  const rule = await page.request.post('/api/bff/api/admin/mappings', {
-    data: {
-      provider: 1, scope: 2, psaConnectionId: saved.id, portalField: 'status', portalValue: 'NEW',
-      externalField: 'status', externalValue: 'New', direction: 3, isRequired: false, fallbackValue: null,
-    },
-  });
-  expect(rule.ok()).toBeTruthy();
-  await card.getByRole('button', { name: 'Check again' }).click();
+  // Mapped on the Field Mapping page, from what the PSA sends. The two statuses whose words are
+  // the portal's own are suggested, shown as a list of changes, and saved together.
+  await page.goto(`/dashboard/mappings?connection=${saved.id}&tab=status`);
+  const sends = page.getByRole('region', { name: 'What the PSA sends' });
+  await expect(sends.getByText('0 of 2 mapped')).toBeVisible();
+  await expect(sends.getByLabel('What New becomes in the portal')).toHaveValue('__none');
+  await sends.getByRole('button', { name: 'Suggest exact matches (2)' }).click();
+  await expect(sends.getByText('2 changes not saved yet')).toBeVisible();
+  await expect(sends.getByText('(was not mapped)')).toHaveCount(2);
+  expect((await (await page.request.get('/api/bff/api/admin/mappings?provider=1')).json() as unknown[]).length, 'a suggestion is not a saved rule').toBe(0);
+  await sends.getByRole('button', { name: 'Save these 2 changes' }).click();
+  await expect(sends.getByText('Saved 2 changes.')).toBeVisible();
+  await expect(sends.getByText('2 of 2 mapped')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'What the PSA sends' }).getByLabel('What New becomes in the portal')).toHaveValue('NEW');
+  await expect(page.getByRole('region', { name: 'What the PSA sends' }).getByLabel('What Closed becomes in the portal')).toHaveValue('CLOSED');
+
+  // The connection's own report, and its sample of tickets, now say the same.
+  await page.goto('/dashboard/connections');
+  await card.getByRole('button', { name: 'Mapping', exact: true }).click();
+  await expect(card.getByText('Mapping health')).toBeVisible();
+  await expect(card.getByText('Blocking', { exact: true })).toHaveCount(0);
   await expect(statusRow.getByText('Not mapped')).toHaveCount(0);
   await expect(statusRow).toContainText('NEW');
-  await expect(card.getByText('Blocking', { exact: true })).toHaveCount(0);
   await expect(sampleRow).toContainText('NEW');
   expect((await (await page.request.get('/api/bff/api/tickets')).json() as unknown[]).length, 'the sample was not kept').toBe(ticketsBefore);
 

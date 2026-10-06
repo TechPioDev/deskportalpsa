@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MappingRule } from '@/lib/types';
+import { InboundMapping } from './InboundMapping';
 
 const SCOPE_CONNECTION = 2;      // MappingScope.ConnectionOverride
 const DIRECTION_BIDIRECTIONAL = 3; // MappingDirection.Bidirectional
@@ -259,6 +260,16 @@ export default function MappingsPage() {
           })}
         </div>
       </div>
+
+      {/* What arrives. The rows further down say the other direction: what the portal sends. */}
+      {conn && (tab === 'status' || tab === 'priority') && (
+        <InboundMapping
+          key={conn.id + tab}
+          connectionId={conn.id}
+          field={tab}
+          onSaved={() => { qc.invalidateQueries({ queryKey: ['mappings', provider] }); qc.invalidateQueries({ queryKey: snapshotKey }); }}
+        />
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

@@ -618,10 +618,11 @@ function ConnectionCard({
           <p className="mt-0.5 text-[12px] text-[var(--muted)]">Last checked {ago(c.lastHealthCheckAt)}</p>
         </div>
 
-        {/* A row of its own. Beside the name it was squeezed, on a phone, into a column a word wide. */}
+        {/* A row of its own, at every width: its basis is the whole row, so it cannot sit beside the
+            name and squeeze it (on a phone, into a column a word wide). The line length is the span's. */}
         {note && (
-          <p className={'w-full max-w-3xl text-xs ' + (state === AUTH_REQUIRED ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--muted)]')}>
-            {note}
+          <p className={'basis-full text-xs ' + (state === AUTH_REQUIRED ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--muted)]')}>
+            <span className="block max-w-3xl">{note}</span>
           </p>
         )}
       </div>
