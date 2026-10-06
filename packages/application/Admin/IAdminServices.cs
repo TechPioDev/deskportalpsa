@@ -71,6 +71,24 @@ public interface IConnectionAdminService
     /// <summary>What stands between this connection and being switched on.</summary>
     Task<PreflightDto> PreflightAsync(Guid connectionId, CancellationToken ct = default);
 
+    /// <summary>
+    /// How well the connection's mapping covers what its PSA sends, worked out from the tickets it
+    /// holds and the rules as they are now. Nothing is stored for it.
+    /// </summary>
+    Task<MappingHealthDto> MappingHealthAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sample tickets with what the rules make of each. Tickets already imported where there are
+    /// any; otherwise a handful read from the PSA and not kept.
+    /// </summary>
+    Task<IReadOnlyList<MappingPreviewRowDto>> MappingPreviewAsync(Guid connectionId, int take = 10, CancellationToken ct = default);
+
+    /// <summary>
+    /// Re-maps tickets already imported that still show the PSA's own word for a status or priority
+    /// a rule now maps. Tickets a person or a rule already gave a portal value are left. Audited.
+    /// </summary>
+    Task<MappingApplyResultDto> ApplyMappingAsync(Guid connectionId, CancellationToken ct = default);
+
     /// <summary>Read-only pre-flight: can this connection log time with its current settings?</summary>
     Task<TimeEntryReadinessDto> CheckTimeEntryAsync(Guid connectionId, CancellationToken ct = default);
 
