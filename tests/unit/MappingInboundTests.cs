@@ -18,8 +18,8 @@ namespace Desk.Tests.Unit;
 /// A PSA has many statuses and the portal has six, so many arrive as one. The mapping page could
 /// save one rule per portal status - the one the portal SENDS - and the API matched a rule by its
 /// portal value, so a second PSA status for "in progress" overwrote the first. The rules that map
-/// the other dozen PSA statuses in production were put there by hand. These hold the way that is
-/// now done through the product: any number of PSA values to one portal value, the half that says
+/// the other PSA statuses in production were not made on that page, which could not make them.
+/// These hold the way that is now done through the product: any number of PSA values to one portal value, the half that says
 /// what the portal sends left alone, and each change recorded with what it replaced.
 /// </summary>
 public class MappingInboundTests

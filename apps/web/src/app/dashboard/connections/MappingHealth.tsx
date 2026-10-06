@@ -90,7 +90,12 @@ export function MappingHealth({ connectionId }: { connectionId: string }) {
 
       {outbound.length > 0 && (
         <div>
-          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--faint)]">Statuses set in the portal</h3>
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--faint)]">
+            Statuses set in the portal
+            <span className="ml-2 font-normal normal-case tracking-normal text-[var(--muted)]">
+              what the portal sends for each is set on the Field Mapping page, under what the PSA sends
+            </span>
+          </h3>
           <ul className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
             {outbound.map((o) => (
               <li key={o.portalValue} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
