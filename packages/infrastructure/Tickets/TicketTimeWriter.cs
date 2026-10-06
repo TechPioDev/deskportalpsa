@@ -106,13 +106,47 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
     /// <summary>Pushes a portal record to the PSA and stamps the outcome on it either way.</summary>
     public async Task<bool> PushAsync(TicketTimeEntry record, Ticket ticket, IServiceManagementConnector connector, CancellationToken ct)
     {
+        var request = new UnifiedTimeEntryCreateRequest(record.Hours, record.WorkTypeId, record.WorkRoleId,
+            record.Billable ? BillableOption.Billable : BillableOption.DoNotBill,
+            record.Notes, MemberIdentifier: record.TechnicianExternalId);
+
+        // A second try. The first one failed as far as the portal could tell - but a push whose
+        // answer was lost may have been carried out, and sent again it is a second entry: the
+        // customer billed the same hour twice. So the PSA is asked first whether it has it.
+        if (record.SyncStatus == TimeEntrySyncStatus.Failed && string.IsNullOrEmpty(record.ExternalEntryId))
+        {
+            try
+            {
+                var linked = await db.TicketTimeEntries.AsNoTracking()
+                    .Where(t => t.TicketId == ticket.Id && t.Id != record.Id && t.ExternalEntryId != null)
+                    .Select(t => t.ExternalEntryId!)
+                    .ToListAsync(ct);
+                if (await connector.FindTimeEntryAsync(ticket.ExternalTicketId!, request, record.CreatedAt, linked, ct) is { } already)
+                {
+                    record.ExternalEntryId = already;
+                    record.SyncStatus = TimeEntrySyncStatus.Synced;
+                    record.SyncError = null;
+                    await db.SaveChangesAsync(ct);
+                    if (audit is not null)
+                        await audit.WriteAsync("ticket.time.reconciled", "Ticket", ticket.Id.ToString(),
+                            new { entryId = record.Id, externalEntryId = already, record.Hours }, ct);
+                    return true;
+                }
+            }
+            catch (ConnectorException ex)
+            {
+                // Cannot tell whether it is there, so it is not sent: a duplicate on an invoice is
+                // worse than an hour that waits for the PSA to answer.
+                record.SyncError = $"Could not check whether the PSA already has this entry, so it was not sent again: {ex.Message}";
+                await db.SaveChangesAsync(ct);
+                return false;
+            }
+        }
+
         CreateTimeEntryResult result;
         try
         {
-            result = await connector.AddTimeEntryAsync(ticket.ExternalTicketId!,
-                new UnifiedTimeEntryCreateRequest(record.Hours, record.WorkTypeId, record.WorkRoleId,
-                    record.Billable ? BillableOption.Billable : BillableOption.DoNotBill,
-                    record.Notes, MemberIdentifier: record.TechnicianExternalId), ct);
+            result = await connector.AddTimeEntryAsync(ticket.ExternalTicketId!, request, ct);
         }
         catch (ConnectorException ex)
         {

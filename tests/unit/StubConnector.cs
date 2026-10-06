@@ -219,6 +219,23 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
         if (TimeReadFailureFor.TryGetValue(ticketId, out var failure)) throw failure;
         return Task.FromResult<IReadOnlyList<UnifiedTimeEntry>>(TimeEntries.GetValueOrDefault(ticketId, []));
     }
+    /// <summary>What the PSA answers when asked whether it already holds a time entry: its id, or null.</summary>
+    public string? TimeEntryAlreadyThere { get; set; }
+
+    /// <summary>When set, that question cannot be answered.</summary>
+    public ConnectorException? FindTimeEntryFailure { get; set; }
+
+    /// <summary>Every time the portal asked that question: for which ticket, since when, and what it said was already linked.</summary>
+    public List<(string TicketId, UnifiedTimeEntryCreateRequest Entry, DateTimeOffset Since, IReadOnlyCollection<string> Linked)> TimeEntryLookups { get; } = [];
+
+    public Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
+        IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default)
+    {
+        TimeEntryLookups.Add((ticketId, entry, since, alreadyLinked));
+        if (FindTimeEntryFailure is { } failure) throw failure;
+        return Task.FromResult(TimeEntryAlreadyThere);
+    }
+
     /// <summary>When set, pushing time throws it — how a provider REJECTS a payload it dislikes.</summary>
     public ConnectorException? TimeEntryFailure { get; set; }
     /// <summary>When set, pushing time succeeds with this (the id the PSA gave it); each push is recorded in <see cref="PushedTime"/>.</summary>
