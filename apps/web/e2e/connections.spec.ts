@@ -28,6 +28,14 @@ test.beforeAll(async () => {
     const conditions = url.searchParams.get('conditions') ?? '';
     if (req.method !== 'GET') { res.statusCode = 405; res.end('{"code":"MethodNotAllowed","message":"The stand-in is read-only."}'); return; }
     if (path.endsWith('/service/tickets/count')) { res.end(JSON.stringify({ count: conditions.includes('closedFlag=false') ? 5 : 7 })); return; }
+    // One ticket, as ConnectWise answers a read: references expanded to {id, name}.
+    const ticket = {
+      id: 501, summary: 'Printer offline', initialDescription: 'The front desk printer will not print.',
+      status: { id: 10, name: 'New' }, priority: { id: 3, name: 'Priority 1 - High' },
+      board: { id: 1, name: 'Service Desk' }, company: { id: 1, name: 'Acme Corp' }, lastUpdated: '2026-10-01T09:00:00Z',
+    };
+    if (path.endsWith('/service/tickets')) { res.end(JSON.stringify((url.searchParams.get('page') ?? '1') === '1' ? [ticket] : [])); return; }
+    if (path.endsWith('/service/tickets/501')) { res.end(JSON.stringify(ticket)); return; }
     if (path.endsWith('/service/boards')) { res.end('[{"id":1,"name":"Service Desk"},{"id":2,"name":"Projects"}]'); return; }
     if (/\/service\/boards\/\d+\/statuses$/.test(path)) { res.end('[{"id":10,"name":"New"},{"id":11,"name":"Closed","closedStatus":true}]'); return; }
     if (path.endsWith('/service/priorities')) { res.end('[{"id":3,"name":"Priority 1 - High"}]'); return; }
@@ -158,12 +166,13 @@ test('a connection is added a step at a time against a PSA and is switched on on
   const stamp = Date.now().toString().slice(-7);
   const name = `E2E wizard ${stamp}`;
   asked.length = 0;
+  const ticketsBefore = (await (await page.request.get('/api/bff/api/tickets')).json() as unknown[]).length;
   const wizard = await saveInSetup(page, name, standInBase, `wiz${stamp}`);
 
-  // 4. The test, line by line. The stand-in holds no tickets, so notes and time are not tried.
+  // 4. The test, line by line. Notes are tried on the ticket it read; a write is never tried.
   await expect(wizard.getByText('Nothing was changed in the PSA.')).toBeVisible({ timeout: 90_000 });
   await expect(wizard.locator('li', { hasText: 'Authentication' }).getByText('Pass', { exact: true })).toBeVisible();
-  await expect(wizard.locator('li', { hasText: 'Read ticket notes' }).getByText('Not tried', { exact: true })).toBeVisible();
+  await expect(wizard.locator('li', { hasText: 'Read ticket notes' }).getByText('Pass', { exact: true })).toBeVisible();
   await expect(wizard.locator('li', { hasText: 'Update tickets and add notes' }).getByText('Not tried', { exact: true })).toBeVisible();
   const saved = (await (await page.request.get('/api/bff/api/admin/connections')).json() as { id: string; name: string; isEnabled: boolean; state: number }[])
     .find((c) => c.name === name)!;
@@ -178,6 +187,10 @@ test('a connection is added a step at a time against a PSA and is switched on on
   // 6. What its values become. Nothing maps them yet, and that is said rather than guessed.
   await expect(wizard.getByText('Not mapped').first()).toBeVisible();
   await expect(wizard.getByText(/no mapping\. Nothing is guessed/)).toBeVisible();
+  // A real ticket from the PSA, with what the rules would make of it: read, mapped, not kept.
+  const sampled = wizard.locator('tr', { hasText: 'Printer offline' });
+  await expect(sampled).toContainText('New');
+  await expect(sampled.getByText('Not mapped').first()).toBeVisible();
   await wizard.getByRole('button', { name: 'Next' }).click();
 
   // 7. What to bring in, chosen from the PSA's own list.
@@ -203,6 +216,37 @@ test('a connection is added a step at a time against a PSA and is switched on on
   await expect(card.getByText('Connected', { exact: true })).toBeVisible();
   await expect(card.getByText('Switched on.')).toBeVisible();
   await expect(card.getByRole('button', { name: 'Sync now' })).toBeEnabled();
+
+  // Mapping health, before anything has been imported: the statuses the PSA lists, none of them
+  // mapped, and a ticket read from the PSA to show what the rules make of it.
+  //
+  // Nothing is synced here on purpose. In local mode the first sync that brings tickets in links
+  // the demo sign-in to a client so the client pages have something to show, and every test after
+  // this one would then be run as that client's user. What "apply" does to imported tickets is
+  // held by MappingHealthTests and, through a SQL translator, by RelationalQueryTests.
+  await card.getByRole('button', { name: 'Mapping', exact: true }).click();
+  await expect(card.getByText('Mapping health')).toBeVisible();
+  await expect(card.getByText('Blocking', { exact: true })).toBeVisible();
+  const statusRow = card.locator('table', { hasText: 'Statuses' }).locator('tr', { hasText: 'New' }).first();
+  await expect(statusRow.getByText('Not mapped')).toBeVisible();
+  const sampleRow = card.locator('table', { hasText: 'Ticket' }).locator('tr', { hasText: 'Printer offline' });
+  await expect(sampleRow.getByText('Not mapped').first()).toBeVisible();
+  await expect(card.getByText('read from the PSA just now and not kept')).toBeVisible();
+
+  // Mapped, the report and the sample both say so the next time they are asked.
+  const rule = await page.request.post('/api/bff/api/admin/mappings', {
+    data: {
+      provider: 1, scope: 2, psaConnectionId: saved.id, portalField: 'status', portalValue: 'NEW',
+      externalField: 'status', externalValue: 'New', direction: 3, isRequired: false, fallbackValue: null,
+    },
+  });
+  expect(rule.ok()).toBeTruthy();
+  await card.getByRole('button', { name: 'Check again' }).click();
+  await expect(statusRow.getByText('Not mapped')).toHaveCount(0);
+  await expect(statusRow).toContainText('NEW');
+  await expect(card.getByText('Blocking', { exact: true })).toHaveCount(0);
+  await expect(sampleRow).toContainText('NEW');
+  expect((await (await page.request.get('/api/bff/api/tickets')).json() as unknown[]).length, 'the sample was not kept').toBe(ticketsBefore);
 
   // In all of that, nothing was written to the PSA.
   expect(asked.filter((r) => r.method !== 'GET')).toEqual([]);
