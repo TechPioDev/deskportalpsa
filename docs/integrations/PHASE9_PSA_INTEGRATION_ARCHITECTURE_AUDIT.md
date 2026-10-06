@@ -500,7 +500,8 @@ which affects people today, and the security finding, and can be deployed on its
 | 2b. Provider calls | **Built**, stacked on 2a | 35 more tests; 1,456 pass in both time-zone modes. See [provider-calls.md](provider-calls.md). D8 and D4 were confirmed by reading and are covered by tests of the new behaviour; the two fake PSA servers were corrected where they hid the defects (the ConnectWise fake returned every note whatever page was asked for and had no time entries at all; the Autotask fake kept a created time entry without the id it answered with) |
 | 3a. Connection lifecycle | **Built**, stacked on 2b | 37 more tests; 1,493 pass in both time-zone modes, and 2 more browser tests (72 pass in Chromium). The new connection queries also run through a SQL translator in every state, and the migration was applied to a PostgreSQL 17 database from the generated script. See [connections.md](connections.md). S4 and S5 are closed, and the first half of T5 (the same PSA account connected twice). Driven in a browser against a stand-in PSA: a connection whose keys are rejected stays in setup with the reason, corrected keys switch it on, and pause, resume, disable, enable, archive and restore each do what the screen says. One migration, additive (five columns on `psa_connections`) |
 | 3b. Add-connection wizard | **Built**, stacked on 3a | 13 more tests; 1,506 pass in both time-zone modes, and 73 browser tests pass in Chromium. Three of them drive the wizard: one checks the catalog and each PSA's own fields, one runs against a closed port (the connection stays in setup and the API refuses to switch it on), one from the first step to the last against a stand-in ConnectWise started inside the test, with the real connector making real HTTP calls. In that run the count carries the board that was ticked and not one request other than a GET reaches the PSA. S6 is closed. No migration |
-| 3c, 4 to 7 | Not started. 3c is the keys that still ignore the connection (T3, the rest of T5, T6). A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
+| 3c. What belongs to a connection | **Built**, stacked on 3b | 10 more tests; 1,516 pass in both time-zone modes, and the 73 browser tests pass in Chromium. T3, the rest of T5 and T6 are closed. For T3 each place a person is counted (team table, daily hours, satisfaction, ticket list and its filter, client workload, portal coverage) has a test asserted from what the service returns, and five of the six that the old code can compile fail against it. The pinned query budgets are unchanged. No migration |
+| 4 to 7 | Not started. A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -566,6 +567,14 @@ What slice 3b changes for people:
   switched on, and is told why in words.
 - The portal no longer says a PSA supports webhooks, or ConnectWise custom fields, when the
   connector does not use them yet.
+
+What slice 3c changes for people (nothing today; it matters from the second account of one PSA):
+
+- Two technicians who have the same id in two PSA accounts are two people in every table, total and
+  filter. They were one.
+- Two connections cannot be given the same name.
+- With two accounts of the same PSA, a ticket is referred to by its connection ("Customer A
+  12345"). With one, it reads "Autotask 12345" as before.
 
 Two decisions taken while building it, recorded because they differ from the first plan:
 
