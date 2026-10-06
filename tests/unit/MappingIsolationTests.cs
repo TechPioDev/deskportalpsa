@@ -179,13 +179,16 @@ public class MappingIsolationTests
     public async Task A_rule_cannot_be_saved_against_another_organizations_connection()
     {
         var dbName = Guid.NewGuid().ToString();
-        await using (var seed = TestDbContextFactory.ForPlatform(dbName))
+        await using (var seed = AdminHarness.Platform(dbName))
         {
             seed.PsaConnections.AddRange(Connection(ConnA, OrgA, "A"), Connection(ConnB, OrgB, "B"));
             await seed.SaveChangesAsync();
         }
         var (service, h) = AdminFor(OrgA, dbName);
         await using var _ = h.Db;
+        // Both connections are in the one store; this caller can see only its own.
+        (await h.Db.PsaConnections.IgnoreQueryFilters().CountAsync()).Should().Be(2);
+        (await h.Db.PsaConnections.Select(c => c.Id).ToListAsync()).Should().Equal(ConnA);
 
         var act = () => service.UpsertAsync(Input(MappingScope.ConnectionOverride, ConnB), "forged");
 
