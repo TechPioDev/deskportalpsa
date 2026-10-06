@@ -127,8 +127,12 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             if (string.IsNullOrWhiteSpace(input.GetValueOrDefault("summaryNotes")?.ToString()))
                 return Resp(HttpStatusCode.InternalServerError,
                     "{\"errors\":[\"TimeEntry.summaryNotes can not be blank.\"]}");
+            // Stored under the id it answers with, as the real API does. It used to hand back an id
+            // and keep the entry without one, so an entry read back could not be told from another.
+            var entryId = ++_seq;
+            input["id"] = entryId;
             TimeEntries.Add(input);
-            return Json($"{{\"itemId\":{++_seq}}}");
+            return Json($"{{\"itemId\":{entryId}}}");
         }
         // The real API serves time entries back; this fake only ever accepted them. Without this a
         // ticket's time could be written and never read, so nothing exercised the per-ticket name

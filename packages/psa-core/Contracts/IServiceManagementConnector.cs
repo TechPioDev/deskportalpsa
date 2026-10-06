@@ -104,6 +104,21 @@ public interface IServiceManagementConnector
     Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default);
 
     // Webhooks
+    /// <summary>
+    /// The PSA's id for a time entry that an earlier, unanswered <see cref="AddTimeEntryAsync"/> of
+    /// this same request already created on the ticket, or null when there is none.
+    ///
+    /// A push whose answer was lost may have been carried out. Sent again blind it is a second
+    /// entry, and the customer is billed the hour twice. Only the connector can say whether it is
+    /// there: it knows what it would have sent - which technician stands in when none is named,
+    /// what it writes for empty notes, how it dates an entry.
+    /// </summary>
+    /// <param name="since">When the portal first tried. Nothing created before it can be this entry.</param>
+    /// <param name="alreadyLinked">Entries on the ticket that already belong to another portal entry.</param>
+    /// <remarks>The default is "cannot tell": a connector that has not implemented this is retried as before.</remarks>
+    Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
+        IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default) => Task.FromResult<string?>(null);
+
     Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default);
     Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default);
 }
