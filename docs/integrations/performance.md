@@ -182,6 +182,10 @@ Also not changed:
 - Sync runs are kept for ever: 288 a day for each connection at the default five minutes. Reading
   them is indexed and took 4 to 5 ms with a year of them behind it, so this is a matter of disk
   and not of speed. There is no retention yet.
+- Sync events are kept for ever too, one for each ticket change a sync brings in (R9 in the
+  [audit](PHASE9_PSA_INTEGRATION_ARCHITECTURE_AUDIT.md)). The benchmark's database held only the
+  few thousand its own syncs wrote, so a table of millions of them was not measured. Each is
+  looked up by its connection and key, which is indexed.
 - Applying a mapping loads each ticket it rewrites, description and all, 500 at a time. That is
   bounded, and slower than one UPDATE would be. Nothing in the portal updates rows in bulk,
   because that passes by the checks every save makes (the tenant, the time stamp).
