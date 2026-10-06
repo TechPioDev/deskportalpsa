@@ -34,6 +34,12 @@ public sealed class AttentionService(
     /// <summary>Two-way connections poll every five minutes; an hour without a completed run is a stall, not a quiet period.</summary>
     public static readonly TimeSpan StaleSyncAfter = TimeSpan.FromHours(1);
 
+    /// <summary>
+    /// How long a sync someone asked for may wait before it is worth saying. The worker takes a
+    /// request within seconds, so ten minutes of nothing is a worker that is not running.
+    /// </summary>
+    public static readonly TimeSpan SyncRequestWaitingAfter = TimeSpan.FromMinutes(10);
+
     /// <summary>A report that failed to send stops being news after this long.</summary>
     public static readonly TimeSpan UndeliveredReportWindow = TimeSpan.FromDays(14);
 
@@ -51,13 +57,38 @@ public sealed class AttentionService(
             .Select(c => new
             {
                 c.Id, c.Name, c.Provider, c.Status, c.TwoWaySync, c.LastSuccessfulSyncAt, c.LastError,
-                c.IsEnabled, c.InSetup, c.ArchivedAt, c.SyncPausedAt, c.LastErrorKind,
+                c.IsEnabled, c.InSetup, c.ArchivedAt, c.SyncPausedAt, c.LastErrorKind, c.SyncRequestedAt,
             })
             .ToListAsync(ct);
+
+        // Syncs asked for long enough ago to wonder about, and whether anything has run for them
+        // since. A long first import keeps its request standing while it works through it: that
+        // is a sync being run, not one being ignored.
+        var waiting = connections
+            .Where(c => c.ArchivedAt is null && c.SyncPausedAt is null && c.SyncRequestedAt is { } at && now - at > SyncRequestWaitingAfter)
+            .Select(c => c.Id)
+            .ToList();
+        var lastRun = waiting.Count == 0
+            ? []
+            : (await db.SyncRuns.AsNoTracking()
+                    .Where(r => waiting.Contains(r.PsaConnectionId))
+                    .GroupBy(r => r.PsaConnectionId)
+                    .Select(g => new { g.Key, Last = g.Max(r => r.StartedAt) })
+                    .ToListAsync(ct))
+                .ToDictionary(x => x.Key, x => x.Last);
+
         foreach (var c in connections)
         {
             // Put away. It is meant to be silent.
             if (c.ArchivedAt is not null) continue;
+
+            if (waiting.Contains(c.Id) && !(lastRun.TryGetValue(c.Id, out var started) && started >= c.SyncRequestedAt))
+                items.Add(new AttentionItem(
+                    "sync-request-waiting", "warning",
+                    $"A sync asked for on \"{c.Name}\" has not started after {Age(now - c.SyncRequestedAt!.Value)}",
+                    "The worker that runs syncs has not taken it. Nothing is lost: it starts when the worker is running again. " +
+                    "If this does not clear, the worker needs looking at.",
+                    1, "/dashboard/connections"));
 
             // Never been live. Nothing is broken, so it is not reported as broken - a failed first
             // test used to read "connection is failed, critical". A connection someone started and

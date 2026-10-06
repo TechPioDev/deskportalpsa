@@ -29,7 +29,9 @@ public sealed record ConnectionSummary(
     IReadOnlyList<string>? StoredCredentialKeys = null,
     // Where the connection stands, as one word. Null only from a caller that did not work it out.
     ConnectionState? State = null,
-    DateTimeOffset? SyncPausedAt = null);
+    DateTimeOffset? SyncPausedAt = null,
+    // A sync someone asked for that the worker has not finished: the card says so, and follows it.
+    DateTimeOffset? SyncRequestedAt = null);
 
 /// <summary>A PSA that can be connected, or one that is planned. Nothing is behind a planned one: it cannot be chosen.</summary>
 /// <param name="Available">A connector exists for it.</param>

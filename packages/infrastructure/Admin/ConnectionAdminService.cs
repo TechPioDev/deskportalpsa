@@ -39,7 +39,7 @@ public sealed partial class ConnectionAdminService(
             {
                 c.Id, c.Name, c.Provider, c.ApiEndpoint, c.TenantIdentifier,
                 c.Status, c.IsEnabled, c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt,
-                c.InSetup, c.SyncPausedAt, c.ArchivedAt, c.LastErrorKind,
+                c.InSetup, c.SyncPausedAt, c.ArchivedAt, c.LastErrorKind, c.SyncRequestedAt,
                 c.LogoUrl,
                 // The ref itself still never leaves this method — it is resolved to key NAMES below.
                 c.CredentialSecretRef,
@@ -78,7 +78,7 @@ public sealed partial class ConnectionAdminService(
                 StoredCredentialKeys: await StoredCredentialKeysAsync(c.CredentialSecretRef, ct),
                 State: ConnectionStates.Of(c.InSetup, c.IsEnabled, c.ArchivedAt, c.SyncPausedAt, c.LastErrorKind,
                     c.Status, c.LastSuccessfulSyncAt, running.Contains(c.Id)),
-                SyncPausedAt: c.SyncPausedAt));
+                SyncPausedAt: c.SyncPausedAt, SyncRequestedAt: c.SyncRequestedAt));
         }
         return result;
     }
@@ -213,6 +213,9 @@ public sealed partial class ConnectionAdminService(
         if (connection.SyncPausedAt is null)
         {
             connection.SyncPausedAt = clock.GetUtcNow();
+            // A sync asked for and not yet run is withdrawn: paused means nothing is read, and a
+            // request left standing would start by itself the moment sync was resumed.
+            WithdrawSyncRequest(connection);
             await db.SaveChangesAsync(ct);
             await audit.WriteAsync("connection.sync.paused", "PsaConnection", connectionId.ToString(), new { connection.Name }, ct);
         }
@@ -240,6 +243,7 @@ public sealed partial class ConnectionAdminService(
         // it is not the same as setting it up again.
         connection.ArchivedAt = clock.GetUtcNow();
         connection.IsEnabled = false;
+        WithdrawSyncRequest(connection);
         // As with any connection switched off: whatever its health was, it is not that any more.
         connection.Status = ConnectionStatus.Disabled;
         await db.SaveChangesAsync(ct);
@@ -514,10 +518,13 @@ public sealed partial class ConnectionAdminService(
         return new StoredLogo(bytes, contentType);
     }
 
+    private static void WithdrawSyncRequest(PsaConnection connection)
+        => (connection.SyncRequestedAt, connection.SyncRequestedFull, connection.SyncRequestedBy) = (null, false, null);
+
     private static ConnectionSummary Summarise(PsaConnection c, bool running = false) => new(
         c.Id, c.Name, c.Provider, c.ApiEndpoint, c.TenantIdentifier, c.Status, c.IsEnabled,
         c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt, LogoUrl: c.LogoUrl,
-        State: ConnectionStates.Of(c, running), SyncPausedAt: c.SyncPausedAt);
+        State: ConnectionStates.Of(c, running), SyncPausedAt: c.SyncPausedAt, SyncRequestedAt: c.SyncRequestedAt);
 
     public static string? NormaliseLogoUrl(string? value)
     {

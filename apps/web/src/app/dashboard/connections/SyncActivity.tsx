@@ -41,8 +41,8 @@ export function SyncActivity({ connectionId }: { connectionId: string }) {
     queryKey: ['connection-sync-state', connectionId],
     queryFn: () => api.connectionSyncState(connectionId),
     retry: false,
-    // While a run is going the numbers are moving; otherwise there is nothing to watch.
-    refetchInterval: (q) => (q.state.data?.running ? 5000 : false),
+    // While a run is going, or one has been asked for, the numbers are moving; otherwise there is nothing to watch.
+    refetchInterval: (q) => (q.state.data?.running || q.state.data?.requestedAt ? 5000 : false),
   });
   const failures = useQuery({
     queryKey: ['connection-sync-failures', connectionId],
@@ -82,6 +82,12 @@ export function SyncActivity({ connectionId }: { connectionId: string }) {
               ? <span>Everything changed in the PSA before <strong className="font-semibold">{when(s.watermark)}</strong> has been read.</span>
               : <span>Nothing has been read from the PSA yet.</span>}
           </li>
+          {s.requestedAt && !s.running && (
+            <li className="flex items-center gap-2 text-sky-600 dark:text-sky-400">
+              <Clock size={14} className="shrink-0" aria-hidden="true" />
+              {s.requestedFull ? 'A re-sync of everything' : 'A sync'} was asked for {when(s.requestedAt)} and is waiting to start.
+            </li>
+          )}
           {s.running && (
             <li className="flex items-center gap-2 text-sky-600 dark:text-sky-400">
               <RefreshCw size={14} className="shrink-0 animate-spin" aria-hidden="true" /> A sync is running now.

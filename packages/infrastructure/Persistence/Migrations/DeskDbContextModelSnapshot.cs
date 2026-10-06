@@ -1931,6 +1931,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<string>("LastError")
                         .HasColumnType("text");
 
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("MaxAttempts")
                         .HasColumnType("integer");
 
@@ -1949,6 +1952,12 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
 
                     b.HasKey("Id");
 
@@ -2580,6 +2589,18 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("SyncPausedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("SyncRequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SyncRequestedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("SyncRequestedFull")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("TenantIdentifier")
                         .HasColumnType("text");

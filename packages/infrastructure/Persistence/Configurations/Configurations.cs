@@ -42,6 +42,9 @@ public sealed class PsaConnectionConfig : IEntityTypeConfiguration<PsaConnection
         // A database default, so a row written by the previous version of the code - which does
         // not know the column - is a connection that is not in setup, as every one of its were.
         b.Property(x => x.InSetup).HasDefaultValue(false);
+        // The same, for the same reason: the previous version writes a connection nobody has asked to sync.
+        b.Property(x => x.SyncRequestedFull).HasDefaultValue(false);
+        b.Property(x => x.SyncRequestedBy).HasMaxLength(200);
         b.HasIndex(x => x.MspOrganizationId);
         b.HasOne<MspOrganization>().WithMany(o => o.PsaConnections)
             .HasForeignKey(x => x.MspOrganizationId).OnDelete(DeleteBehavior.Cascade);
@@ -845,6 +848,9 @@ public sealed class BackgroundJobConfig : IEntityTypeConfiguration<BackgroundJob
         b.HasKey(x => x.Id);
         b.Property(x => x.JobType).HasMaxLength(100).IsRequired();
         b.Property(x => x.PayloadJson).IsRequired();
+        // A database default, so a job queued by the previous version of the code - which does
+        // not know the column - starts at zero like any other.
+        b.Property(x => x.Version).IsConcurrencyToken().HasDefaultValue(0);
         b.HasIndex(x => new { x.Status, x.NextAttemptAt });
     }
 }

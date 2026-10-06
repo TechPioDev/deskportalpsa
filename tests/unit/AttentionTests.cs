@@ -116,6 +116,40 @@ public class AttentionTests
     }
 
     [Fact]
+    public async Task A_sync_asked_for_that_nothing_has_taken_is_said_and_one_being_run_is_not()
+    {
+        // The worker takes a request within seconds. Ten minutes of nothing is a worker that is
+        // not running - and nothing else would say so: the connection still reads "healthy".
+        var (svc, h, _) = await BuildAsync();
+        var c = Connection(h, syncedAgo: TimeSpan.FromMinutes(5));
+        c.SyncRequestedAt = h.Clock.GetUtcNow();
+        h.Db.PsaConnections.Add(c);
+        await h.Db.SaveChangesAsync();
+
+        h.Clock.Advance(TimeSpan.FromMinutes(9));
+        (await svc.ListAsync()).Items.Should().BeEmpty("nine minutes is a queue, not a fault");
+
+        h.Clock.Advance(TimeSpan.FromMinutes(3));
+        var item = (await svc.ListAsync()).Items.Should().ContainSingle().Subject;
+        (item.Kind, item.Severity).Should().Be(("sync-request-waiting", "warning"));
+        item.Title.Should().Contain("has not started after 12 minutes");
+
+        // A run began after it was asked for: a long first import, working through it. Not a fault.
+        h.Db.SyncRuns.Add(new Desk.Domain.Sync.SyncRun
+        {
+            MspOrganizationId = Org, PsaConnectionId = c.Id, Trigger = Desk.Domain.Sync.SyncRunTrigger.ManualFull, Status = Desk.Domain.Sync.SyncRunStatus.Partial,
+            StartedAt = h.Clock.GetUtcNow().AddMinutes(-11), FinishedAt = h.Clock.GetUtcNow().AddMinutes(-2), LeaseExpiresAt = h.Clock.GetUtcNow(),
+        });
+        await h.Db.SaveChangesAsync();
+        (await svc.ListAsync()).Items.Should().BeEmpty();
+
+        // An earlier run, from before it was asked for, says nothing for this request.
+        (await h.Db.SyncRuns.SingleAsync()).StartedAt = c.SyncRequestedAt.Value.AddHours(-1);
+        await h.Db.SaveChangesAsync();
+        (await svc.ListAsync()).Items.Should().ContainSingle().Which.Kind.Should().Be("sync-request-waiting");
+    }
+
+    [Fact]
     public async Task A_paused_connection_is_reported_as_paused_and_only_once_it_has_been_a_while()
     {
         var (svc, h, _) = await BuildAsync();
