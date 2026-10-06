@@ -155,6 +155,26 @@ public class ClientPortalTests
     }
 
     [Fact]
+    public async Task What_the_PSA_files_a_ticket_under_reaches_staff_and_not_the_client()
+    {
+        // How the desk files its work in its own PSA is the desk's working. The client sees their
+        // ticket; they are not shown the desk's taxonomy for it.
+        var dbName = Guid.NewGuid().ToString();
+        await using var db = await SeedAsync(dbName);
+        var filed = Ticket(CompanyA, RegularUser, "filed");
+        (filed.PsaTicketType, filed.PsaIssueType, filed.PsaSubIssueType) = ("Hardware", "Printer", null);
+        var bare = Ticket(CompanyA, RegularUser, "bare");
+        db.Tickets.AddRange(filed, bare);
+        await db.SaveChangesAsync();
+        var reads = new TicketReadService(db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: Guid.NewGuid()));
+
+        (await reads.GetDetailForStaffAsync(filed.Id))!.Classification.Should().Be(new TicketClassificationDto("Hardware", "Printer", null));
+        (await reads.GetDetailForStaffAsync(bare.Id))!.Classification.Should().BeNull("filed under nothing, there is nothing to show");
+        (await reads.GetDetailAsync(Access(CompanyA, RegularUser, false), filed.Id))!.Classification.Should().BeNull();
+        (await reads.GetDetailAsync(Access(CompanyA, AdminUser, true), filed.Id))!.Classification.Should().BeNull("their administrator is still the client");
+    }
+
+    [Fact]
     public async Task An_attachment_whose_note_is_gone_is_withheld_from_the_client()
     {
         // Fail closed. A dangling note id cannot be shown to be public, and "cannot prove it is

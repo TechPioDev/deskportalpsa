@@ -981,6 +981,9 @@ public sealed class ConnectWiseConnector(
             detail is null ? $"ConnectWise rejected the request ({(int)resp.StatusCode})." : $"ConnectWise rejected the request: {detail}"),
     };
 
+    /// <summary>A reference's name, or nothing: ConnectWise sends an empty name for a level that is not set.</summary>
+    private static string? Name(CwRef? reference) => string.IsNullOrWhiteSpace(reference?.Name) ? null : reference.Name.Trim();
+
     private UnifiedTicket ToUnified(CwTicket t) => new()
     {
         ExternalId = t.Id.ToString(),
@@ -989,6 +992,10 @@ public sealed class ConnectWiseConnector(
         Status = t.Status?.Name,
         Priority = t.Priority?.Name,
         Category = t.Type?.Name,
+        // The type again, with the two levels under it, as the three a ticket is created with.
+        TicketType = Name(t.Type),
+        IssueType = Name(t.SubType),
+        SubIssueType = Name(t.Item),
         QueueOrBoard = t.Board?.Name,          // Service Board → portal Queue
         QueueOrBoardId = t.Board is { Id: > 0 } board ? board.Id.ToString() : null,
         AssignedTechnicianExternalId = t.Owner?.Id.ToString(),

@@ -147,6 +147,11 @@ export const TicketDetailSchema = z.object({
   assignedAppUserId: z.string().nullable().default(null),
   // Who resolved it in the portal: the person productivity credits it to. Staff only.
   resolvedByName: z.string().nullable().default(null),
+  // What the PSA files the ticket under, in its own three levels and its own words. Staff only,
+  // and null when it has none (or from an older API).
+  classification: z.object({
+    ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+  }).nullable().default(null),
   assignedAppUserName: z.string().nullable().default(null),
   externalTicketUrl: z.string().nullable().default(null),
   contactName: z.string().nullable().default(null),

@@ -226,6 +226,9 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         b.Property(x => x.Title).HasMaxLength(500).IsRequired();
         b.Property(x => x.RequesterName).HasMaxLength(200).IsRequired();
         b.Property(x => x.RequesterEmail).HasMaxLength(320).IsRequired();
+        b.Property(x => x.PsaTicketType).HasMaxLength(200);
+        b.Property(x => x.PsaIssueType).HasMaxLength(200);
+        b.Property(x => x.PsaSubIssueType).HasMaxLength(200);
         b.Property(x => x.TimeWorkedHours).HasPrecision(10, 2);
         b.Property(x => x.BillableHours).HasPrecision(10, 2);
         b.Property(x => x.NonBillableHours).HasPrecision(10, 2);

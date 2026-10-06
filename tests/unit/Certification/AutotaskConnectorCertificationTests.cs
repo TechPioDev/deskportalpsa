@@ -53,6 +53,35 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
     }
 
     [Fact]
+    public async Task What_a_ticket_is_filed_under_is_read_in_Autotasks_own_words()
+    {
+        // Autotask holds a ticket's type, issue and sub-issue as ids, like its status. They were
+        // not read at all: the portal knew a ticket's category and nothing under it.
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        async Task<string> RaiseAsync(string key) => (await c.CreateTicketAsync(
+            new UnifiedTicketCreateRequest { Title = key, ExternalCompanyId = SeededOrganizationId, IdempotencyKey = key })).ExternalId!;
+        var filed = await RaiseAsync("filed");
+        var other = await RaiseAsync("other");
+        var unlisted = await RaiseAsync("unlisted");
+        var bare = await RaiseAsync("bare");
+        server.FileTicketUnder(long.Parse(filed), "2", "10", "100");
+        // The same word under another issue: its own id, and still the word.
+        server.FileTicketUnder(long.Parse(other), "1", "11", "103");
+        // A value retired from the list since the ticket was filed. The id is all there is to show.
+        server.FileTicketUnder(long.Parse(unlisted), "2", "77", null);
+
+        var page = (await c.GetTicketsAsync(new TicketFilter())).Items.ToDictionary(t => t.ExternalId);
+
+        (page[filed].TicketType, page[filed].IssueType, page[filed].SubIssueType).Should().Be(("Incident", "Hardware", "Printer"));
+        (page[other].TicketType, page[other].IssueType, page[other].SubIssueType).Should().Be(("Service Request", "Software", "Other"));
+        (page[unlisted].TicketType, page[unlisted].IssueType, page[unlisted].SubIssueType).Should().Be(("Incident", "77", null));
+        (page[bare].TicketType, page[bare].IssueType, page[bare].SubIssueType).Should().Be((null, null, null), "filed under nothing is nothing, not a guess");
+        var one = await c.GetTicketAsync(filed);
+        (one!.TicketType, one.IssueType, one.SubIssueType).Should().Be(("Incident", "Hardware", "Printer"), "one ticket read by itself says the same");
+    }
+
+    [Fact]
     public async Task A_clients_configuration_items_arrive_as_named_typed_devices()
     {
         var c = Build(new FakeAutotaskServer(Clock));
@@ -116,6 +145,10 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
     }
 
     protected override string SeededOrganizationId => "1";
+
+    // Autotask holds a type, an issue and a sub-issue as ids, and refuses words for them as it does for a status.
+    protected override (string TicketType, string IssueType, string SubIssueType) RaisedUnder => ("2", "10", "100");
+    protected override (string TicketType, string IssueType, string SubIssueType) ReadAs => ("Incident", "Hardware", "Printer");
 
     /// <summary>
     /// The live failure this pins: changing a ticket's status from the portal sent the LABEL

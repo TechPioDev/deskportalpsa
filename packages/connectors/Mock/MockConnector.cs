@@ -123,6 +123,7 @@ public sealed class MockConnector : IServiceManagementConnector
             ExternalId = id, Title = ticket.Title, Description = ticket.Description,
             Status = ticket.Status ?? "New", Priority = ticket.Priority ?? "Medium",
             Category = ticket.Category, QueueOrBoard = ticket.QueueOrBoard,
+            TicketType = ticket.TicketType, IssueType = ticket.IssueType, SubIssueType = ticket.SubIssueType,
             RequesterEmail = ticket.RequesterEmail, CreatedAt = now, ModifiedAt = now,
         };
         _idempotency[ticket.IdempotencyKey] = id;

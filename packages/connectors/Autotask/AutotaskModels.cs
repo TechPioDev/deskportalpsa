@@ -107,6 +107,10 @@ internal sealed class AtTicket
     [JsonPropertyName("priority")] [JsonConverter(typeof(FlexibleStringConverter))] public string? Priority { get; set; }
     [JsonPropertyName("queueID")] [JsonConverter(typeof(FlexibleStringConverter))] public string? QueueId { get; set; }
     [JsonPropertyName("ticketCategory")] [JsonConverter(typeof(FlexibleStringConverter))] public string? Category { get; set; }
+    // Three more picklists: what kind of ticket it is, and the issue and sub-issue it was filed under.
+    [JsonPropertyName("ticketType")] [JsonConverter(typeof(FlexibleStringConverter))] public string? TicketType { get; set; }
+    [JsonPropertyName("issueType")] [JsonConverter(typeof(FlexibleStringConverter))] public string? IssueType { get; set; }
+    [JsonPropertyName("subIssueType")] [JsonConverter(typeof(FlexibleStringConverter))] public string? SubIssueType { get; set; }
     [JsonPropertyName("companyID")] public long CompanyId { get; set; }
     // The customer contact the ticket is for; only the id rides on the ticket.
     [JsonPropertyName("contactID")] public long? ContactId { get; set; }

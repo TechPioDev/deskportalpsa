@@ -39,7 +39,8 @@ public static class UpdateHasher
         string? status, string? priority, string? category, string? title, string? description,
         DateTimeOffset? resolvedAt, DateTimeOffset? closedAt, DateTimeOffset? slaDueAt,
         DateTimeOffset? psaCreatedAt = null, string? queueOrBoard = null,
-        string? contactName = null, string? contactEmail = null, string? deviceExternalId = null)
+        string? contactName = null, string? contactEmail = null, string? deviceExternalId = null,
+        string? ticketType = null, string? issueType = null, string? subIssueType = null)
     {
         var fields = new Dictionary<string, string?>
         {
@@ -72,6 +73,12 @@ public static class UpdateHasher
         // would change at once and the next sync would rewrite the whole import for nothing; this way
         // only the tickets that carry a device are re-read - which is exactly the backfill wanted.
         if (!string.IsNullOrEmpty(deviceExternalId)) fields["deviceExternalId"] = deviceExternalId;
+        // The PSA's own classification, on the same terms: each level joins only where the ticket
+        // has one. A ticket filed under nothing keeps the hash it had and is not rewritten; one
+        // that has a subtype is read once more, which is how the tickets already here get theirs.
+        if (!string.IsNullOrEmpty(ticketType)) fields["ticketType"] = ticketType;
+        if (!string.IsNullOrEmpty(issueType)) fields["issueType"] = issueType;
+        if (!string.IsNullOrEmpty(subIssueType)) fields["subIssueType"] = subIssueType;
         return Compute(fields);
     }
 }

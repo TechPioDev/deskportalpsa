@@ -65,6 +65,9 @@ internal sealed class CwTicket
     [JsonPropertyName("status")] public CwRef? Status { get; set; }
     [JsonPropertyName("priority")] public CwRef? Priority { get; set; }
     [JsonPropertyName("type")] public CwRef? Type { get; set; }
+    // The two levels under the type.
+    [JsonPropertyName("subType")] public CwRef? SubType { get; set; }
+    [JsonPropertyName("item")] public CwRef? Item { get; set; }
     [JsonPropertyName("company")] public CwRef? Company { get; set; }
     [JsonPropertyName("owner")] public CwRef? Owner { get; set; }
     // The customer contact the ticket is for. CW sends the name and address inline beside the ref.

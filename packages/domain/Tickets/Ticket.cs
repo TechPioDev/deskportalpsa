@@ -105,6 +105,16 @@ public class Ticket : TenantEntity
     public string? PortalSubcategory { get; set; }
     public string? PsaSubcategory { get; set; }
 
+    /// <summary>
+    /// The PSA's own classification, as it sent it: Autotask's ticket type, issue type and
+    /// sub-issue type; ConnectWise's type, subtype and item. Shown to staff under the PSA's names
+    /// for them. Not translated into anything, and not sent back: what a ticket is filed under is
+    /// changed in the PSA.
+    /// </summary>
+    public string? PsaTicketType { get; set; }
+    public string? PsaIssueType { get; set; }
+    public string? PsaSubIssueType { get; set; }
+
     public string? QueueOrBoard { get; set; }
     public string? AssignedTechnicianExternalId { get; set; }
 

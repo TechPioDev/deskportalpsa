@@ -51,6 +51,16 @@ public record UnifiedTicket
     public string? Priority { get; init; }
     public string? Category { get; init; }
     public string? Subcategory { get; init; }
+
+    /// <summary>
+    /// The PSA's own classification of the ticket, in its three levels and in its own words:
+    /// Autotask's ticket type, issue type and sub-issue type; ConnectWise's type, subtype and item.
+    /// The same three a ticket is created with (<see cref="UnifiedTicketCreateRequest"/>). Kept as the
+    /// PSA sent them: nothing here is translated, and null means the PSA gave none.
+    /// </summary>
+    public string? TicketType { get; init; }
+    public string? IssueType { get; init; }
+    public string? SubIssueType { get; init; }
     public string? QueueOrBoard { get; init; }
 
     /// <summary>

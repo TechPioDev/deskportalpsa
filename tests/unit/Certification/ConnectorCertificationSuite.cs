@@ -33,6 +33,15 @@ public abstract class ConnectorCertificationSuite
     /// <summary>The connector as it is built for a connection that has no webhook secret stored.</summary>
     protected abstract IServiceManagementConnector CreateConnectorWithoutWebhookSecret();
 
+    /// <summary>
+    /// A type, an issue and a sub-issue this PSA takes when a ticket is raised, as they are sent
+    /// to it. Words, unless the PSA holds them by id.
+    /// </summary>
+    protected virtual (string TicketType, string IssueType, string SubIssueType) RaisedUnder => ("Hardware", "Printer", "Toner");
+
+    /// <summary>The same three as a ticket read from the PSA carries them: always words.</summary>
+    protected virtual (string TicketType, string IssueType, string SubIssueType) ReadAs => RaisedUnder;
+
     protected static string Hmac(string body, string secret)
         => Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(body)));
 
@@ -223,6 +232,30 @@ public abstract class ConnectorCertificationSuite
     }
 
     // ---- incremental read ----
+
+    [Fact]
+    public async Task What_a_ticket_is_raised_under_is_what_is_read_back()
+    {
+        // A PSA files a ticket under three levels of its own. A connector that sends them and does
+        // not read them leaves the portal knowing less about a ticket than it told the PSA.
+        var c = CreateConnector();
+        var raised = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "Label printer jams", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "filed-1",
+            TicketType = RaisedUnder.TicketType, IssueType = RaisedUnder.IssueType, SubIssueType = RaisedUnder.SubIssueType,
+        });
+        var bare = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Unsorted", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "filed-2" });
+        raised.Success.Should().BeTrue();
+
+        var one = await c.GetTicketAsync(raised.ExternalId!);
+        var listed = (await c.GetTicketsAsync(new TicketFilter())).Items;
+
+        (one!.TicketType, one.IssueType, one.SubIssueType).Should().Be(ReadAs);
+        var inList = listed.Single(t => t.ExternalId == raised.ExternalId);
+        (inList.TicketType, inList.IssueType, inList.SubIssueType).Should().Be(ReadAs, "a ticket in a list says what the same ticket says by itself");
+        var unsorted = listed.Single(t => t.ExternalId == bare.ExternalId);
+        (unsorted.TicketType, unsorted.IssueType, unsorted.SubIssueType).Should().Be((null, null, null), "filed under nothing is nothing, not a guess");
+    }
 
     [Fact]
     public async Task A_count_is_the_number_the_same_filter_reads_or_an_honest_cannot_say()

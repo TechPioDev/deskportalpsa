@@ -25,6 +25,7 @@ import { ApprovalPanel } from '@/components/ApprovalPanel';
 import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
 import { TicketDevicePicker } from '@/components/TicketDevicePicker';
 import { api, ApiError, type AssigneeOptions } from '@/lib/api';
+import { psaLevels } from '@/lib/psaLevels';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 import { isStaffPermissions } from '@/lib/staff';
 
@@ -821,6 +822,12 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     not route by team is a question the desk never asked. */}
                 {ticket.assignedTeamName && <Meta label="Team" value={ticket.assignedTeamName} />}
                 <Meta label="Category" value={ticket.portalCategory ?? '—'} />
+                {/* What the PSA files it under, level by level, under the PSA's own names for the
+                    levels. Only the levels it has: a row of dashes on every ticket of a desk that
+                    does not use sub-issues would be a question nobody asked. */}
+                {psaLevels(isFromPsa ? Number(ticket.provider) : null, ticket.classification).map((level) => (
+                  <Meta key={level.label} label={level.label} value={level.value} />
+                ))}
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 {/* The device it is about, when the PSA or the portal knows one. Serial and warranty
                     reach staff only; a client sees the name and type. A technician can set or change

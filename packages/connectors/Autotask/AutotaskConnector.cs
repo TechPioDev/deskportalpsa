@@ -1174,6 +1174,10 @@ public sealed class AutotaskConnector(
         Status = await LabelForAsync("status", t.Status, ct),
         Priority = await LabelForAsync("priority", t.Priority, ct),
         Category = await LabelForAsync("ticketCategory", t.Category, ct),
+        // As words, like the rest: an id that names no value in the list stays as the id it was.
+        TicketType = await LabelForAsync("ticketType", t.TicketType, ct),
+        IssueType = await LabelForAsync("issueType", t.IssueType, ct),
+        SubIssueType = await LabelForAsync("subIssueType", t.SubIssueType, ct),
         QueueOrBoard = await LabelForAsync("queueID", t.QueueId, ct),
         QueueOrBoardId = string.IsNullOrWhiteSpace(t.QueueId) ? null : t.QueueId,
         AssignedTechnicianExternalId = t.AssignedResourceId,
