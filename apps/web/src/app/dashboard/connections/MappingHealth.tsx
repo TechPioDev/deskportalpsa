@@ -47,6 +47,11 @@ export function MappingHealth({ connectionId }: { connectionId: string }) {
     qc.invalidateQueries({ queryKey: ['connection-mapping-health', connectionId] });
     qc.invalidateQueries({ queryKey: ['connection-mapping-preview', connectionId] });
   };
+  // A login that is nobody: an API account, someone who left. Said here, it stops being listed.
+  const ignore = useMutation({
+    mutationFn: (v: { externalId: string; name: string | null }) => api.setPsaTechnicianIgnored(connectionId, v.externalId, true, v.name),
+    onSuccess: refresh,
+  });
   const apply = useMutation({
     mutationFn: () => api.applyConnectionMapping(connectionId),
     onSuccess: () => {
@@ -113,20 +118,29 @@ export function MappingHealth({ connectionId }: { connectionId: string }) {
             Technicians{' '}
             <span className="font-normal text-[var(--muted)]">
               {h.technicians.technicians === 0
-                ? 'none seen yet'
+                ? (h.technicians.ignored > 0 ? 'none left to link' : 'none seen yet')
                 : `${h.technicians.linked} of ${h.technicians.technicians} linked to a portal user`}
+              {h.technicians.ignored > 0 && ` · ${h.technicians.ignored} left alone`}
             </span>
           </summary>
           <p className="mt-1.5 text-xs text-[var(--muted)]">
             Linking is optional. An unlinked PSA login is shown under the PSA&apos;s own name; linked, its tickets and time count as that person&apos;s.
-            Links are made on a user&apos;s page, under PSA identity.
+            Links are made on a user&apos;s page, under PSA identity, or from Users, Import from PSA. A login that is nobody
+            (an API account, someone who left) can be left alone, and is then no longer listed here.
           </p>
+          {ignore.isError && <p role="alert" className="mt-1 text-xs text-rose-600 dark:text-rose-400">{message(ignore.error, 'That could not be done.')}</p>}
           {h.technicians.unlinked.length > 0 && (
             <ul className="mt-1.5 space-y-0.5 text-xs">
               {h.technicians.unlinked.map((p) => (
-                <li key={p.externalId} className="flex justify-between gap-3">
-                  <span>{p.name ?? `Login ${p.externalId}`} <span className="text-[var(--faint)]">({p.externalId})</span></span>
+                <li key={p.externalId} className="flex items-center justify-between gap-3">
+                  <span className="min-w-0 flex-1">{p.name ?? `Login ${p.externalId}`} <span className="text-[var(--faint)]">({p.externalId})</span></span>
                   <span className="tabular-nums text-[var(--muted)]">{p.tickets} {p.tickets === 1 ? 'ticket' : 'tickets'}</span>
+                  <button type="button" disabled={ignore.isPending}
+                    aria-label={`Leave ${p.name ?? p.externalId} alone`}
+                    onClick={() => ignore.mutate({ externalId: p.externalId, name: p.name })}
+                    className="rounded border border-[var(--border)] px-1.5 py-0.5 font-medium hover:bg-[var(--bg)] disabled:opacity-50">
+                    Ignore
+                  </button>
                 </li>
               ))}
             </ul>

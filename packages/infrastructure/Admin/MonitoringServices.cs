@@ -144,6 +144,8 @@ public sealed class UserAdminService(
                 row.ExternalTechnicianId = id;
                 row.ExternalTechnicianName = name;
             }
+            // Linked now, so no longer "nobody": an earlier decision to leave the login alone is taken back.
+            await PsaIdentityRules.StopIgnoringAsync(db, psaConnectionId, id, ct);
         }
 
         await db.SaveChangesAsync(ct);

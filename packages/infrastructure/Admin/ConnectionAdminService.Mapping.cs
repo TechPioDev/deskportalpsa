@@ -187,6 +187,17 @@ public sealed partial class ConnectionAdminService
             if (!account.IsAccount(connectionId, t.Value) && !known.ContainsKey(t.Value.Trim()))
                 known[t.Value.Trim()] = (t.Value.Trim(), t.Label, 0);
 
+        // Logins an administrator has said to leave alone are not "still to link". A linked login
+        // is linked whatever else was once said about it.
+        var ignored = (await db.PsaTechnicianIgnores.AsNoTracking()
+                .Where(i => i.PsaConnectionId == connectionId)
+                .Select(i => i.ExternalTechnicianId)
+                .ToListAsync(ct))
+            .Select(id => id.Trim())
+            .Where(id => known.ContainsKey(id) && !linked.Contains(id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in ignored) known.Remove(id);
+
         var isLinked = known.Values.Count(p => linked.Contains(p.Id));
         var unlinked = known.Values.Where(p => !linked.Contains(p.Id))
             .OrderByDescending(p => p.Tickets).ThenBy(p => p.Name ?? p.Id, StringComparer.OrdinalIgnoreCase)
@@ -194,7 +205,7 @@ public sealed partial class ConnectionAdminService
             .Select(p => new UnlinkedTechnicianDto(p.Id, p.Name, p.Tickets))
             .ToList();
         return new TechnicianHealthDto(known.Count, isLinked,
-            known.Count == 0 ? null : Math.Round(100.0 * isLinked / known.Count, 1), unlinked);
+            known.Count == 0 ? null : Math.Round(100.0 * isLinked / known.Count, 1), unlinked, ignored.Count);
     }
 
     public async Task<IReadOnlyList<MappingPreviewRowDto>> MappingPreviewAsync(Guid connectionId, int take = 10, CancellationToken ct = default)

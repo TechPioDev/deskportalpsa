@@ -151,6 +151,12 @@ function ImportFromPsaDrawer({ open, onClose, onChanged }: { open: boolean; onCl
     mutationFn: (externalId: string) => api.provisionTechnician(chosen, externalId),
     onSuccess: () => { refetch(); onChanged(); },
   });
+  // An API account, or someone who left: said once, it stops being listed as still to do.
+  const ignore = useMutation({
+    mutationFn: (v: { externalId: string; ignored: boolean; name: string }) =>
+      api.setPsaTechnicianIgnored(chosen, v.externalId, v.ignored, v.name),
+    onSuccess: () => { refetch(); },
+  });
 
   if (!open) return null;
 
@@ -180,6 +186,9 @@ function ImportFromPsaDrawer({ open, onClose, onChanged }: { open: boolean; onCl
       {provision.isError && (
         <p className="text-sm text-red-600 dark:text-red-400">{(provision.error as Error).message}</p>
       )}
+      {ignore.isError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{(ignore.error as Error).message}</p>
+      )}
 
       <ul className="space-y-2">
         {techs?.map((t) => (
@@ -195,18 +204,32 @@ function ImportFromPsaDrawer({ open, onClose, onChanged }: { open: boolean; onCl
                 Inactive in PSA
               </span>
             )}
+            {t.link === 3 && (
+              <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                Left alone
+              </span>
+            )}
             {t.link === 2 ? (
               <span className="rounded-full bg-brand-tint px-2 py-0.5 text-[11px] font-medium text-brand dark:bg-brand/20">
                 In portal
               </span>
             ) : (
-              <button type="button"
-                disabled={!t.canProvision || provision.isPending}
-                title={t.blocker ?? undefined}
-                onClick={() => provision.mutate(t.externalId)}
-                className="rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-40">
-                {t.link === 1 ? 'Link' : 'Add'}
-              </button>
+              <>
+                <button type="button"
+                  disabled={!t.canProvision || provision.isPending}
+                  title={t.blocker ?? undefined}
+                  onClick={() => provision.mutate(t.externalId)}
+                  className="rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-40">
+                  {t.link === 1 ? 'Link' : 'Add'}
+                </button>
+                <button type="button"
+                  disabled={ignore.isPending}
+                  aria-label={t.link === 3 ? `Stop leaving ${t.name || t.externalId} alone` : `Leave ${t.name || t.externalId} alone`}
+                  onClick={() => ignore.mutate({ externalId: t.externalId, ignored: t.link !== 3, name: t.name })}
+                  className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--surface)] disabled:opacity-40">
+                  {t.link === 3 ? 'Stop ignoring' : 'Ignore'}
+                </button>
+              </>
             )}
           </li>
         ))}

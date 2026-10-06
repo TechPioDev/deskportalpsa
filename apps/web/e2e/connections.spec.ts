@@ -40,6 +40,8 @@ test.beforeAll(async () => {
     if (/\/service\/boards\/\d+\/statuses$/.test(path)) { res.end('[{"id":10,"name":"New"},{"id":11,"name":"Closed","closedStatus":true}]'); return; }
     if (path.endsWith('/service/priorities')) { res.end('[{"id":3,"name":"Priority 1 - High"}]'); return; }
     if (path.endsWith('/company/companies')) { res.end('[{"id":1,"name":"Acme Corp","deletedFlag":false}]'); return; }
+    // One member, and not a person: the account the integration itself signs in as.
+    if (path.endsWith('/system/members')) { res.end('[{"id":20,"identifier":"api","firstName":"API","lastName":"Account","primaryEmail":"","inactiveFlag":false}]'); return; }
     res.end('[]');
   });
   await new Promise<void>((resolve) => standIn.listen(0, '127.0.0.1', resolve));
@@ -259,6 +261,15 @@ test('a connection is added a step at a time against a PSA and is switched on on
   await expect(statusRow).toContainText('NEW');
   await expect(sampleRow).toContainText('NEW');
   expect((await (await page.request.get('/api/bff/api/tickets')).json() as unknown[]).length, 'the sample was not kept').toBe(ticketsBefore);
+
+  // The PSA's one login is the integration's own account, which nobody will ever be linked to.
+  // Said once, it is no longer listed as still to do.
+  const technicians = card.locator('details', { hasText: 'Technicians' });
+  await technicians.locator('summary').click();
+  await expect(technicians).toContainText('0 of 1 linked');
+  await technicians.getByRole('button', { name: 'Leave API Account alone' }).click();
+  await expect(technicians).toContainText('none left to link · 1 left alone');
+  await expect(technicians.getByRole('button', { name: /^Leave .* alone$/ })).toHaveCount(0);
 
   // In all of that, nothing was written to the PSA.
   expect(asked.filter((r) => r.method !== 'GET')).toEqual([]);

@@ -202,8 +202,21 @@ public class MappingHealthTests
         var people = (await w.Service.MappingHealthAsync(w.Connection)).Technicians;
 
         // Asha and Bilal hold tickets; the mock PSA also lists "Tech One", who holds none.
-        (people.Technicians, people.Linked).Should().Be((3, 1));
+        (people.Technicians, people.Linked, people.Ignored).Should().Be((3, 1, 0));
         people.Unlinked.Select(p => (p.ExternalId, p.Name, p.Tickets)).Should().Equal(("42", "Asha Rao", 2), ("R-1", "Tech One", 0));
+
+        // "Tech One" is an account nobody will ever sign in as: said once, it is no longer still to do.
+        // An ignore for a login that is linked (Bilal's) changes nothing: linked is linked.
+        w.H.Db.PsaTechnicianIgnores.AddRange(
+            new PsaTechnicianIgnore { MspOrganizationId = Org, PsaConnectionId = w.Connection, ExternalTechnicianId = "r-1" },
+            new PsaTechnicianIgnore { MspOrganizationId = Org, PsaConnectionId = w.Connection, ExternalTechnicianId = "43" },
+            new PsaTechnicianIgnore { MspOrganizationId = Org, PsaConnectionId = w.Other, ExternalTechnicianId = "42" });
+        await w.H.Db.SaveChangesAsync();
+
+        var after = (await w.Service.MappingHealthAsync(w.Connection)).Technicians;
+
+        (after.Technicians, after.Linked, after.Ignored).Should().Be((2, 1, 1));
+        after.Unlinked.Select(p => p.ExternalId).Should().Equal(["42"], "ignored on another PSA account is not ignored on this one");
     }
 
     [Fact]
