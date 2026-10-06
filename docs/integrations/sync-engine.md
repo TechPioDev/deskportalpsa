@@ -33,6 +33,9 @@ so a rollback finds it where it expects it.
 
 ## A run, step by step
 
+Which connections the scheduler runs at all (not one in setup, paused, archived, or whose
+credentials the PSA has rejected) is in [connections.md](connections.md).
+
 1. **Take the lock.** A `sync_runs` row with status `Running` is written. A unique index allows one
    per connection, so a second run cannot be recorded and does not start: the scheduler skips the
    connection for this cycle, and "Sync now" answers *409, a sync is already running*. A run whose
@@ -96,6 +99,10 @@ organization's connection, run or failure is "not found".
 
 "Sync now" is audited as `connection.sync.requested`, records who asked on the run, and reports
 "more to read" and "could not be read" in its answer.
+
+Since slice 3a these are on the connection's card as **Sync activity**: how far the sync has read,
+its last runs with who started each, and each failed record with *Try on next sync* and
+*Stop trying*.
 
 ## One person per PSA login
 
