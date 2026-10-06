@@ -48,10 +48,45 @@ public sealed class AttentionService(
 
         // ── Connections ───────────────────────────────────────────────────────
         var connections = await db.PsaConnections.AsNoTracking()
-            .Select(c => new { c.Id, c.Name, c.Provider, c.Status, c.TwoWaySync, c.LastSuccessfulSyncAt, c.LastError })
+            .Select(c => new
+            {
+                c.Id, c.Name, c.Provider, c.Status, c.TwoWaySync, c.LastSuccessfulSyncAt, c.LastError,
+                c.IsEnabled, c.InSetup, c.ArchivedAt, c.SyncPausedAt, c.LastErrorKind,
+            })
             .ToListAsync(ct);
         foreach (var c in connections)
         {
+            // Put away. It is meant to be silent.
+            if (c.ArchivedAt is not null) continue;
+
+            // Never been live. Nothing is broken, so it is not reported as broken - a failed first
+            // test used to read "connection is failed, critical". A connection someone started and
+            // did not finish is still worth one line.
+            if (c.InSetup)
+            {
+                items.Add(new AttentionItem(
+                    "connection-setup", "warning",
+                    $"{ProviderName(c.Provider)} connection \"{c.Name}\" is not switched on yet",
+                    string.IsNullOrWhiteSpace(c.LastError)
+                        ? "It was added and has not passed a test. Open the connection and choose Test and switch on."
+                        : $"Its last test did not pass: {c.LastError.Trim()} Open the connection, choose Edit to correct it, then Test and switch on.",
+                    1, "/dashboard/connections"));
+                continue;
+            }
+
+            // The PSA rejected the credentials. Automatic sync stops in this state, so this is the
+            // whole story: "degraded" and "has not synced" would both be this, told less usefully.
+            if (c.IsEnabled && c.LastErrorKind == ConnectionStates.Authentication)
+            {
+                items.Add(new AttentionItem(
+                    "connection-credentials", "critical",
+                    $"{ProviderName(c.Provider)} connection \"{c.Name}\" needs new credentials",
+                    "The PSA rejected the stored credentials, so automatic sync has stopped rather than lock the API account out. " +
+                    "Open the connection, choose Edit and enter credentials the PSA accepts.",
+                    1, "/dashboard/connections"));
+                continue;
+            }
+
             if (c.Status is ConnectionStatus.Failed or ConnectionStatus.Degraded)
             {
                 items.Add(new AttentionItem(
@@ -62,6 +97,20 @@ public sealed class AttentionService(
                         ? "The last sync or health check did not succeed. Open the connection and run Test connection."
                         : $"Last error: {c.LastError.Trim()}",
                     1, "/dashboard/connections"));
+            }
+
+            // Paused by an administrator: not a fault, and easy to forget. Said as what it is, not
+            // as a sync that stopped for no reason - "run Sync now to see the error" would be wrong.
+            if (c.IsEnabled && c.SyncPausedAt is { } pausedAt)
+            {
+                if (now - pausedAt > StaleSyncAfter)
+                    items.Add(new AttentionItem(
+                        "sync-paused", "warning",
+                        $"Sync for \"{c.Name}\" has been paused for {Age(now - pausedAt)}",
+                        "Nothing changed in the PSA since then has reached the portal. " +
+                        "Resume sync on the connection when it should carry on; it picks up from where it stopped.",
+                        1, "/dashboard/connections"));
+                continue;
             }
 
             if (c.TwoWaySync && c.Status is not ConnectionStatus.Disabled

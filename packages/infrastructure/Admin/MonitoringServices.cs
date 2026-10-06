@@ -43,7 +43,8 @@ public sealed class IntegrationHealthService(DeskDbContext db) : IIntegrationHea
 {
     public async Task<IReadOnlyList<ConnectionHealthDto>> SnapshotAsync(CancellationToken ct = default)
     {
-        var connections = await db.PsaConnections.AsNoTracking().ToListAsync(ct);
+        // Not the ones put away: they are no part of how the integration is doing.
+        var connections = await db.PsaConnections.AsNoTracking().Where(c => c.ArchivedAt == null).ToListAsync(ct);
         var result = new List<ConnectionHealthDto>(connections.Count);
 
         foreach (var c in connections)

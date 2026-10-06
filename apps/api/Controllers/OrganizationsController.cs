@@ -21,6 +21,7 @@ public sealed class OrganizationsController(DeskDbContext db) : ControllerBase
     {
         var connections = await db.PsaConnections
             .AsNoTracking()
+            .Where(c => c.ArchivedAt == null)
             .OrderBy(c => c.Name)
             .Select(c => new
             {
