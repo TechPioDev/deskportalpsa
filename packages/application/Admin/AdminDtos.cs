@@ -26,7 +26,19 @@ public sealed record ConnectionSummary(
     // existing key" from "there is nothing stored to keep": after the Vault-era secret loss, both
     // rendered as the same 'unchanged' placeholder and an admin could not tell whether their
     // re-entry had actually landed.
-    IReadOnlyList<string>? StoredCredentialKeys = null);
+    IReadOnlyList<string>? StoredCredentialKeys = null,
+    // Where the connection stands, as one word. Null only from a caller that did not work it out.
+    ConnectionState? State = null,
+    DateTimeOffset? SyncPausedAt = null);
+
+/// <summary>A PSA that can be connected, or one that is planned. Nothing is behind a planned one: it cannot be chosen.</summary>
+/// <param name="Available">A connector exists for it.</param>
+public sealed record ProviderCatalogEntry(
+    ProviderType Provider, string Name, bool Available,
+    string? EndpointExample, string? EndpointHint, string? TenantIdentifierLabel,
+    IReadOnlyList<CredentialFieldDto> Credentials);
+
+public sealed record CredentialFieldDto(string Key, string Label, bool Secret, string? Hint);
 
 public sealed record CreateConnectionInput(
     string Name,

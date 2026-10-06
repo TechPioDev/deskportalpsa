@@ -22,6 +22,17 @@ public sealed class ConnectWiseConnectorFactory(
 {
     public ProviderType Provider => ProviderType.ConnectWisePsa;
 
+    public ProviderDescriptor Descriptor { get; } = new(
+        ProviderType.ConnectWisePsa, "ConnectWise PSA",
+        EndpointExample: "https://api-na.myconnectwise.net/v4_6_release/apis/3.0/",
+        EndpointHint: "Your ConnectWise API base, starting with https:// and ending in /apis/3.0/.",
+        [
+            new CredentialField("CompanyId", "Company ID", Secret: false, "The company you sign in to ConnectWise with."),
+            new CredentialField("PublicKey", "Public key", Secret: true, "An API member's public key."),
+            new CredentialField("PrivateKey", "Private key", Secret: true),
+            new CredentialField("ClientId", "Client ID", Secret: true, "Your ConnectWise developer clientId."),
+        ]);
+
     public async Task<IServiceManagementConnector> CreateAsync(Guid psaConnectionId, CancellationToken ct = default)
     {
         var connection = await db.PsaConnections
@@ -29,8 +40,21 @@ public sealed class ConnectWiseConnectorFactory(
             .FirstOrDefaultAsync(c => c.Id == psaConnectionId, ct)
             ?? throw new NotFoundException("PSA connection");
 
-        var secret = await secrets.ReadAsync(connection.CredentialSecretRef, ct);
+        return Build(connection, await secrets.ReadAsync(connection.CredentialSecretRef, ct));
+    }
 
+    public Task<IServiceManagementConnector> CreateWithAsync(
+        Desk.Domain.Tenancy.PsaConnection connection, IReadOnlyDictionary<string, string> credentials, CancellationToken ct = default)
+        => Task.FromResult(Build(connection, credentials));
+
+    /// <summary>The instance and the company: two connections with both in common reach the same ConnectWise account.</summary>
+    public string? AccountKey(string apiEndpoint, IReadOnlyDictionary<string, string> credentials)
+        => Uri.TryCreate(apiEndpoint, UriKind.Absolute, out var uri) && credentials.TryGetValue("CompanyId", out var company) && !string.IsNullOrWhiteSpace(company)
+            ? $"{uri.IdnHost}|{company.Trim()}".ToLowerInvariant()
+            : null;
+
+    private IServiceManagementConnector Build(Desk.Domain.Tenancy.PsaConnection connection, IReadOnlyDictionary<string, string> secret)
+    {
         var config = new ConnectWiseConnectorConfig
         {
             BaseUrl = EnsureTrailingSlash(connection.ApiEndpoint),

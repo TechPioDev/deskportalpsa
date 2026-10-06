@@ -16,8 +16,33 @@ public interface IAuditWriter
 public interface IConnectionAdminService
 {
     Task<IReadOnlyList<ConnectionSummary>> ListAsync(CancellationToken ct = default);
+
+    /// <summary>The connections that have been put away. They are in no other list.</summary>
+    Task<IReadOnlyList<ConnectionSummary>> ArchivedAsync(CancellationToken ct = default);
     Task<ConnectionSummary> CreateAsync(CreateConnectionInput input, CancellationToken ct = default);
     Task SetEnabledAsync(Guid connectionId, bool enabled, CancellationToken ct = default);
+
+    /// <summary>Every PSA the portal names: the ones that can be connected, with what they need, and the ones that are planned.</summary>
+    IReadOnlyList<ProviderCatalogEntry> Providers();
+
+    /// <summary>What this connection's PSA can and cannot do, as its connector declares it.</summary>
+    Task<Desk.PsaCore.Contracts.ProviderCapabilities> CapabilitiesAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Switches a new connection on for the first time. Refused until a test has passed: a
+    /// connection is never live on credentials the PSA has not accepted.
+    /// </summary>
+    Task<ConnectionSummary> ActivateAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Stops reading from the PSA. Replies, status changes and logged time still reach it.</summary>
+    Task<ConnectionSummary> PauseSyncAsync(Guid connectionId, CancellationToken ct = default);
+    Task<ConnectionSummary> ResumeSyncAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Puts a connection away: disabled and no longer listed. Nothing it imported is removed.</summary>
+    Task ArchiveAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Brings an archived connection back, disabled. Switching it on is a separate, deliberate step.</summary>
+    Task<ConnectionSummary> RestoreAsync(Guid connectionId, CancellationToken ct = default);
 
     /// <summary>Stores an uploaded logo and points the connection at it. Audited.</summary>
     Task<ConnectionSummary> UploadLogoAsync(Guid connectionId, ConnectionLogoUpload upload, CancellationToken ct = default);

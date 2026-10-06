@@ -133,4 +133,24 @@ public interface IConnectorFactory
 
     /// <summary>Build a connector bound to the given connection id (credentials resolved internally).</summary>
     Task<IServiceManagementConnector> CreateAsync(Guid psaConnectionId, CancellationToken ct = default);
+
+    /// <summary>What an administrator needs to know to connect this PSA. Null for a factory that is not offered.</summary>
+    ProviderDescriptor? Descriptor => null;
+
+    /// <summary>
+    /// A connector for a connection as GIVEN: the address on <paramref name="connection"/> as it
+    /// stands, saved or not, and these credentials rather than any that are stored. Nothing is
+    /// read from the secret store and nothing is written. It exists so that an address or a set
+    /// of credentials can be tried against the PSA before either replaces one that works.
+    /// </summary>
+    Task<IServiceManagementConnector> CreateWithAsync(
+        Desk.Domain.Tenancy.PsaConnection connection, IReadOnlyDictionary<string, string> credentials, CancellationToken ct = default)
+        => throw new NotSupportedException($"{Provider} cannot build a connector from credentials that are not stored.");
+
+    /// <summary>
+    /// A name for the PSA ACCOUNT a connection reaches - its address and whichever credential
+    /// names the account - so that the same account connected twice can be recognised. Null when
+    /// the provider cannot say. Never a secret: a key or a password is not part of it.
+    /// </summary>
+    string? AccountKey(string apiEndpoint, IReadOnlyDictionary<string, string> credentials) => null;
 }
