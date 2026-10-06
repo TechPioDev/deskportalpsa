@@ -64,6 +64,9 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
     /// <summary>Notes as the server stored them, for assertions on what the connector actually sent.</summary>
     public IReadOnlyList<IReadOnlyDictionary<string, object?>> Notes => _notes;
 
+    /// <summary>Time entries the fake holds, as the API would return them.</summary>
+    public List<Dictionary<string, object?>> TimeEntries { get; } = [];
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         if (ForceStatus is { } forced) return Resp(forced, ForceBody ?? "{\"code\":\"forced\"}");
@@ -97,12 +100,47 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
         if (path.Contains("service/boards/") && path.EndsWith("/types"))
             return Arr("[{\"id\":7,\"name\":\"Incident\"}]");
 
+        // Time entries: written against a ticket, and listed by the ticket they are charged to.
+        // The fake had none, so nothing about ConnectWise time could be tested against it.
+        if (path.EndsWith("time/entries") && request.Method == HttpMethod.Post)
+        {
+            using var doc = JsonDocument.Parse(body);
+            var r = doc.RootElement;
+            var entry = new Dictionary<string, object?>
+            {
+                ["id"] = ++_seq,
+                ["chargeToId"] = r.GetProperty("chargeToId").GetInt64(),
+                ["actualHours"] = r.GetProperty("actualHours").GetDecimal(),
+                ["billableOption"] = Str(r, "billableOption"),
+                ["notes"] = r.TryGetProperty("notes", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null,
+                ["timeStart"] = Str(r, "timeStart"),
+                // The real API answers with the member it resolved the identifier to.
+                ["member"] = new Dictionary<string, object?> { ["id"] = 20L, ["name"] = "Tech One" },
+            };
+            TimeEntries.Add(entry);
+            return Ok(Serialize(entry));
+        }
+        if (path.EndsWith("time/entries") && request.Method == HttpMethod.Get)
+        {
+            var charged = System.Text.RegularExpressions.Regex.Match(conditions ?? "", @"chargeToId=(\d+)");
+            var rows = TimeEntries.Where(e => !charged.Success || (long)e["chargeToId"]! == long.Parse(charged.Groups[1].Value)).ToList();
+            var size = Math.Min(int.TryParse(QueryValue(request.RequestUri.Query, "pageSize"), out var tps) && tps > 0 ? tps : 25, 1000);
+            var page = int.TryParse(QueryValue(request.RequestUri.Query, "page"), out var tpg) && tpg > 0 ? tpg : 1;
+            return Arr("[" + string.Join(",", rows.Skip((page - 1) * size).Take(size).Select(Serialize)) + "]");
+        }
+
         // Ticket notes
         if (path.Contains("/notes"))
         {
             var ticketId = ExtractTicketId(path);
             if (request.Method == HttpMethod.Post) return CreateNote(ticketId, body);
-            return Arr("[" + string.Join(",", _notes.Where(n => (long)n["ticketID"]! == ticketId).Select(Serialize)) + "]");
+            // A page at a time, as the real API answers - 25 unless asked, never more than 1,000.
+            // The fake used to return every note whatever was asked, so a connector that read one
+            // page looked complete here.
+            var noteSize = Math.Min(int.TryParse(QueryValue(request.RequestUri.Query, "pageSize"), out var nps) && nps > 0 ? nps : 25, 1000);
+            var notePage = int.TryParse(QueryValue(request.RequestUri.Query, "page"), out var npg) && npg > 0 ? npg : 1;
+            return Arr("[" + string.Join(",", _notes.Where(n => (long)n["ticketID"]! == ticketId)
+                .OrderBy(n => (long)n["id"]!).Skip((notePage - 1) * noteSize).Take(noteSize).Select(Serialize)) + "]");
         }
 
         // A ticket's configurations: their own resource, read, added to and removed from one by one.

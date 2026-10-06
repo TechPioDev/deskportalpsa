@@ -17,7 +17,7 @@ namespace Desk.Infrastructure.Connectors;
 public sealed class AutotaskConnectorFactory(
     DeskDbContext db,
     ISecretStore secrets,
-    IHttpClientFactory httpFactory,
+    ProviderHttpClients clients,
     TimeProvider clock,
     ILogger<AutotaskConnectorFactory> logger) : IConnectorFactory
 {
@@ -46,8 +46,8 @@ public sealed class AutotaskConnectorFactory(
             DefaultTimeEntryRoleId = ParseId(connection.DefaultTimeEntryRoleId),
         };
 
-        var http = httpFactory.CreateClient("autotask");
-        http.BaseAddress = new Uri(config.BaseUrl);
+        // This connection's own client: its own pace, its own retries, the shared guarded transport.
+        var http = clients.For("autotask", connection.Id, config.BaseUrl, AutotaskConnector.RequestsPerMinute);
 
         return new AutotaskConnector(http, config, clock,
             // Field names and their option labels only — configuration, never customer content.

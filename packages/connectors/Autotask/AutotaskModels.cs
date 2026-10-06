@@ -14,6 +14,12 @@ public sealed class AutotaskConnectorConfig
     public string WebhookSecret { get; init; } = "";
     public TimeSpan WebhookMaxSkew { get; init; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>Records asked for per page of a list (Autotask allows up to 500).</summary>
+    public int ListPageSize { get; init; } = 500;
+
+    /// <summary>Pages of one list read before it is refused as too long to finish: 50,000 records.</summary>
+    public int MaxListPages { get; init; } = 100;
+
     /// <summary>Attachments asked for per page of a tenant-wide sweep (Autotask allows up to 500).</summary>
     public int AttachmentSweepPageSize { get; init; } = 500;
 

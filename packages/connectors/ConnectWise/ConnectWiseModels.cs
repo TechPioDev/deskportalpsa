@@ -12,6 +12,9 @@ public sealed class ConnectWiseConnectorConfig
     public required ConnectWiseCredentials Credentials { get; init; }
     public string WebhookSecret { get; init; } = "";
     public TimeSpan WebhookMaxSkew { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Pages of one list read before it is refused as too long to finish.</summary>
+    public int MaxListPages { get; init; } = 50;
 }
 
 // ---- wire DTOs (subset of the ConnectWise Manage schema). CW nests references as {id, name}. ----

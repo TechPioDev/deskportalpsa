@@ -16,7 +16,7 @@ namespace Desk.Infrastructure.Connectors;
 public sealed class ConnectWiseConnectorFactory(
     DeskDbContext db,
     ISecretStore secrets,
-    IHttpClientFactory httpFactory,
+    ProviderHttpClients clients,
     TimeProvider clock,
     Microsoft.Extensions.Logging.ILogger<ConnectWiseConnectorFactory> logger) : IConnectorFactory
 {
@@ -42,8 +42,8 @@ public sealed class ConnectWiseConnectorFactory(
             WebhookSecret = secret.GetValueOrDefault("WebhookSecret", ""),
         };
 
-        var http = httpFactory.CreateClient("connectwise");
-        http.BaseAddress = new Uri(config.BaseUrl);
+        // This connection's own client: its own pace, its own retries, the shared guarded transport.
+        var http = clients.For("connectwise", connection.Id, config.BaseUrl, ConnectWiseConnector.RequestsPerMinute);
 
         return new ConnectWiseConnector(http, config, clock,
             // Field names only — never values — so the log carries no customer data. Once per

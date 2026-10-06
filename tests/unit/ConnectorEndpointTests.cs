@@ -312,6 +312,28 @@ public class ConnectorEndpointTests
     [Theory]
     [InlineData("autotask")]
     [InlineData("connectwise")]
+    public async Task The_client_a_connector_is_actually_given_is_guarded_too(string clientName)
+    {
+        // A connector no longer takes the named client as it comes: it gets one of its own, with
+        // its connection's pacing and retries on top. The guard has to still be underneath it.
+        using var server = new LocalServer();
+        var services = new ServiceCollection();
+        services.AddDeskInfrastructure(Config(
+            ("ConnectionStrings:Postgres", "Host=unused"),
+            ("Secrets:EncryptionKey", Convert.ToBase64String(new byte[32]))));
+        await using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<Desk.Infrastructure.Connectors.ProviderHttpClients>()
+            .For(clientName, Guid.NewGuid(), $"http://127.0.0.1:{server.Port}/", requestsPerMinute: 120);
+
+        var act = () => client.GetAsync("anything");
+
+        (await act.Should().ThrowAsync<ConnectorException>()).Which.Kind.Should().Be(ConnectorFailureKind.InvalidRequest);
+        server.Connections.Should().Be(0, "refused, and not tried three times over: a refusal is not a passing fault");
+    }
+
+    [Theory]
+    [InlineData("autotask")]
+    [InlineData("connectwise")]
     public async Task A_process_that_sets_nothing_gets_guarded_connector_clients(string clientName)
     {
         // The registration the worker runs. Asserted through behaviour: the named client a
