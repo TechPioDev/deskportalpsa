@@ -29,6 +29,13 @@ public sealed class ConnectWiseConnector(
     Action<string>? observeTicketClosure = null)
     : IServiceManagementConnector
 {
+    /// <summary>
+    /// The pace a connection to ConnectWise keeps when it has a lot to read. ConnectWise answers a
+    /// caller it wants to slow down with a 429 and a Retry-After, which is obeyed; this keeps a
+    /// large import from depending on being told.
+    /// </summary>
+    public const int RequestsPerMinute = 120;
+
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
     public ProviderType Provider => ProviderType.ConnectWisePsa;
@@ -515,6 +522,28 @@ public sealed class ConnectWiseConnector(
         return new CreateTimeEntryResult(true, created!.Id.ToString(), null);
     }
 
+    public async Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
+        IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default)
+    {
+        // Compared with what AddTimeEntryAsync sends: the hours, the charge option and the notes
+        // as given, started at the moment of the push. The member is sent by identifier and read
+        // back by id, so it is compared only when what was sent is an id.
+        var notes = (entry.Notes ?? "").Trim();
+        var earliest = since.AddMinutes(-5);
+
+        return (await GetTimeEntriesAsync(ticketId, ct))
+            .Where(e => !alreadyLinked.Contains(e.ExternalId)
+                        && e.Hours == entry.Hours
+                        && e.BillableOption == entry.Billable
+                        && string.Equals((e.Notes ?? "").Trim(), notes, StringComparison.Ordinal)
+                        && e.EntryDate >= earliest
+                        && (entry.MemberIdentifier is null || !long.TryParse(entry.MemberIdentifier, out _)
+                            || e.TechnicianExternalId == entry.MemberIdentifier))
+            .OrderBy(e => e.EntryDate)
+            .Select(e => e.ExternalId)
+            .FirstOrDefault();
+    }
+
     public async Task<UpdateTimeEntryResult> UpdateTimeEntryAsync(string entryId, UnifiedTimeEntryUpdate update, CancellationToken ct = default)
     {
         var ops = new List<object>();
@@ -743,8 +772,33 @@ public sealed class ConnectWiseConnector(
         }
     }
 
+    /// <summary>
+    /// A list, every page of it. Each of these used to be one request - the first 1,000 boards,
+    /// members or notes, or the first 100 - and nothing said when there were more.
+    ///
+    /// A list too long to finish is an error, not a shorter list: a caller handed part of a
+    /// ticket's notes as though it were all of them deletes the ones it was not shown.
+    /// </summary>
     private async Task<List<T>> GetListAsync<T>(string path, Dictionary<string, string> query, CancellationToken ct)
-        => await SendAsync<List<T>>(HttpMethod.Get, BuildPath(path, query), null, ct) ?? [];
+    {
+        var size = query.TryGetValue("pageSize", out var raw) && int.TryParse(raw, out var asked) ? asked : 25;
+        // A page size of one is a probe - does the call work, is there anything - and wants one row.
+        if (size <= 1) return await SendAsync<List<T>>(HttpMethod.Get, BuildPath(path, query), null, ct) ?? [];
+
+        var all = new List<T>();
+        for (var page = 1; ; page++)
+        {
+            if (page > config.MaxListPages)
+                throw new ConnectorException(ConnectorFailureKind.ProviderError,
+                    $"ConnectWise holds more than {all.Count} records at {path}; the list was not read in full.");
+            // In a fixed order, or a record that moves between two requests is read twice or not at all.
+            var paged = new Dictionary<string, string>(query) { ["page"] = page.ToString() };
+            paged.TryAdd("orderBy", "id");
+            var items = await SendAsync<List<T>>(HttpMethod.Get, BuildPath(path, paged), null, ct) ?? [];
+            all.AddRange(items);
+            if (items.Count < size) return all;
+        }
+    }
 
     private async Task<T?> GetOneAsync<T>(string path, CancellationToken ct) where T : class
     {
@@ -901,7 +955,7 @@ public sealed class ConnectWiseConnector(
         HttpStatusCode.NotFound => new(ConnectorFailureKind.NotFound, "ConnectWise entity not found."),
         HttpStatusCode.TooManyRequests => new(ConnectorFailureKind.RateLimited, "ConnectWise rate limit hit.")
         {
-            RetryAfter = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(10),
+            RetryAfter = ProviderRequest.Wait(resp.Headers.RetryAfter, DateTimeOffset.UtcNow) ?? TimeSpan.FromSeconds(10),
         },
         >= HttpStatusCode.InternalServerError => new(ConnectorFailureKind.ProviderError,
             detail is null ? $"ConnectWise server error ({(int)resp.StatusCode})." : $"ConnectWise server error ({(int)resp.StatusCode}): {detail}"),

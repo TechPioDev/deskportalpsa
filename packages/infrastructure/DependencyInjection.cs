@@ -81,6 +81,14 @@ public static class DependencyInjection
         services.AddHttpClient();
         // Microsoft 365 mail (token + sendMail). Fixed Microsoft hosts, so no egress guard is needed.
         services.AddHttpClient(Email.GraphMailSender.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
+        // One budget of provider calls per connection, shared by everything in this process that
+        // talks to that connection.
+        services.AddSingleton(sp => new ConnectionThrottle(sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new ProviderHttpClients(
+            sp.GetRequiredService<IHttpMessageHandlerFactory>(),
+            sp.GetRequiredService<ConnectionThrottle>(),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance));
         services.AddScoped<IConnectorFactory, AutotaskConnectorFactory>();
         services.AddScoped<IConnectorFactory, ConnectWiseConnectorFactory>();
 
