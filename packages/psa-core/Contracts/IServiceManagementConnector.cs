@@ -62,6 +62,13 @@ public interface IServiceManagementConnector
     // Tickets
     Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default);
     Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default);
+
+    /// <summary>
+    /// How many tickets a filter matches, where the provider can say so without handing them over.
+    /// Null where it cannot: the caller then says "not known", never a number of its own making.
+    /// The filter's paging fields are ignored. Used before an import, to say how much it would bring.
+    /// </summary>
+    Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default) => Task.FromResult<int?>(null);
     Task<CreateTicketResult> CreateTicketAsync(UnifiedTicketCreateRequest ticket, CancellationToken ct = default);
     Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default);
 

@@ -134,6 +134,19 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
     }
 
     [Fact]
+    public async Task A_count_asks_how_many_tickets_a_filter_matches_without_reading_them()
+    {
+        var server = new FakeConnectWiseServer(Clock);
+        server.SeedTicket(new() { ["summary"] = "open one", ["closedFlag"] = false });
+        server.SeedTicket(new() { ["summary"] = "open two", ["closedFlag"] = false });
+        server.SeedTicket(new() { ["summary"] = "done", ["closedFlag"] = true });
+        var connector = Build(server);
+
+        (await connector.CountTicketsAsync(new TicketFilter())).Should().Be(3);
+        (await connector.CountTicketsAsync(new TicketFilter { IncludeClosed = false })).Should().Be(2);
+    }
+
+    [Fact]
     public async Task A_synced_ticket_carries_its_boards_id_as_well_as_its_name()
     {
         // The other half of the test above. A connection limited to certain boards holds their ids;

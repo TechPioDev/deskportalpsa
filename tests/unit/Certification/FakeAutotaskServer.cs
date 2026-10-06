@@ -30,6 +30,10 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             ["dateWorked"] = clock.GetUtcNow().ToString("o"),
         });
 
+    /// <summary>Marks a ticket completed, as closing it in Autotask does: it gains a completed date.</summary>
+    public void CompleteTicket(long ticketId)
+        => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["completedDate"] = clock.GetUtcNow().ToString("o");
+
     public HttpStatusCode? ForceStatus { get; set; }
 
     private long _seq = 100;
@@ -152,6 +156,8 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
                     "{\"Message\":\"The requested resource does not support http method 'GET'.\"}");
             return Json(NextPageJson(QueryValue(request.RequestUri.Query, "nextPage")!));
         }
+        if (path.EndsWith("Tickets/query/count", StringComparison.OrdinalIgnoreCase))
+            return Json($"{{\"queryCount\":{Matching(_tickets, body).Count}}}");
         if (path.EndsWith("Tickets/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_tickets, body));
         if (path.EndsWith("TicketNotes/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_notes, body));
         if (path.EndsWith("TicketAttachments/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(StripData(_attachments), body));
@@ -315,6 +321,14 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
     // are extracted eagerly so no JsonElement is read after the JsonDocument is disposed.
     private string QueryJson(List<Dictionary<string, object?>> rows, string body)
     {
+        // MaxRecords is a LIMIT, and the rows past it are offered through a next-page URL rather
+        // than thrown away. The fake used to return every row and no URL, so a connector that never
+        // paginated looked complete here while silently truncating against the real API.
+        return Page(Matching(rows, body), MaxRecords(body));
+    }
+
+    private static List<Dictionary<string, object?>> Matching(List<Dictionary<string, object?>> rows, string body)
+    {
         var clauses = new List<FilterClause>();
         if (!string.IsNullOrEmpty(body))
         {
@@ -323,7 +337,8 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             {
                 foreach (var f in filters.EnumerateArray())
                 {
-                    var val = f.GetProperty("value");
+                    // "exist" and "notExist" carry no value.
+                    var val = f.TryGetProperty("value", out var given) ? given : default;
                     clauses.Add(new FilterClause(
                         f.GetProperty("field").GetString()!,
                         f.GetProperty("op").GetString()!,
@@ -347,13 +362,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             }
         }
 
-        var result = rows.Where(r => clauses.All(c => Matches(r, c))).ToList();
-
-        // MaxRecords is a LIMIT, and the rows past it are offered through a next-page URL rather
-        // than thrown away. The fake used to return every row and no URL, so a connector that never
-        // paginated looked complete here while silently truncating against the real API.
-        var max = MaxRecords(body);
-        return Page(result, max);
+        return rows.Where(r => clauses.All(c => Matches(r, c))).ToList();
     }
 
     private static string? QueryValue(string query, string key)
@@ -404,6 +413,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         // row, so a filter test could not fail — the fake was more permissive than Autotask, which
         // is how several defects reached production already.
         "in" => FieldIn(row, c),
+        "notExist" => !row.TryGetValue(c.Field, out var absent) || absent is null,
         _ => true,
     };
 
