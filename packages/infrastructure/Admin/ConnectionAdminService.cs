@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Desk.Infrastructure.Admin;
 
-public sealed class ConnectionAdminService(
+public sealed partial class ConnectionAdminService(
     DeskDbContext db,
     ISecretStore secrets,
     IAuditWriter audit,
@@ -19,7 +19,8 @@ public sealed class ConnectionAdminService(
     IConnectionFieldCache fieldCache,
     IObjectStorage storage,
     TimeProvider clock,
-    Security.ConnectorEndpointPolicy? endpointPolicy = null) : IConnectionAdminService
+    Security.ConnectorEndpointPolicy? endpointPolicy = null,
+    Desk.Application.Mapping.IMappingEngine? mappingEngine = null) : IConnectionAdminService
 {
     private readonly Security.ConnectorEndpointPolicy _endpoints = endpointPolicy ?? Security.ConnectorEndpointPolicy.Strict;
 
@@ -182,6 +183,11 @@ public sealed class ConnectionAdminService(
         if (connection.Status != ConnectionStatus.Healthy)
             throw new ValidationFailedException(
                 "Test the connection first. It is switched on once the PSA has accepted its credentials.");
+
+        // Everything else that would make it useless or harmful once on: a credential field
+        // that is not stored, a scope that imports nothing, the same PSA account twice.
+        if ((await PreflightAsync(connectionId, ct)).Items.FirstOrDefault(i => i.Outcome == Fail) is { } blocker)
+            throw new ValidationFailedException($"Not switched on. {blocker.Name}: {blocker.Detail}");
 
         connection.InSetup = false;
         connection.IsEnabled = true;
@@ -715,7 +721,9 @@ public sealed class ConnectionAdminService(
     // failing the whole request if the provider doesn't support one.
     private async Task<ConnectionFieldsDto> DiscoverAsync(Guid connectionId, CancellationToken ct)
     {
-        var connector = await connectors.ResolveAsync(connectionId, ct);
+        // Also for a connection still being set up: its queues, statuses and priorities are what
+        // its mapping and its scope are chosen from, before it is switched on.
+        var connector = await ConnectorForAsync(connectionId, ct);
         var boards = await SafeAsync(() => connector.GetQueuesOrBoardsAsync(ct));
         var statuses = await SafeAsync(() => connector.GetStatusesAsync(ct));
         var priorities = await SafeAsync(() => connector.GetPrioritiesAsync(ct));

@@ -72,4 +72,22 @@ public class CrossProviderNormalizationTests
         cwCaps.SupportsOutboundWebhooks.Should().BeTrue();
         atCaps.SupportsOutboundWebhooks.Should().BeFalse();
     }
+
+    /// <summary>
+    /// A capability is what the connector does today, because the screens offer what it says. Both
+    /// said "inbound webhooks" while understanding only the portal's own signed frame, which neither
+    /// PSA can send; ConnectWise said "custom fields" and read none.
+    /// </summary>
+    [Fact]
+    public async Task A_capability_is_claimed_only_where_the_connector_does_the_thing()
+    {
+        var atCaps = await Autotask().GetCapabilitiesAsync();
+        var cwCaps = await ConnectWise().GetCapabilitiesAsync();
+
+        (atCaps.SupportsInboundWebhooks, cwCaps.SupportsInboundWebhooks).Should().Be((false, false),
+            "no provider-native callback is understood until the webhook slice");
+        cwCaps.SupportsCustomFields.Should().BeFalse();
+        (await ConnectWise().GetCustomFieldsAsync()).Should().BeEmpty("which is why it says so");
+        atCaps.SupportsCustomFields.Should().BeTrue();
+    }
 }

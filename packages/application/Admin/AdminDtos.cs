@@ -352,3 +352,30 @@ public sealed record UserPsaIdentityDto(
     string ConnectionName,
     string? ExternalTechnicianId,
     string? ExternalTechnicianName);
+
+/// <summary>
+/// One line of a connection's test: what was tried and how it went. <paramref name="Outcome"/> is
+/// Pass, Fail, Warn, NotTested (nothing to try it on, or a write, which a test never makes),
+/// Available or Unavailable. A <paramref name="Required"/> line is one the sync cannot do without.
+/// </summary>
+public sealed record ConnectionCheckDto(string Key, string Name, string Outcome, string? Detail, bool Required);
+
+/// <summary>A connection's test, line by line. Passed means every required line passed.</summary>
+public sealed record ConnectionCheckReportDto(bool Passed, DateTimeOffset CheckedAt, IReadOnlyList<ConnectionCheckDto> Checks);
+
+/// <summary>A value the PSA lists, and what it becomes in the portal. Null = no rule maps it.</summary>
+public sealed record MappedValueDto(string Value, string Label, string? MapsTo, bool ByFallbackRule);
+
+public sealed record MappingCoverageDto(IReadOnlyList<MappedValueDto> Statuses, IReadOnlyList<MappedValueDto> Priorities, int Unmapped);
+
+/// <summary>
+/// How much an import would bring in, asked of the PSA before anything is imported. A null is
+/// "the PSA could not say", never zero.
+/// </summary>
+public sealed record ConnectionPreviewDto(
+    int? Clients, int? Technicians, int? OpenTickets, int? AllTickets, int? TicketsToImport, int Unmapped, IReadOnlyList<string> Notes);
+
+public sealed record PreflightItemDto(string Key, string Name, string Outcome, string Detail);
+
+/// <summary>What stands between a connection and being switched on. A Fail blocks; a Warn is said and left to the administrator.</summary>
+public sealed record PreflightDto(bool CanEnable, IReadOnlyList<PreflightItemDto> Items);

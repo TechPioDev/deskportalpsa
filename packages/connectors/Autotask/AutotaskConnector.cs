@@ -50,7 +50,10 @@ public sealed class AutotaskConnector(
             SupportsAttachments = true, SupportsAttachmentDownload = true, SupportsAttachmentSweep = true,
             SupportsTimeEntries = true, SupportsAssets = true, SupportsContracts = true,
             SupportsHolidayCalendars = true,
-            SupportsSlaData = true, SupportsCustomFields = true, SupportsInboundWebhooks = true,
+            // Inbound webhooks: not yet. What this connector validates is the portal's own signed
+            // frame, which Autotask cannot send; Autotask's own callbacks are not understood until
+            // the webhook slice. Saying "true" here told the browser something that was not so.
+            SupportsSlaData = true, SupportsCustomFields = true, SupportsInboundWebhooks = false,
             SupportsOutboundWebhooks = false, SupportsIncrementalSync = true, SupportsBulkRead = true,
             SupportsBulkWrite = false, SupportsCompanies = true, SupportsContacts = true,
             SupportsTechnicians = true, SupportsTeams = true, SupportsQueues = true,
