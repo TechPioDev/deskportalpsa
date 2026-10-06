@@ -5,6 +5,8 @@ import {
   ConnectionSummarySchema, HealthSchema, JobSchema, AuditEntrySchema, AttachmentSchema,
   TechnicianDaySchema, type TechnicianDay,
   ConnectionFieldsSchema, FieldOptionSchema, type ConnectionFields,
+  ProviderCatalogEntrySchema, SyncStateSchema, SyncFailureSchema,
+  type ProviderCatalogEntry, type SyncState, type SyncFailure,
   MappingRuleSchema, type MappingRule, MappingSnapshotStatusSchema, type MappingSnapshotStatus,
   type TicketDetail, type TicketListItem, type Notification, type Profile,
   type TechnicianResponse, type TeamResponse, type TrendPoint,
@@ -1092,6 +1094,32 @@ export const api = {
     name: string; apiEndpoint: string; tenantIdentifier?: string; timeZone?: string;
     isEnabled: boolean; credentials?: Record<string, string>; logoUrl?: string;
   }) => request(`/api/admin/connections/${id}`, ConnectionSummarySchema, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Every PSA the portal names: what each needs to connect, and which have no connector yet. */
+  connectionProviders: () =>
+    request('/api/admin/connections/providers', z.array(ProviderCatalogEntrySchema)) as Promise<ProviderCatalogEntry[]>,
+  archivedConnections: () =>
+    request('/api/admin/connections/archived', z.array(ConnectionSummarySchema)) as Promise<ConnectionSummary[]>,
+  /** Switches a new connection on for the first time. The server refuses until a test has passed. */
+  activateConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/activate`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  setConnectionEnabled: (id: string, enabled: boolean) =>
+    request(`/api/admin/connections/${id}/enabled`, z.void(), { method: 'POST', body: JSON.stringify(enabled) }),
+  pauseConnectionSync: (id: string) =>
+    request(`/api/admin/connections/${id}/pause-sync`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  resumeConnectionSync: (id: string) =>
+    request(`/api/admin/connections/${id}/resume-sync`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  archiveConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/archive`, z.void(), { method: 'POST' }),
+  restoreConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/restore`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  connectionSyncState: (id: string) =>
+    request(`/api/admin/connections/${id}/sync-state?runs=10`, SyncStateSchema) as Promise<SyncState>,
+  connectionSyncFailures: (id: string) =>
+    request(`/api/admin/connections/${id}/sync-failures`, z.array(SyncFailureSchema)) as Promise<SyncFailure[]>,
+  retrySyncFailure: (id: string, failureId: string) =>
+    request(`/api/admin/connections/${id}/sync-failures/${failureId}/retry`, z.void(), { method: 'POST' }),
+  dismissSyncFailure: (id: string, failureId: string) =>
+    request(`/api/admin/connections/${id}/sync-failures/${failureId}/dismiss`, z.void(), { method: 'POST' }),
   connectionFields: (id: string) =>
     request(`/api/admin/connections/${id}/fields`, ConnectionFieldsSchema) as Promise<ConnectionFields>,
   // Read-only pre-flight so a time-entry misconfiguration is found here, not when a technician's
