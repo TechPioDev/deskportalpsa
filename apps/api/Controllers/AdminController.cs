@@ -301,6 +301,19 @@ public sealed class AdminMappingsController(IMappingAdminService svc) : Controll
     public async Task<IActionResult> Upsert([FromBody] UpsertMappingInput input, [FromQuery] string? note, CancellationToken ct)
         => Ok(await svc.UpsertAsync(input, note, ct));
 
+    /// <summary>The portal's own statuses and priorities: what a PSA's values are mapped to.</summary>
+    [HttpGet("vocabulary")]
+    [RequirePermission(Permissions.MappingsView)]
+    public IActionResult Vocabulary()
+        => Ok(new PortalVocabularyDto(Desk.Domain.Tickets.PortalVocabulary.Statuses, Desk.Domain.Tickets.PortalVocabulary.Priorities));
+
+    /// <summary>What values a connection's PSA sends should become in the portal. Any number, saved together.</summary>
+    [HttpPut("inbound/{connectionId:guid}")]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> SetInbound(
+        Guid connectionId, [FromBody] IReadOnlyList<SetInboundMappingInput> changes, [FromQuery] string? note, CancellationToken ct)
+        => Ok(await svc.SetInboundAsync(connectionId, changes, note, ct));
+
     [HttpDelete("{ruleId:guid}")]
     [RequirePermission(Permissions.MappingsManage)]
     public async Task<IActionResult> Delete(Guid ruleId, CancellationToken ct)
