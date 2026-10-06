@@ -56,7 +56,8 @@ failed connection.
 The form's fields are not written into the page. Each connector describes itself: its name, an
 example address, and the credential fields it needs with their labels and which are secret
 (`GET /api/admin/connections/providers`). PSAs the portal names but has no connector for are in the
-same list, marked unavailable; the form shows them under "Coming soon" and they cannot be chosen.
+same list, marked unavailable (thirteen today, HaloPSA to DeskDay); the form shows them under
+"Coming soon" and they cannot be chosen.
 Creating a connection for one is refused by the API whatever the form does.
 
 ## Changing a connection
