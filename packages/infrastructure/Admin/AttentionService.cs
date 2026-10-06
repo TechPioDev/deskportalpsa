@@ -445,13 +445,7 @@ public sealed class AttentionService(
     private static string PortalBase()
         => Environment.GetEnvironmentVariable("PORTAL_PUBLIC_URL")?.TrimEnd('/') is { Length: > 0 } u ? u : "https://piomanage.com";
 
-    private static string ProviderName(ProviderType p) => p switch
-    {
-        ProviderType.ConnectWisePsa => "ConnectWise",
-        ProviderType.AutotaskPsa => "Autotask",
-        ProviderType.HaloPsa => "HaloPSA",
-        _ => p.ToString(),
-    };
+    private static string ProviderName(ProviderType p) => Desk.PsaCore.Contracts.ProviderNames.Short(p);
 
     private static string Plural(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
 

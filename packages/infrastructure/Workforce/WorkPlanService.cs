@@ -1031,12 +1031,7 @@ public sealed class WorkPlanService(
     private async Task<string> ReferenceAsync(Ticket t, CancellationToken ct)
         => ReferenceLabels.Needed(t.Number, t.Provider) ? Reference(t, await LabelsAsync(ct)) : Reference(t);
 
-    private static string ProviderName(Desk.Domain.Enums.ProviderType p) => p switch
-    {
-        Desk.Domain.Enums.ProviderType.AutotaskPsa => "Autotask",
-        Desk.Domain.Enums.ProviderType.ConnectWisePsa => "ConnectWise",
-        _ => p.ToString(),
-    };
+    private static string ProviderName(Desk.Domain.Enums.ProviderType p) => Desk.PsaCore.Contracts.ProviderNames.Short(p);
 
     internal static string Source(TicketOrigin origin, Desk.Domain.Enums.ProviderType? provider) => origin switch
     {

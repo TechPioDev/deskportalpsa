@@ -138,31 +138,22 @@ public sealed partial class ConnectionAdminService(
     {
         var available = connectors.Providers
             .Select(d => new ProviderCatalogEntry(d.Provider, d.Name, true, d.EndpointExample, d.EndpointHint, d.TenantIdentifierLabel,
-                d.Credentials.Select(c => new CredentialFieldDto(c.Key, c.Label, c.Secret, c.Hint)).ToList()))
+                d.Credentials.Select(c => new CredentialFieldDto(c.Key, c.Label, c.Secret, c.Hint)).ToList(), ProviderNames.Mark(d.Provider)))
             .ToList();
         // Named so that people can see what is planned. There is nothing behind one of these - no
         // connector, no form, no way to save a connection to it - and Create refuses it.
         var planned = Planned
-            .Where(p => available.All(a => a.Provider != p.Provider))
-            .Select(p => new ProviderCatalogEntry(p.Provider, p.Name, false, null, null, null, []));
+            .Where(p => available.All(a => a.Provider != p))
+            .Select(p => new ProviderCatalogEntry(p, ProviderNames.Short(p), false, null, null, null, [], ProviderNames.Mark(p)));
         return [.. available, .. planned];
     }
 
-    private static readonly (ProviderType Provider, string Name)[] Planned =
+    /// <summary>The PSAs the portal names and has no connector for, in the order they are shown. A connector registered for one takes it off this list by itself.</summary>
+    private static readonly ProviderType[] Planned =
     [
-        (ProviderType.HaloPsa, "HaloPSA"),
-        (ProviderType.Syncro, "Syncro"),
-        (ProviderType.SuperOps, "SuperOps"),
-        (ProviderType.Atera, "Atera"),
-        (ProviderType.KaseyaBms, "Kaseya BMS"),
-        (ProviderType.NableMspManager, "N-able MSP Manager"),
-        (ProviderType.ServiceNow, "ServiceNow"),
-        (ProviderType.Freshservice, "Freshservice"),
-        (ProviderType.JiraServiceManagement, "Jira Service Management"),
-        (ProviderType.ManageEngineServiceDeskPlus, "ManageEngine ServiceDesk Plus"),
-        (ProviderType.Zendesk, "Zendesk"),
-        (ProviderType.ZohoDesk, "Zoho Desk"),
-        (ProviderType.DeskDay, "DeskDay"),
+        ProviderType.HaloPsa, ProviderType.Syncro, ProviderType.SuperOps, ProviderType.Atera, ProviderType.KaseyaBms,
+        ProviderType.NableMspManager, ProviderType.ServiceNow, ProviderType.Freshservice, ProviderType.JiraServiceManagement,
+        ProviderType.ManageEngineServiceDeskPlus, ProviderType.Zendesk, ProviderType.ZohoDesk, ProviderType.DeskDay,
     ];
 
     public async Task<ProviderCapabilities> CapabilitiesAsync(Guid connectionId, CancellationToken ct = default)

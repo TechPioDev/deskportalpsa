@@ -25,3 +25,49 @@ public sealed record ProviderDescriptor(
     /// <summary>The label of the optional identifier kept beside the address, where the provider has one worth naming.</summary>
     public string? TenantIdentifierLabel { get; init; }
 }
+
+/// <summary>
+/// What a PSA is called where it is named in a sentence, a reference or a tile. In one place: it
+/// was written out in three, and they did not agree about the ones with no connector yet.
+/// </summary>
+public static class ProviderNames
+{
+    /// <summary>The short name: "Autotask", as in "Autotask 12345" or "the Autotask connection".</summary>
+    public static string Short(ProviderType provider) => provider switch
+    {
+        ProviderType.ConnectWisePsa => "ConnectWise",
+        ProviderType.AutotaskPsa => "Autotask",
+        ProviderType.HaloPsa => "HaloPSA",
+        ProviderType.Syncro => "Syncro",
+        ProviderType.SuperOps => "SuperOps",
+        ProviderType.Atera => "Atera",
+        ProviderType.KaseyaBms => "Kaseya BMS",
+        ProviderType.NableMspManager => "N-able MSP Manager",
+        ProviderType.DeskDay => "DeskDay",
+        ProviderType.ServiceNow => "ServiceNow",
+        ProviderType.Freshservice => "Freshservice",
+        ProviderType.JiraServiceManagement => "Jira Service Management",
+        ProviderType.ManageEngineServiceDeskPlus => "ManageEngine ServiceDesk Plus",
+        ProviderType.Zendesk => "Zendesk",
+        ProviderType.ZohoDesk => "Zoho Desk",
+        _ => provider.ToString(),
+    };
+
+    /// <summary>
+    /// Two letters for a connection's tile where no logo has been uploaded. Initials, not a vendor's
+    /// logo: the portal ships no brand asset it has no licence for.
+    /// </summary>
+    public static string Mark(ProviderType provider) => provider switch
+    {
+        ProviderType.ConnectWisePsa => "CW",
+        ProviderType.AutotaskPsa => "AT",
+        _ => Initials(Short(provider)),
+    };
+
+    private static string Initials(string name)
+    {
+        var words = name.Split([' ', '-'], StringSplitOptions.RemoveEmptyEntries);
+        var letters = words.Length >= 2 ? $"{words[0][0]}{words[1][0]}" : name.Length >= 2 ? name[..2] : name;
+        return letters.ToUpperInvariant();
+    }
+}

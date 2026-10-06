@@ -225,6 +225,55 @@ public abstract class ConnectorCertificationSuite
     // ---- incremental read ----
 
     [Fact]
+    public async Task A_count_is_the_number_the_same_filter_reads_or_an_honest_cannot_say()
+    {
+        // Before an import the portal says how much there is. A connector that can ask its PSA for a
+        // number has to give the number the read would produce; one that cannot answers null, and
+        // the screen then says "not known". What it may not do is answer with a number of its own.
+        var c = CreateConnector();
+        for (var i = 0; i < 3; i++)
+            await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+            {
+                Title = $"counted {i}", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = $"count-{i}",
+            });
+
+        var count = await c.CountTicketsAsync(new TicketFilter());
+        if (count is null) return;
+
+        var read = 0;
+        string? cursor = null;
+        var pages = 0;
+        do
+        {
+            var page = await c.GetTicketsAsync(new TicketFilter { PageSize = 100, Cursor = cursor });
+            read += page.Items.Count;
+            cursor = page.NextCursor;
+            if (!page.HasMore) break;
+        } while (cursor is not null && ++pages < 50);
+
+        count.Should().Be(read, "a count and a read of the same filter are one question asked two ways");
+        (await c.CountTicketsAsync(new TicketFilter { IncludeClosed = false }))
+            .Should().NotBeNull().And.BeLessThanOrEqualTo(count.Value, "open tickets are some of the tickets");
+    }
+
+    [Fact]
+    public async Task A_capability_that_is_not_claimed_is_still_safe_to_ask_for()
+    {
+        // The screens offer what a connector says it can do. So what it says it cannot do must not
+        // be a trap for the code that asks anyway: an empty answer, not an exception.
+        var c = CreateConnector();
+        var caps = await c.GetCapabilitiesAsync();
+
+        var customFields = await c.GetCustomFieldsAsync();
+        if (!caps.SupportsCustomFields) customFields.Should().BeEmpty("it says it reads none");
+        if (!caps.SupportsHolidayCalendars) (await c.GetHolidaysAsync()).Should().BeEmpty();
+        if (!caps.SupportsContracts) (await c.GetAgreementsAsync(SeededOrganizationId)).Should().BeEmpty();
+
+        // And a readiness check is always answerable in words, whatever the PSA needs for time.
+        (await c.CheckTimeEntryReadinessAsync()).Summary.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
     public async Task Reading_continues_past_the_first_page_until_every_ticket_is_seen()
     {
         // The contract every connector has to honour, and none of them did: a read returns ONE page
