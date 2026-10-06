@@ -153,6 +153,14 @@ public sealed class ConnectionAdminService(
         (ProviderType.SuperOps, "SuperOps"),
         (ProviderType.Atera, "Atera"),
         (ProviderType.KaseyaBms, "Kaseya BMS"),
+        (ProviderType.NableMspManager, "N-able MSP Manager"),
+        (ProviderType.ServiceNow, "ServiceNow"),
+        (ProviderType.Freshservice, "Freshservice"),
+        (ProviderType.JiraServiceManagement, "Jira Service Management"),
+        (ProviderType.ManageEngineServiceDeskPlus, "ManageEngine ServiceDesk Plus"),
+        (ProviderType.Zendesk, "Zendesk"),
+        (ProviderType.ZohoDesk, "Zoho Desk"),
+        (ProviderType.DeskDay, "DeskDay"),
     ];
 
     public async Task<ProviderCapabilities> CapabilitiesAsync(Guid connectionId, CancellationToken ct = default)

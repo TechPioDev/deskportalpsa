@@ -476,7 +476,11 @@ public class ConnectionLifecycleTests
             .Should().Equal("CompanyId", "PublicKey", "PrivateKey", "ClientId");
 
         var planned = catalog.Where(p => !p.Available).ToList();
-        planned.Select(p => p.Name).Should().BeEquivalentTo(["HaloPSA", "Syncro", "SuperOps", "Atera", "Kaseya BMS"]);
+        planned.Select(p => p.Name).Should().Equal(
+            "HaloPSA", "Syncro", "SuperOps", "Atera", "Kaseya BMS", "N-able MSP Manager", "ServiceNow", "Freshservice",
+            "Jira Service Management", "ManageEngine ServiceDesk Plus", "Zendesk", "Zoho Desk", "DeskDay");
+        // Every PSA the portal has a name for is either connectable or listed as planned: none is left out.
+        catalog.Select(p => p.Provider).Should().BeEquivalentTo(Enum.GetValues<ProviderType>());
         planned.Should().OnlyContain(p => p.Credentials.Count == 0 && p.EndpointExample == null, "there is no connector behind a planned PSA, and no form for one");
     }
 
