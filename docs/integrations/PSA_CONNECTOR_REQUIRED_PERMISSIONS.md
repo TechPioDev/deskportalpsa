@@ -38,7 +38,7 @@ a real technician ("default time-entry resource") and that technician must hold 
 
 | Entity | Used for |
 |---|---|
-| `Tickets` (query, by id) | The tickets themselves |
+| `Tickets` (query, by id; `query/count` for the wizard's preview) | The tickets themselves, and how many there are before an import |
 | `Tickets/entityInformation/fields`, `…/userDefinedFields` | Status, priority, queue and category lists; custom-field names |
 | `TicketNotes` | The conversation on a ticket |
 | `TicketAttachments` (query; a file's bytes through `Tickets/{id}/Attachments/{id}`) | Files on tickets |
@@ -83,7 +83,7 @@ Authentication is the company id, an API member's public and private keys, and a
 
 | Route | Used for |
 |---|---|
-| `service/tickets` (list, by id) | The tickets themselves |
+| `service/tickets` (list, by id; `count` for the wizard's preview) | The tickets themselves, and how many there are before an import |
 | `service/tickets/{id}/notes` | The conversation on a ticket |
 | `service/tickets/{id}/configurations` | The devices on a ticket |
 | `service/boards`, `…/{id}/statuses`, `…/{id}/types`, `…/{id}/teams` | Boards, their statuses and types; which board a member covers |
