@@ -735,6 +735,42 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     }
 
     [Fact]
+    public async Task Many_sync_runs_started_at_once_on_a_real_database_end_with_one()
+    {
+        // The worker and an administrator's "Sync now", in two processes, at the same instant. Each
+        // reads "nothing is running" and each tries to record its run; the index lets one through.
+        // Needs PostgreSQL for the same reason as the booking test above: one shared SQLite
+        // connection cannot carry two requests at once.
+        if (Postgres is null) return;
+        var (db, _, _, _, _) = await SeedAsync(1);
+        var connection = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://x", CredentialSecretRef = "m",
+        };
+        db.Add(connection);
+        await db.SaveChangesAsync();
+
+        var contexts = Enumerable.Range(0, 8).Select(_ => NewContext()).ToList();
+        try
+        {
+            var started = await Task.WhenAll(contexts.Select(c => Task.Run(async () =>
+            {
+                var mine = await c.PsaConnections.FirstAsync(x => x.Id == connection.Id);
+                return await new Desk.Infrastructure.Sync.SyncRunCoordinator(c, _clock, Desk.Infrastructure.Sync.SyncOptions.Default)
+                    .TryStartAsync(mine, Desk.Domain.Sync.SyncRunTrigger.Scheduled, null, default);
+            })));
+
+            started.Count(r => r is not null).Should().Be(1, "one run holds the connection; the other seven stand down");
+            (await db.SyncRuns.AsNoTracking().CountAsync(r => r.PsaConnectionId == connection.Id && r.Status == Desk.Domain.Sync.SyncRunStatus.Running)).Should().Be(1);
+            output.WriteLine("sync lock: 8 simultaneous starts on PostgreSQL, 1 run");
+        }
+        finally
+        {
+            foreach (var c in contexts) await c.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task Ticket_visibility_through_PSA_links_runs_on_a_real_database()
     {
         // The predicate that decides which tickets a person may see is assembled by hand, one clause
