@@ -281,6 +281,9 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
             ["status"] = status,
             ["priority"] = RefOf(r, "priority"),
             ["board"] = RefOf(r, "board"),
+            ["type"] = RefOf(r, "type"),
+            ["subType"] = RefOf(r, "subType"),
+            ["item"] = RefOf(r, "item"),
             ["company"] = RefOf(r, "company"),
             ["lastUpdated"] = now.ToString("o"),
         };

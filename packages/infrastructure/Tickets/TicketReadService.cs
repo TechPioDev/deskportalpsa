@@ -785,6 +785,10 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                         s.TechnicianName))
                     .FirstOrDefaultAsync(ct)
                 : null,
+            // How the desk has filed it in its PSA. The desk's own working, like the rest of what staff see here.
+            Classification: includeInternal && (ticket.PsaTicketType ?? ticket.PsaIssueType ?? ticket.PsaSubIssueType) is not null
+                ? new TicketClassificationDto(ticket.PsaTicketType, ticket.PsaIssueType, ticket.PsaSubIssueType)
+                : null,
             ResolvedByName: includeInternal && ticket.ResolvedByAppUserId is { } resolverId
                 ? await db.AppUsers.AsNoTracking().Where(u => u.Id == resolverId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
                 : null,

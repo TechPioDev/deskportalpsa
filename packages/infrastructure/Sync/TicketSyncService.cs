@@ -63,7 +63,8 @@ public sealed class TicketSyncService(
             incoming.ResolvedAt, incoming.ClosedAt, incoming.SlaDueAt, incoming.CreatedAt, portalQueue,
             string.IsNullOrWhiteSpace(incoming.RequesterName) ? null : incoming.RequesterName,
             string.IsNullOrWhiteSpace(incoming.RequesterEmail) ? null : incoming.RequesterEmail,
-            deviceExternalId);
+            deviceExternalId,
+            Level(incoming.TicketType), Level(incoming.IssueType), Level(incoming.SubIssueType));
 
         if (existing is not null)
         {
@@ -107,6 +108,11 @@ public sealed class TicketSyncService(
         ticket.PsaPriority = incoming.Priority;
         ticket.PortalCategory = portalCategory;
         ticket.PsaCategory = incoming.Category;
+        // Kept as the PSA words them. Cleared when the PSA clears them: the hash above no longer
+        // carries a level the ticket has lost, so that change is seen too.
+        ticket.PsaTicketType = Level(incoming.TicketType);
+        ticket.PsaIssueType = Level(incoming.IssueType);
+        ticket.PsaSubIssueType = Level(incoming.SubIssueType);
         ticket.QueueOrBoard = portalQueue;
         ticket.AssignedTechnicianExternalId = incoming.AssignedTechnicianExternalId;
         ticket.ResolvedAt = incoming.ResolvedAt;
@@ -163,6 +169,13 @@ public sealed class TicketSyncService(
 
         await activity.RecordManyAsync(observed, ct);
         return existing is null ? TicketSyncOutcome.Created : TicketSyncOutcome.Updated;
+    }
+
+    /// <summary>One level of the PSA's classification as it is stored: trimmed, nothing for blank, and no longer than its column.</summary>
+    private static string? Level(string? value)
+    {
+        var v = value?.Trim();
+        return string.IsNullOrEmpty(v) ? null : v.Length <= 200 ? v : v[..200];
     }
 
     private string? Map(IReadOnlyList<FieldMapping> rules, MappingContext ctx, string field, string? value)

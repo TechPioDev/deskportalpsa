@@ -107,6 +107,35 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
     }
 
     [Fact]
+    public async Task What_a_ticket_is_filed_under_is_read_in_ConnectWises_own_words()
+    {
+        // ConnectWise files a ticket under a type, a subtype and an item. Only the type was read.
+        var server = new FakeConnectWiseServer(Clock);
+        Dictionary<string, object?> Named(long id, string name) => new() { ["id"] = id, ["name"] = name };
+        Dictionary<string, object?> Ticket(string summary) => new()
+        {
+            ["summary"] = summary,
+            ["status"] = Named(1, "New"), ["priority"] = Named(3, "High"), ["board"] = Named(1, "Service Desk"),
+        };
+        var filed = Ticket("Printer offline");
+        (filed["type"], filed["subType"], filed["item"]) = (Named(7, "Hardware"), Named(71, "Printer"), Named(712, "Toner"));
+        var partly = Ticket("New starter");
+        // A level that is not set comes as a reference with nothing in it, or does not come at all.
+        (partly["type"], partly["subType"]) = (Named(8, "Request"), new Dictionary<string, object?> { ["id"] = 0L, ["name"] = "" });
+        server.SeedTicket(filed);
+        server.SeedTicket(partly);
+        server.SeedTicket(Ticket("Unsorted"));
+        var c = Build(server);
+
+        var page = (await c.GetTicketsAsync(new TicketFilter())).Items.ToDictionary(t => t.Title);
+
+        (page["Printer offline"].TicketType, page["Printer offline"].IssueType, page["Printer offline"].SubIssueType).Should().Be(("Hardware", "Printer", "Toner"));
+        page["Printer offline"].Category.Should().Be("Hardware", "the type is still the category, as it was");
+        (page["New starter"].TicketType, page["New starter"].IssueType, page["New starter"].SubIssueType).Should().Be(("Request", null, null));
+        (page["Unsorted"].TicketType, page["Unsorted"].IssueType, page["Unsorted"].SubIssueType).Should().Be((null, null, null));
+    }
+
+    [Fact]
     public async Task A_rule_saved_from_discovery_can_match_an_incoming_ticket()
     {
         var connector = Build(WithExistingTicket(Clock));

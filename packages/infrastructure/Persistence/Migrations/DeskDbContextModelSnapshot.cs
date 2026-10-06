@@ -3278,14 +3278,26 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PsaCreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("PsaIssueType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<string>("PsaPriority")
                         .HasColumnType("text");
 
                     b.Property<string>("PsaStatus")
                         .HasColumnType("text");
 
+                    b.Property<string>("PsaSubIssueType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<string>("PsaSubcategory")
                         .HasColumnType("text");
+
+                    b.Property<string>("PsaTicketType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("QueueOrBoard")
                         .HasColumnType("text");

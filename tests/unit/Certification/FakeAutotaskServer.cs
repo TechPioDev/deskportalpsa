@@ -56,6 +56,16 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         new() { ["id"] = 72L, ["companyID"] = 2L, ["referenceTitle"] = "GLOBEX-FW", ["isActive"] = true },
     ];
 
+    /// <summary>
+    /// Files a ticket under a type, an issue and a sub-issue, as a technician would in Autotask. Ids,
+    /// as Autotask holds them: 1 Service Request, 2 Incident; 10 Hardware, 11 Software; 100 Printer, 101 Email.
+    /// </summary>
+    public void FileTicketUnder(long ticketId, string? ticketType, string? issueType, string? subIssueType)
+    {
+        var ticket = _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId);
+        (ticket["ticketType"], ticket["issueType"], ticket["subIssueType"]) = (ticketType, issueType, subIssueType);
+    }
+
     /// <summary>Puts a configuration item on a ticket, as a technician picking the device in Autotask would.</summary>
     public void SetTicketConfigurationItem(long ticketId, long configurationItemId)
         => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["configurationItemID"] = configurationItemId;
@@ -202,7 +212,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
     /// HTTP 500 "Could not convert string to integer", so the fake must too — the connector shipped
     /// sending "In Progress" for months because this fake accepted anything.
     /// </summary>
-    private static readonly string[] NumericFields = ["status", "priority", "queueID", "ticketCategory"];
+    private static readonly string[] NumericFields = ["status", "priority", "queueID", "ticketCategory", "ticketType", "issueType", "subIssueType"];
 
     private HttpResponseMessage? RejectNonNumericPicklists(Dictionary<string, object?> input)
     {
@@ -239,6 +249,9 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             ["priority"] = input.GetValueOrDefault("priority"),
             ["queueID"] = input.GetValueOrDefault("queueID"),
             ["ticketCategory"] = input.GetValueOrDefault("ticketCategory"),
+            ["ticketType"] = input.GetValueOrDefault("ticketType"),
+            ["issueType"] = input.GetValueOrDefault("issueType"),
+            ["subIssueType"] = input.GetValueOrDefault("subIssueType"),
             ["companyID"] = input.GetValueOrDefault("companyID"),
             ["configurationItemID"] = input.GetValueOrDefault("configurationItemID"),
             ["createDate"] = now,
@@ -445,7 +458,11 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         "{\"fields\":[" +
         "{\"name\":\"status\",\"picklistValues\":[{\"value\":\"1\",\"label\":\"New\",\"isActive\":true},{\"value\":\"5\",\"label\":\"Complete\",\"isActive\":true},{\"value\":\"7\",\"label\":\"Resolved\",\"isActive\":true}]}," +
         "{\"name\":\"priority\",\"picklistValues\":[{\"value\":\"1\",\"label\":\"High\",\"isActive\":true}]}," +
-        "{\"name\":\"queueID\",\"picklistValues\":[{\"value\":\"8\",\"label\":\"Service Desk\",\"isActive\":true}]}]}";
+        "{\"name\":\"queueID\",\"picklistValues\":[{\"value\":\"8\",\"label\":\"Service Desk\",\"isActive\":true}]}," +
+        "{\"name\":\"ticketType\",\"picklistValues\":[{\"value\":\"1\",\"label\":\"Service Request\",\"isActive\":true},{\"value\":\"2\",\"label\":\"Incident\",\"isActive\":true}]}," +
+        "{\"name\":\"issueType\",\"picklistValues\":[{\"value\":\"10\",\"label\":\"Hardware\",\"isActive\":true},{\"value\":\"11\",\"label\":\"Software\",\"isActive\":true}]}," +
+        // A sub-issue belongs to an issue, and the same word turns up under more than one.
+        "{\"name\":\"subIssueType\",\"picklistValues\":[{\"value\":\"100\",\"label\":\"Printer\",\"parentValue\":\"10\",\"isActive\":true},{\"value\":\"101\",\"label\":\"Email\",\"parentValue\":\"11\",\"isActive\":true},{\"value\":\"102\",\"label\":\"Other\",\"parentValue\":\"10\",\"isActive\":true},{\"value\":\"103\",\"label\":\"Other\",\"parentValue\":\"11\",\"isActive\":true}]}]}";
 
     private static Dictionary<string, object?> Parse(string body) =>
         string.IsNullOrEmpty(body) ? [] :
