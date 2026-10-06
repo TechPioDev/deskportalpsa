@@ -179,6 +179,37 @@ public partial class WorkPlanTests
         (await w.Db.PushNotifications.CountAsync()).Should().Be(0, "nobody is told about their own planning");
     }
 
+    /// <summary>
+    /// "Autotask 43829" says which ticket only while there is one Autotask account. With two, both
+    /// can have a 43829, so the reference names the connection - and with one, it reads as it did.
+    /// </summary>
+    [Fact]
+    public async Task A_reference_names_the_connection_once_there_are_two_accounts_of_the_same_PSA()
+    {
+        var w = await WorldAsync();
+        var a = new PsaConnection { MspOrganizationId = OrgA, Name = "Customer A", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://a", CredentialSecretRef = "mem://a" };
+        w.Db.PsaConnections.Add(a);
+        (await w.Db.Tickets.SingleAsync(t => t.Id == w.Autotask.Id)).PsaConnectionId = a.Id;
+        await w.Db.SaveChangesAsync();
+
+        var one = await w.As(w.Jason).Plans.CreateAsync(w.Jason.Id, Place(w.Autotask, w.Jason, Monday, "09:30", "10:30"));
+        one.Reference.Should().Be("Autotask 43829", "one Autotask account: its name adds nothing");
+
+        // Put away still counts: its tickets are still here to be told apart from.
+        w.Db.PsaConnections.Add(new PsaConnection
+        {
+            MspOrganizationId = OrgA, Name = "Customer B", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://b",
+            CredentialSecretRef = "mem://b", ArchivedAt = w.Clock.GetUtcNow(), IsEnabled = false,
+        });
+        await w.Db.SaveChangesAsync();
+
+        var two = await w.As(w.Jason).Plans.CreateAsync(w.Jason.Id, Place(w.Autotask, w.Jason, Monday, "11:00", "12:00"));
+        two.Reference.Should().Be("Customer A 43829");
+        (await w.As(w.Jason).Plans.ForTicketAsync(w.Jason.Id, w.Autotask.Id)).Select(p => p.Reference).Distinct().Should().Equal("Customer A 43829");
+        (await w.Db.AuditLog.OrderBy(x => x.CreatedAt).Where(x => x.Action == "workforce.allocation.created").Select(x => x.DetailJson).ToListAsync())
+            .Last().Should().Contain("Customer A 43829");
+    }
+
     [Fact]
     public async Task An_Autotask_ticket_is_planned_as_itself_with_nothing_copied_and_nothing_sent()
     {

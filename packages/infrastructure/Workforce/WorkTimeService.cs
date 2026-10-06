@@ -40,6 +40,17 @@ public sealed class WorkTimeService(
 {
     /// <summary>A clock stopped under this is thrown away rather than logged: nothing was done.</summary>
     public const int MinimumLoggedSeconds = 60;
+
+    private ReferenceLabels? _labels;
+
+    /// <summary>
+    /// One ticket's reference. The connections are read once for the request, and only where the
+    /// reference depends on one: the team's own tickets carry a number of their own.
+    /// </summary>
+    private async Task<string> ReferenceAsync(Ticket t, CancellationToken ct)
+        => ReferenceLabels.Needed(t.Number, t.Provider)
+            ? WorkPlanService.Reference(t, _labels ??= await ReferenceLabels.LoadAsync(db, ct))
+            : WorkPlanService.Reference(t);
     public const int NoteMax = 2000;
 
     // ---- the clock ------------------------------------------------------------------------------
@@ -321,7 +332,7 @@ public sealed class WorkTimeService(
             var lastEnd = slots.Count == 0 ? (DateTimeOffset?)null : slots.Max(s => s.EndsAt);
             var firstActual = ticketEntries.Select(e => e.EntryDate).Concat(live.Where(s => s.TicketId == ticketId).Select(s => s.StartedAt)).DefaultIfEmpty(now).Min();
             items.Add(new MyDayItemDto(ticketId, sees,
-                sees ? WorkPlanService.Reference(ticket) : null, sees ? ticket.Title : null, sees ? clientNames.GetValueOrDefault(ticketId) : null,
+                sees ? await ReferenceAsync(ticket, ct) : null, sees ? ticket.Title : null, sees ? clientNames.GetValueOrDefault(ticketId) : null,
                 WorkPlanService.Source(ticket.Origin, ticket.Provider), sees ? ticket.PortalStatus : null, finished, sees ? ticket.PortalPriority : null, sees ? ticket.SlaDueAt : null,
                 slots, planned, tentative, actual,
                 planned > 0 ? (int)Math.Round(actual / 60.0) - planned : null,
@@ -550,7 +561,7 @@ public sealed class WorkTimeService(
         var outside = day is not null
             ? !day.IsWorkingDay || day.WindowStart is null || day.WindowEnd is null || s.StartedAt < day.WindowStart || s.StartedAt >= day.WindowEnd
             : false;
-        return new WorkSessionDto(s.Id, s.AppUserId, s.TicketId, sees, sees ? WorkPlanService.Reference(ticket) : null, sees ? ticket.Title : null, clientName,
+        return new WorkSessionDto(s.Id, s.AppUserId, s.TicketId, sees, sees ? await ReferenceAsync(ticket, ct) : null, sees ? ticket.Title : null, clientName,
             TicketStatusRules.Finished(ticket.PortalStatus), s.AllocationId, s.Status, s.PauseReason, s.StartedAt, s.EndedAt,
             s.ActiveSeconds, open?.StartedAt, s.TimeEntryId, sync, syncError, s.Note, outside, s.Version, canControl);
     }

@@ -576,7 +576,10 @@ public sealed partial class WorkforceAnalyticsService(
     {
         var result = new Dictionary<Guid, TicketMeta>();
         if (ticketIds.Count == 0) return result;
-        var connections = await db.PsaConnections.AsNoTracking().ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+        // Read once, for both jobs: a source's name, and whether a reference has to name its connection.
+        var known = await db.PsaConnections.AsNoTracking().Select(c => new { c.Id, c.MspOrganizationId, c.Provider, c.Name }).ToListAsync(ct);
+        var connections = known.ToDictionary(c => c.Id, c => c.Name);
+        var labels = ReferenceLabels.From(known.Select(c => (c.Id, c.MspOrganizationId, c.Provider, c.Name)));
         var visibleQuery = await tickets.VisibleAsync(db.Tickets.AsNoTracking(), callerId, Permissions.TicketsViewAll, ct);
         var rows = new List<TicketRow>();
         var visible = new HashSet<Guid>();
@@ -606,7 +609,7 @@ public sealed partial class WorkforceAnalyticsService(
             var isFinished = TicketStatusRules.Finished(r.Status);
             var finished = mayOpen && isFinished;
             // Title, client, priority, status, due date and completion are the ticket's own: only for someone who may open it.
-            result[r.Id] = new TicketMeta(r.Id, WorkPlanService.Reference(r.Number, r.Provider, r.External), mayOpen ? r.Title : null, mayOpen ? r.ClientId : null,
+            result[r.Id] = new TicketMeta(r.Id, WorkPlanService.Reference(r.Number, r.Provider, r.External, labels.For(r.Conn)), mayOpen ? r.Title : null, mayOpen ? r.ClientId : null,
                 mayOpen && r.ClientId is { } cid ? clients.GetValueOrDefault(cid) : null, sourceKey, sourceName, mayOpen ? Blank(r.Priority) : null, r.Origin,
                 mayOpen, finished, finished ? r.ResolvedAt ?? r.ClosedAt : null, mayOpen ? r.DueAt : null, mayOpen ? r.Status : "",
                 mayOpen ? Blank(r.Category) : null, isFinished);
