@@ -491,6 +491,34 @@ which affects people today, and the security finding, and can be deployed on its
 **Nothing found makes it unsafe to begin.** Slice 1 starts now, on the branch
 `feat/psa-phase9-connector-framework`.
 
+## 20a. Decisions taken by the owner (6 October 2026)
+
+Five questions this work could not answer for itself. Each was put to the owner and answered, with
+what each answer requires.
+
+| # | Question | Decision | Required of the build |
+|---|---|---|---|
+| 1 | May one client login reach more than one company? | **Yes, only through explicit, authorized mappings of that client user to each company** | Authorization on the server on every request. Access is never inferred from an e-mail domain. Least privilege by default. No ticket of a company the user is not mapped to, ever. View and Create granted per company where the present permissions allow. Tests for a guessed id (IDOR / BOLA) and for crossing companies. Every change to a mapping audited |
+| 2 | Are outbound changes queued when the PSA is down? | **Yes, for the changes that support it.** Three states: *Pending Sync*, *Synced*, *Sync Failed* | The local side of an operation is saved only as the ownership matrix allows: a field the PSA owns is not overwritten locally because the PSA could not be reached. The operation is queued, retried with exponential backoff and jitter inside the provider's rate limits, and kept after its retries run out. An authorized person may retry it. Nothing is called *Synced* before the provider has confirmed it |
+| 3 | Does time entered directly in the PSA become worklogs here? | **Yes** | The source and provider, the external time-entry id and the connection are kept. The import is idempotent: one worklog however often polling, a webhook or a retry delivers the entry. The technician mapping, and the original time and duration, are kept. An imported worklog is plainly marked as such, and is never sent back to the PSA as a new entry |
+| 4 | Is a PSA's classification translated into the portal's own? | **Yes, only through configurable mapping.** ConnectWise type / subtype / item and Autotask ticket type / issue type / sub-issue type are kept as they are, and may be mapped to a portal **Category**, **Work Type** and **Subcategory** | Mappings belong to a connection. An unknown value is never guessed: it is *Unmapped*. A preview and mapping health. Changes audited. A technician's skills are not derived from it unless that is configured |
+| 5 | Which custom fields are shown? | **None is hard-coded.** An administrator selects a provider's custom fields and sets for each: import or ignore, the portal field it goes to, *Internal only* or *Client visible*, and read-only or editable (editable only where the provider and the security model allow) | *Internal only* is the default. No custom field reaches a client user unless it was explicitly approved for them |
+
+Three further requirements came with the answers:
+
+- **Performance before Phase 9 closes.** The three reads [performance.md](performance.md) left
+  at 3 to 6 seconds on 500,000 tickets (the dashboard summary, the ticket page's filter lists, text
+  search) are to be profiled and made faster, with before and after, the data set, the query
+  counts, the indexes added and what each costs written down. Nothing is to be hidden behind a
+  cache that can be stale or unsafe.
+- **Certification against the real PSAs.** Phase 9 is not production-certified until it has been
+  run against a real Datto Autotask and a real ConnectWise PSA test environment. A check that
+  cannot be run is recorded as **BLOCKED - TEST ENVIRONMENT REQUIRED**, never as a pass on the
+  strength of a stand-in.
+- **No merge and no deploy** without the owner's word, and Phase 10 is not begun. The delivery
+  tracker ([PHASE9_DELIVERY_TRACKER.md](PHASE9_DELIVERY_TRACKER.md)) gives each slice's branch,
+  files, migration, tests, security and performance results, limits, commit and pull-request state.
+
 ## 21. Progress
 
 | Slice | State | Evidence |
@@ -508,7 +536,7 @@ which affects people today, and the security finding, and can be deployed on its
 | 7 (second part). Performance at volume | **Built**, stacked on the first part | 7 more tests; 1,552 pass in both time-zone modes, and the volume tests and the benchmark pass on PostgreSQL 17. Measured at 10 connections and 100,000 tickets, and at 100 connections, 500,000 tickets and 1,000,000 time entries: [performance.md](performance.md). The measuring found four things and all four are fixed: a sync held every ticket it had read, so each cost more than the last (the same 5,000-ticket test: 9 min 1 s to 3 min 1 s on PostgreSQL); applying a mapping went client by client and board by board (965 queries to 49); the Connections page counted the tickets once for every connection (14.4 s to about 0.12 s at a hundred connections and half a million tickets); and a page of the ticket list read every ticket three times. Three older reads of the ticket list are measured and not changed: the dashboard summary, the filter lists and text search take 3 to 6 seconds at half a million tickets. No migration |
 | 6 (first part). "Sync now" asked for and run by the worker; the job queue's claim (R11) | **Built**, stacked on the volume slice | 22 more tests; 1,574 pass in both time-zone modes, the 73 browser tests pass in Chromium (the wizard's test now follows a sync from asked for, to running, to what it did), and on PostgreSQL 17 six workers taking the same thirty jobs take each once, with 150 saves refused. "Sync now" ran the sync inside the web request; a large first import is longer than a request is allowed to be. It is now a note on the connection that the worker reads within five seconds; the request answers at once and the card follows the sync. A background job is taken by a save of its own, checked by a version, and held for a lease, so two workers cannot run one job and a worker that stops does not strand it. One migration, additive: three columns on `psa_connections` and two on `background_jobs`, applied to PostgreSQL 17 from the generated script |
 | 4d. What a PSA files a ticket under (R6, first part) | **Built**, stacked on 6a | 8 more tests; 1,582 pass in both time-zone modes, the 73 browser tests pass in Chromium, and the web's own 12 unit tests pass (4 of them new). The portal read a ticket's category and nothing under it. It now reads Autotask's ticket type, issue type and sub-issue type and ConnectWise's type, subtype and item, keeps them as the PSA sent them, and shows them to staff on the ticket under the PSA's own names for the levels. A client is not shown them. A ticket already here gets them the next time it is read; one filed under nothing is not rewritten. Every connector must now read back what a ticket is raised under (27 contract tests each). Nothing is translated: whether the levels should also become work categories of the desk's own is the owner's question 4. One migration, additive: three nullable columns on `tickets`, applied to PostgreSQL 17 from the generated script |
-| Rest of 4, 5, 6 | Not started. Client mapping (R5) waits on the owner's decision about one client login reaching two companies; translating a PSA's levels into the portal's own work categories waits on question 4; custom fields are still to build. Slice 5 waits on the decision about status and assignment leaving write-through. Left in 6: provider-native webhooks, which need the owner's Autotask sandbox and ConnectWise test environment to be proved | |
+| Rest of 4, 5, 6 | Not started, and no longer waiting: the owner answered on 6 October (section 20a). To build: the three slow reads of the ticket list (7c); a PSA's classification mapped to a portal category, work type and subcategory (4e); custom fields chosen by an administrator; time entered in the PSA as worklogs; a client user's companies; outbound changes queued when the PSA is down (5). Left in 6: provider-native webhooks, which need the owner's Autotask sandbox and ConnectWise test environment to be proved | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
