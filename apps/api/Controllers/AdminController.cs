@@ -140,6 +140,22 @@ public sealed class AdminConnectionsController(
     [RequirePermission(Permissions.ConnectionsManage)]
     public async Task<IActionResult> MappingCoverage(Guid id, CancellationToken ct) => Ok(await svc.MappingCoverageAsync(id, ct));
 
+    /// <summary>How well this connection's mapping covers what its PSA sends.</summary>
+    [HttpGet("{id:guid}/mapping-health")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingHealth(Guid id, CancellationToken ct) => Ok(await svc.MappingHealthAsync(id, ct));
+
+    /// <summary>Sample tickets and what the rules make of each.</summary>
+    [HttpGet("{id:guid}/mapping-preview")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingPreview(Guid id, [FromQuery] int take = 10, CancellationToken ct = default)
+        => Ok(await svc.MappingPreviewAsync(id, take, ct));
+
+    /// <summary>Re-maps imported tickets still showing the PSA's own word for a value a rule now maps.</summary>
+    [HttpPost("{id:guid}/mapping-apply")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingApply(Guid id, CancellationToken ct) => Ok(await svc.ApplyMappingAsync(id, ct));
+
     /// <summary>How much an import would bring in, asked of the PSA before anything is imported.</summary>
     [HttpGet("{id:guid}/preview")]
     [RequirePermission(Permissions.ConnectionsManage)]

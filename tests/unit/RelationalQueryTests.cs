@@ -709,6 +709,44 @@ public sealed class RelationalQueryTests : IDisposable
         (await new IntegrationHealthService(_db).SnapshotAsync()).Select(c => c.Name).Should().NotContain("Away");
     }
 
+    [Fact]
+    public async Task Mapping_health_its_preview_and_applying_it_translate()
+    {
+        var connection = new PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Mapped", Provider = ProviderType.ConnectWisePsa, ApiEndpoint = "https://cw.example/",
+            CredentialSecretRef = "mem://mapped", Status = ConnectionStatus.Healthy, IsEnabled = true, DefaultTimeEntryResourceId = "api",
+        };
+        _db.PsaConnections.Add(connection);
+        Ticket Of(string status, string tech) => new()
+        {
+            MspOrganizationId = Org, PsaConnectionId = connection.Id, Provider = ProviderType.ConnectWisePsa, Origin = TicketOrigin.Psa,
+            ExternalTicketId = Guid.NewGuid().ToString("N")[..8], RequesterName = "r", RequesterEmail = "r@a.test", Title = status,
+            PsaStatus = status, PortalStatus = status, PsaPriority = "High", PortalPriority = "High",
+            AssignedTechnicianExternalId = tech, AssignedTechnicianName = "Asha Rao", QueueOrBoard = "Service Desk",
+        };
+        _db.Tickets.AddRange(Of("Complete", "42"), Of("Complete", "42"), Of("New", "api"));
+        _db.FieldMappings.Add(new Desk.Domain.Mapping.FieldMapping
+        {
+            MspOrganizationId = Org, Provider = ProviderType.ConnectWisePsa, Scope = MappingScope.ConnectionOverride, PsaConnectionId = connection.Id,
+            PortalField = "status", ExternalField = "status", ExternalValue = "Complete", PortalValue = "CLOSED", Direction = MappingDirection.Bidirectional,
+        });
+        await _db.SaveChangesAsync();
+
+        var service = new ConnectionAdminService(_db, new Desk.Infrastructure.Secrets.InMemorySecretStore(), new AuditWriter(_db, User, _tenant, _clock),
+            new OneConnector(new Desk.Connectors.Mock.MockConnector(new Desk.Connectors.Mock.MockConnectorOptions(), _clock)), new ConnectionFieldCache(),
+            new Desk.Infrastructure.Attachments.InMemoryObjectStorage(new Desk.Infrastructure.Attachments.AttachmentStorageOptions(), _clock), _clock);
+
+        var health = await service.MappingHealthAsync(connection.Id);
+        (health.Tickets, health.UnmappedTickets).Should().Be((3, 3), "the priority High is not mapped on any of them");
+        health.Technicians.Unlinked.Should().Contain(p => p.ExternalId == "42" && p.Tickets == 2);
+
+        (await service.MappingPreviewAsync(connection.Id)).Should().HaveCount(3);
+
+        (await service.ApplyMappingAsync(connection.Id)).StatusesChanged.Should().Be(2);
+        (await _db.Tickets.AsNoTracking().CountAsync(t => t.PsaConnectionId == connection.Id && t.PortalStatus == "CLOSED")).Should().Be(2);
+    }
+
     private sealed class OneConnector(Desk.PsaCore.Contracts.IServiceManagementConnector c) : Desk.Application.Connectors.IConnectorResolver
     {
         public Task<Desk.PsaCore.Contracts.IServiceManagementConnector> ResolveAsync(Guid connectionId, CancellationToken ct = default) => Task.FromResult(c);

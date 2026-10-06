@@ -379,3 +379,40 @@ public sealed record PreflightItemDto(string Key, string Name, string Outcome, s
 
 /// <summary>What stands between a connection and being switched on. A Fail blocks; a Warn is said and left to the administrator.</summary>
 public sealed record PreflightDto(bool CanEnable, IReadOnlyList<PreflightItemDto> Items);
+
+/// <summary>
+/// One value a PSA uses for a field, and what the portal makes of it. <paramref name="MapsTo"/> is
+/// null where no rule maps it. <paramref name="UnmappedTickets"/> can be less than
+/// <paramref name="Tickets"/>: a rule can map a value in one queue and not in another.
+/// <paramref name="TreatedAs"/> is how the portal counts tickets in a status nothing maps - "Open"
+/// or "Finished", read from the PSA's own word for it.
+/// </summary>
+public sealed record MappingValueDto(
+    string Value, string? MapsTo, bool ByFallbackRule, int Tickets, int UnmappedTickets, bool ListedByPsa, string? TreatedAs);
+
+public sealed record MappingFieldHealthDto(
+    string Field, string Name, int Values, int Mapped, double? MappedPct, int UnmappedTickets, IReadOnlyList<MappingValueDto> Items);
+
+/// <summary>A status the portal can be set to, and what the PSA is sent for it. A problem is said in words.</summary>
+public sealed record OutboundStatusDto(string PortalValue, string? SendsAs, string? Problem);
+
+public sealed record UnlinkedTechnicianDto(string ExternalId, string? Name, int Tickets);
+
+public sealed record TechnicianHealthDto(int Technicians, int Linked, double? LinkedPct, IReadOnlyList<UnlinkedTechnicianDto> Unlinked);
+
+/// <summary>
+/// How well a connection's mapping covers what its PSA sends. <paramref name="Level"/> is Pass,
+/// Optional (something could be mapped and need not be), Warning (tickets hold a value nothing maps,
+/// or a portal status has no PSA counterpart) or Blocking (no status is mapped at all, so finished
+/// work cannot be told from open).
+/// </summary>
+public sealed record MappingHealthDto(
+    Guid ConnectionId, string ConnectionName, DateTimeOffset CheckedAt, string Level,
+    IReadOnlyList<MappingFieldHealthDto> Fields, IReadOnlyList<OutboundStatusDto> OutboundStatuses,
+    TechnicianHealthDto Technicians, int Tickets, int UnmappedTickets, int TicketsWithoutClient, IReadOnlyList<string> Notes);
+
+/// <summary>A sample ticket: what it arrived with and what the rules make of it. A null mapped value = nothing maps it.</summary>
+public sealed record MappingPreviewRowDto(
+    string Reference, string Title, string? SourceStatus, string? MappedStatus, string? SourcePriority, string? MappedPriority, bool ReadFromPsa);
+
+public sealed record MappingApplyResultDto(int StatusesChanged, int PrioritiesChanged, IReadOnlyList<string> Changes);
