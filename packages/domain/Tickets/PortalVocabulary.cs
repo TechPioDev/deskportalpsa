@@ -2,8 +2,9 @@ namespace Desk.Domain.Tickets;
 
 /// <summary>
 /// The portal's own words for a ticket's status and priority: what a PSA's values are mapped TO.
-/// Listed once, here. The mapping screen and the mapping health check both read it, so a status the
-/// portal can be set to and a status the health check knows about cannot be two different lists.
+/// Listed once on the server, here, and read by the mapping health check. The mapping screen in
+/// the browser still carries its own copy of the same two lists; it reads this one when that
+/// screen is reworked.
 /// </summary>
 public static class PortalVocabulary
 {
