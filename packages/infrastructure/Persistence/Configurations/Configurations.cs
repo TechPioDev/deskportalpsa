@@ -147,6 +147,10 @@ public sealed class UserPsaIdentityConfig : IEntityTypeConfiguration<Desk.Domain
         // One identity per person per connection — a second row would make "who is this user in
         // Autotask" ambiguous exactly where the answer decides whose timesheet an hour lands on.
         b.HasIndex(x => new { x.AppUserId, x.PsaConnectionId }).IsUnique();
+        // And one person per PSA login on a connection. A link says "this login IS this person":
+        // with two people on one login, work done in the PSA under it was credited to whichever
+        // link was read last.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalTechnicianId }).IsUnique();
         b.HasOne(x => x.AppUser).WithMany().HasForeignKey(x => x.AppUserId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
     }
@@ -823,6 +827,56 @@ public sealed class BackgroundJobConfig : IEntityTypeConfiguration<BackgroundJob
         b.Property(x => x.JobType).HasMaxLength(100).IsRequired();
         b.Property(x => x.PayloadJson).IsRequired();
         b.HasIndex(x => new { x.Status, x.NextAttemptAt });
+    }
+}
+
+public sealed class SyncCursorConfig : IEntityTypeConfiguration<SyncCursor>
+{
+    public void Configure(EntityTypeBuilder<SyncCursor> b)
+    {
+        b.ToTable("sync_cursors");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Entity).HasMaxLength(40).IsRequired();
+        // A provider's page cursor can be a whole URL (Autotask's is).
+        b.Property(x => x.Continuation).HasMaxLength(4000);
+        b.HasIndex(x => new { x.PsaConnectionId, x.Entity }).IsUnique();
+        b.HasOne<PsaConnection>().WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class SyncRunConfig : IEntityTypeConfiguration<SyncRun>
+{
+    public void Configure(EntityTypeBuilder<SyncRun> b)
+    {
+        b.ToTable("sync_runs");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Error).HasMaxLength(1000);
+        b.Property(x => x.Notice).HasMaxLength(1000);
+        b.Property(x => x.RequestedBy).HasMaxLength(200);
+        // The lock. A second run for a connection that already has one in progress cannot be
+        // recorded, so it cannot start - whichever process it is in.
+        b.HasIndex(x => x.PsaConnectionId).HasDatabaseName("IX_sync_runs_one_running").IsUnique().HasFilter("\"Status\" = 0");
+        b.HasIndex(x => new { x.PsaConnectionId, x.StartedAt });
+        b.HasOne<PsaConnection>().WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class SyncFailureConfig : IEntityTypeConfiguration<SyncFailure>
+{
+    public void Configure(EntityTypeBuilder<SyncFailure> b)
+    {
+        b.ToTable("sync_failures");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Entity).HasMaxLength(40).IsRequired();
+        b.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Operation).HasMaxLength(40).IsRequired();
+        b.Property(x => x.Category).HasMaxLength(40).IsRequired();
+        b.Property(x => x.Message).HasMaxLength(1000).IsRequired();
+        // One open failure per record and operation: failing again updates it rather than adding a row.
+        b.HasIndex(x => new { x.PsaConnectionId, x.Entity, x.ExternalId, x.Operation })
+            .HasDatabaseName("IX_sync_failures_one_open").IsUnique().HasFilter("\"Status\" IN (0, 2)");
+        b.HasIndex(x => new { x.PsaConnectionId, x.Status, x.NextAttemptAt });
+        b.HasOne<PsaConnection>().WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 

@@ -79,6 +79,9 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<FieldMappingVersion> FieldMappingVersions => Set<FieldMappingVersion>();
     public DbSet<SyncEvent> SyncEvents => Set<SyncEvent>();
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
+    public DbSet<SyncCursor> SyncCursors => Set<SyncCursor>();
+    public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
+    public DbSet<SyncFailure> SyncFailures => Set<SyncFailure>();
     public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
     public DbSet<TicketInstruction> TicketInstructions => Set<TicketInstruction>();
     public DbSet<ClientAccessGrant> ClientAccessGrants => Set<ClientAccessGrant>();

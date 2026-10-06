@@ -182,6 +182,90 @@ public sealed class RelationalQueryTests : IDisposable
         (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.All)).Should().HaveCount(5);
     }
 
+    private Desk.Domain.Tenancy.PsaConnection NewConnection(string name) => new()
+    {
+        MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+        ApiEndpoint = "https://x", CredentialSecretRef = "m", SyncAttachments = false,
+    };
+
+    [Fact]
+    public async Task The_database_itself_allows_one_running_sync_one_open_failure_and_one_person_per_PSA_login()
+    {
+        // The rules the code checks first and the database enforces regardless: two processes can
+        // both pass a check, and only one of them can pass an index.
+        var connection = NewConnection("Autotask");
+        var other = NewConnection("Autotask - B");
+        _db.AddRange(connection, other);
+        await _db.SaveChangesAsync();
+        var now = _clock.GetUtcNow();
+        Desk.Domain.Sync.SyncRun Run(Guid c, Desk.Domain.Sync.SyncRunStatus status) => new()
+            { MspOrganizationId = Org, PsaConnectionId = c, Status = status, StartedAt = now, LeaseExpiresAt = now.AddMinutes(10) };
+        Desk.Domain.Sync.SyncFailure Failure(Desk.Domain.Sync.SyncFailureStatus status) => new()
+        {
+            MspOrganizationId = Org, PsaConnectionId = connection.Id, Entity = "ticket", ExternalId = "7", Operation = "notes",
+            Category = "Timeout", Message = "m", Attempts = 1, FirstFailedAt = now, LastFailedAt = now, Status = status,
+        };
+        async Task<bool> RefusedAsync(object row)
+        {
+            _db.Add(row);
+            try { await _db.SaveChangesAsync(); return false; }
+            catch (DbUpdateException) { _db.Entry(row).State = EntityState.Detached; return true; }
+        }
+
+        (await RefusedAsync(Run(connection.Id, Desk.Domain.Sync.SyncRunStatus.Running))).Should().BeFalse();
+        (await RefusedAsync(Run(connection.Id, Desk.Domain.Sync.SyncRunStatus.Running))).Should().BeTrue("one run in progress per connection");
+        (await RefusedAsync(Run(connection.Id, Desk.Domain.Sync.SyncRunStatus.Succeeded))).Should().BeFalse("finished runs are history, as many as there are");
+        (await RefusedAsync(Run(other.Id, Desk.Domain.Sync.SyncRunStatus.Running))).Should().BeFalse("another connection is another lock");
+
+        (await RefusedAsync(Failure(Desk.Domain.Sync.SyncFailureStatus.Pending))).Should().BeFalse();
+        (await RefusedAsync(Failure(Desk.Domain.Sync.SyncFailureStatus.NeedsReview))).Should().BeTrue("one open failure per record and operation");
+        (await RefusedAsync(Failure(Desk.Domain.Sync.SyncFailureStatus.Resolved))).Should().BeFalse("a resolved one is history");
+
+        var colleague = await _db.AppUsers.Where(u => u.Id != _me).Select(u => u.Id).FirstAsync();
+        (await RefusedAsync(new UserPsaIdentity { MspOrganizationId = Org, AppUserId = _me, PsaConnectionId = connection.Id, ExternalTechnicianId = "5" })).Should().BeFalse();
+        (await RefusedAsync(new UserPsaIdentity { MspOrganizationId = Org, AppUserId = colleague, PsaConnectionId = connection.Id, ExternalTechnicianId = "5" })).Should().BeTrue("one person per PSA login");
+        (await RefusedAsync(new UserPsaIdentity { MspOrganizationId = Org, AppUserId = colleague, PsaConnectionId = other.Id, ExternalTechnicianId = "5" })).Should().BeFalse("the same id on another account is another login");
+    }
+
+    [Fact]
+    public async Task A_sync_run_translates_and_a_ticket_the_database_refuses_costs_only_itself()
+    {
+        // The whole run on a real SQL engine: the lock, the cursor, the failure store and the state
+        // an administrator reads. And a failure that is a genuine refused save, which leaves the unit
+        // of work holding the refused row - the case the in-memory provider cannot produce.
+        var connection = NewConnection("Autotask");
+        _db.Add(connection);
+        await _db.SaveChangesAsync();
+        var connector = new StubConnector { Paged = true };
+        UnifiedTicketFor("1"); UnifiedTicketFor("2", title: null!); UnifiedTicketFor("3");
+        void UnifiedTicketFor(string id, string title = "A ticket") => connector.Tickets.Add(new Desk.PsaCore.Models.UnifiedTicket
+        {
+            ExternalId = id, Title = title, Status = "New", Priority = "Medium", RequesterExternalId = "co-1", CompanyName = "Acme",
+        });
+        Desk.Infrastructure.Sync.ConnectionSyncRunner Runner() => new(_db, new OneConnector(connector),
+            new Desk.Infrastructure.Sync.TicketSyncService(_db, new Desk.Application.Mapping.MappingEngine(), new Desk.Infrastructure.Sync.SyncEventStore(_db, _clock), _clock, new RecordingActivity()),
+            new Desk.Infrastructure.Attachments.InMemoryObjectStorage(new Desk.Infrastructure.Attachments.AttachmentStorageOptions(), _clock),
+            new Desk.Infrastructure.Attachments.HeuristicMalwareScanner(), _clock);
+
+        var run = await Runner().RunAsync(connection.Id, new Desk.Application.Sync.SyncRunRequest(Manual: true, RequestedBy: "Dalbir"));
+
+        (run.Fetched, run.Failed).Should().Be((3, 1));
+        (await _db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId == connection.Id).OrderBy(t => t.ExternalTicketId).Select(t => t.ExternalTicketId).ToListAsync())
+            .Should().Equal("1", "3");
+        var failure = await _db.SyncFailures.AsNoTracking().SingleAsync();
+        (failure.ExternalId, failure.Operation, failure.Message).Should().Be(("2", "apply", "The record could not be saved."));
+
+        var health = new SyncHealthService(_db, new AuditWriter(_db, User, _tenant, _clock), _clock);
+        var state = await health.StateAsync(connection.Id);
+        (state.Running, state.OpenFailures, state.Runs.Single().Status, state.Runs.Single().FailedRecords).Should().Be((false, 1, "Succeeded", 1));
+        (await health.FailuresAsync(connection.Id)).Should().ContainSingle();
+        await health.RetryAsync(connection.Id, failure.Id);
+
+        // A second run: the lock is free again, and the cursor it left is read back.
+        (await Runner().RunAsync(connection.Id)).Should().NotBeNull();
+        (await _db.SyncRuns.AsNoTracking().CountAsync(r => r.Status == Desk.Domain.Sync.SyncRunStatus.Running)).Should().Be(0);
+    }
+
     [Fact]
     public async Task Technician_metrics_translate_with_either_identity_and_ratings()
     {

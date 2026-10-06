@@ -3,6 +3,8 @@ using Desk.Application.Common;
 using Desk.Application.Connectors;
 using Desk.Application.Sync;
 using Desk.Domain.Enums;
+using Desk.Domain.Mapping;
+using Desk.Domain.Sync;
 using Desk.Domain.Tenancy;
 using Desk.Domain.Tickets;
 using Desk.PsaCore.Contracts;
@@ -13,10 +15,20 @@ using Microsoft.EntityFrameworkCore;
 namespace Desk.Infrastructure.Sync;
 
 /// <summary>
-/// Orchestrates a full inbound sync for one connection: resolve its connector, page tickets
-/// (incremental from the last successful sync cursor), translate + upsert each via the sync engine,
-/// then stamp the connection's health and cursor. On failure the connection is marked Degraded with
-/// the error recorded, and the exception is rethrown for the caller to surface.
+/// Runs one connection's inbound sync: takes the connection's lock, reads the tickets changed since
+/// its cursor a page at a time, applies each, and records what happened.
+///
+/// Four rules it keeps, each of which it used to break:
+/// <list type="bullet">
+/// <item>One run per connection at a time (<see cref="SyncRunCoordinator"/>).</item>
+/// <item>The cursor moves to when the read STARTED, and only once the whole read has finished. A
+/// read that runs out of pages is continued by the next run from where it stopped.</item>
+/// <item>A record that cannot be read or applied costs that record, not the run: it is kept in
+/// <see cref="SyncFailure"/> and tried again.</item>
+/// <item>A failure is never silent. What was not read is on record until it has been.</item>
+/// </list>
+/// If the run itself fails the connection is marked Degraded with the reason and the exception is
+/// rethrown for the caller to surface.
 /// </summary>
 public sealed class ConnectionSyncRunner(
     DeskDbContext db,
@@ -25,14 +37,38 @@ public sealed class ConnectionSyncRunner(
     IObjectStorage storage,
     IMalwareScanner scanner,
     TimeProvider clock,
-    Microsoft.Extensions.Logging.ILogger<ConnectionSyncRunner>? logger = null) : IConnectionSyncRunner
+    Microsoft.Extensions.Logging.ILogger<ConnectionSyncRunner>? logger = null,
+    SyncOptions? options = null) : IConnectionSyncRunner
 {
-    // Safety cap so a runaway cursor cannot loop forever. It is also, at PageSize 100, a ceiling of
-    // 5,000 tickets a run — so reaching it is reported rather than treated as a normal finish. An
-    // unreported cap is the same silent truncation that let the import stop at 100 for months.
-    private const int MaxPages = 50;
+    private readonly SyncOptions _options = options ?? SyncOptions.Default;
+    private readonly SyncRunCoordinator _runs = new(db, clock, options ?? SyncOptions.Default);
+    private readonly SyncFailureStore _failures = new(db, clock);
 
-    public async Task<SyncRunResult> RunAsync(Guid psaConnectionId, bool full = false, CancellationToken ct = default)
+    // ---- the run in progress -------------------------------------------------------------------
+    // Fields, not parameters: the helpers below record their own failures, and they are reached by
+    // a dozen paths. All null or empty outside RunAsync, where the helpers then record nothing.
+    private PsaConnection? _connection;
+    private SyncRun? _run;
+    private SyncCursor? _cursor;
+    private Dictionary<(string ExternalId, string Operation), SyncFailure> _open = [];
+    private readonly Dictionary<string, int> _failedInARow = [];
+    private readonly HashSet<string> _switchedOff = [];
+    private readonly List<string> _notices = [];
+    private bool _stopEarly;
+    private int _failed, _recovered;
+    // Tickets with a file that could not be downloaded this run: their attachments are still owed.
+    private readonly HashSet<string> _filesFailed = [];
+
+    private sealed class Tally
+    {
+        public int Fetched, Created, Updated, Skipped, Pages, Notes, NotesRemoved, Files, FilesRemoved, Retried;
+        public readonly List<string> Touched = [];
+    }
+
+    public Task<SyncRunResult> RunAsync(Guid psaConnectionId, bool full = false, CancellationToken ct = default)
+        => RunAsync(psaConnectionId, new SyncRunRequest(full), ct);
+
+    public async Task<SyncRunResult> RunAsync(Guid psaConnectionId, SyncRunRequest request, CancellationToken ct = default)
     {
         var connection = await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == psaConnectionId, ct)
             ?? throw new NotFoundException("PSA connection");
@@ -42,10 +78,20 @@ public sealed class ConnectionSyncRunner(
         if (!connection.TwoWaySync)
             return new SyncRunResult(0, 0, 0, 0, 0);
 
-        int fetched = 0, created = 0, updated = 0, skipped = 0, pages = 0, notes = 0, notesRemoved = 0, files = 0, filesRemoved = 0;
-        // External ids seen this run, for providers whose attachments can only be read per ticket.
-        var touched = new List<string>();
-        string? cursor = null;
+        var trigger = request.Full ? SyncRunTrigger.ManualFull : request.Manual ? SyncRunTrigger.Manual : SyncRunTrigger.Scheduled;
+        var run = await _runs.TryStartAsync(connection, trigger, request.RequestedBy, ct)
+            ?? throw new ConflictException(
+                "A sync is already running for this connection. It will finish by itself; there is nothing to start again.",
+                new { connectionId = psaConnectionId });
+        var runId = run.Id;
+        (_connection, _run, _cursor) = (connection, run, null);
+        (_stopEarly, _failed, _recovered) = (false, 0, 0);
+        _failedInARow.Clear();
+        _switchedOff.Clear();
+        _notices.Clear();
+        _filesFailed.Clear();
+        var tally = new Tally();
+        var more = false;
         try
         {
             // Resolving the connector (which reads and decrypts stored credentials) is inside this
@@ -58,69 +104,111 @@ public sealed class ConnectionSyncRunner(
             var capabilities = await connector.GetCapabilitiesAsync(ct);
             var rules = await ConnectionMappingRules.LoadAsync(
                 db, connection.MspOrganizationId, connection.Provider, connection.Id, ct);
+            _open = await _failures.OpenAsync(psaConnectionId, ct);
 
-            do
+            _cursor = await db.SyncCursors.FirstOrDefaultAsync(
+                c => c.PsaConnectionId == psaConnectionId && c.Entity == SyncCursor.Tickets, ct);
+            if (_cursor is null)
             {
-                var page = await connector.GetTicketsAsync(
-                    new TicketFilter
-                    {
-                        ModifiedSince = full ? null : connection.LastSuccessfulSyncAt,
-                        PageSize = 100,
-                        Cursor = cursor,
-                        CompanyIds = Csv(connection.FilterCompanyIds),
-                        QueueOrBoardIds = Csv(connection.FilterQueueIds),
-                        AssignedResourceIds = Csv(connection.FilterResourceIds),
-                        IncludeClosed = connection.ImportClosedTickets,
-                        ActiveWithinDays = connection.FilterActiveWithinDays,
-                    }, ct);
-                pages++;
+                _cursor = new SyncCursor
+                {
+                    MspOrganizationId = connection.MspOrganizationId, PsaConnectionId = psaConnectionId, Entity = SyncCursor.Tickets,
+                };
+                db.SyncCursors.Add(_cursor);
+            }
+
+            // What this run reads.
+            //  - A read that ran out of pages last time is carried on from where it stopped, with the
+            //    filter it had.
+            //  - A full run starts from nothing, and replaces any read that was under way.
+            //  - Otherwise: everything changed since the watermark. A connection that has none yet
+            //    falls back to the old single cursor, further back by an hour because that cursor was
+            //    the END of a run and says nothing for what changed during it.
+            var resuming = _cursor.Continuation is not null && !request.Full;
+            if (!resuming)
+            {
+                _cursor.Continuation = null;
+                _cursor.ContinuationSince = request.Full
+                    ? null
+                    : _cursor.Watermark ?? connection.LastSuccessfulSyncAt - _options.FirstRunOverlap;
+                _cursor.ContinuationStartedAt = run.StartedAt;
+                _cursor.ContinuationFull = request.Full;
+                _cursor.ContinuationPages = 0;
+            }
+            var since = _cursor.ContinuationSince;
+            var fullRead = _cursor.ContinuationFull;
+            await db.SaveChangesAsync(ct);
+
+            // Earlier failures first. They are the oldest work the connection owes.
+            await RetryFailuresAsync(connector, capabilities, rules, tally, ct);
+
+            var pagesThisRun = 0;
+            var next = _cursor.Continuation;
+            while (!_stopEarly)
+            {
+                PaginatedResult<UnifiedTicket> page;
+                try
+                {
+                    page = await connector.GetTicketsAsync(
+                        new TicketFilter
+                        {
+                            ModifiedSince = since,
+                            PageSize = _options.PageSize,
+                            Cursor = next,
+                            CompanyIds = Csv(_connection!.FilterCompanyIds),
+                            QueueOrBoardIds = Csv(_connection.FilterQueueIds),
+                            AssignedResourceIds = Csv(_connection.FilterResourceIds),
+                            IncludeClosed = _connection.ImportClosedTickets,
+                            ActiveWithinDays = _connection.FilterActiveWithinDays,
+                        }, ct);
+                }
+                catch (ConnectorException ex) when (resuming && pagesThisRun == 0 && next is not null
+                    && ex.Kind is ConnectorFailureKind.InvalidRequest or ConnectorFailureKind.NotFound or ConnectorFailureKind.ProviderError)
+                {
+                    // The provider no longer honours the place the last run stopped: a page cursor is
+                    // the provider's to expire. The read starts again from its first page, with the
+                    // same filter. Nothing is lost - what was applied stays applied - only re-read.
+                    Warn("Sync of connection {ConnectionId} could not resume from its saved position ({Kind}); reading again from the first page",
+                        psaConnectionId, ex.Kind);
+                    next = null;
+                    resuming = false;
+                    _cursor!.Continuation = null;
+                    _cursor.ContinuationPages = 0;
+                    continue;
+                }
+                pagesThisRun++;
+                tally.Pages++;
+
                 foreach (var ticket in page.Items)
                 {
+                    if (_stopEarly) break;
                     // Client-side guard: providers express filters differently (and some not at all),
                     // so re-apply them here to keep behaviour identical across connectors.
-                    if (!Passes(connection, ticket)) { skipped++; continue; }
+                    if (!Passes(_connection!, ticket)) { tally.Skipped++; continue; }
                     // Brand-new tickets are only created when auto-import is on; existing ones still update.
-                    if (!connection.AutoImportNewTickets && !await KnownAsync(psaConnectionId, ticket.ExternalId, ct))
-                    { skipped++; continue; }
-                    fetched++;
-                    touched.Add(ticket.ExternalId);
-                    switch (await sync.UpsertFromProviderAsync(psaConnectionId, ticket, rules, ct))
-                    {
-                        case TicketSyncOutcome.Created: created++; break;
-                        case TicketSyncOutcome.Updated: updated++; break;
-                        default: skipped++; break;
-                    }
-
-                    if (connection.ImportNotes)
-                    {
-                        var (addedNotes, removedNotes) = await ImportNotesAsync(connection, connector, ticket.ExternalId, ct);
-                        notes += addedNotes;
-                        notesRemoved += removedNotes;
-                    }
-                    await ResolveAssigneeNameAsync(psaConnectionId, connector, ticket.ExternalId, ct);
-
-                    // Time logged provider-side never reaches the portal's stored totals otherwise:
-                    // they were only rewritten when time was logged from here, so a technician's own
-                    // entry left the dashboards under-reporting.
-                    //
-                    // Keyed off the ticket being fetched at all, NOT off the upsert outcome: adding a
-                    // time entry bumps the provider's activity date (so an incremental page returns
-                    // the ticket) but changes none of the fields in the update hash, so the upsert
-                    // reports "unchanged" and a stricter guard here skipped every refresh.
-                    if (capabilities.SupportsTimeEntries)
-                        await RefreshTimeTotalsAsync(psaConnectionId, connector, ticket.ExternalId, ct);
+                    if (!_connection!.AutoImportNewTickets && !await KnownAsync(psaConnectionId, ticket.ExternalId, ct))
+                    { tally.Skipped++; continue; }
+                    await ApplyOneAsync(connector, capabilities, rules, ticket, tally, ct);
                 }
-                cursor = page.NextCursor;
-                if (!page.HasMore) { cursor = null; break; }
-            } while (cursor is not null && pages < MaxPages);
 
-            // Still more to read, but out of pages. The import is incomplete, and saying so is the
-            // difference between a known limit and data quietly missing.
-            if (cursor is not null && logger is not null)
-                Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(logger,
-                    "Sync of connection {ConnectionId} stopped at the {MaxPages}-page safety cap with more "
-                    + "tickets still to read; this run is incomplete",
-                    psaConnectionId, MaxPages);
+                // Stopped part-way through this page: the saved position stays at its start, so the
+                // next run reads the page again. Re-reading is free; skipping is not.
+                if (_stopEarly) { more = true; break; }
+
+                next = page.HasMore ? page.NextCursor : null;
+                _cursor!.Continuation = next;
+                _cursor.ContinuationPages++;
+                Progress(tally);
+                await db.SaveChangesAsync(ct);
+
+                if (next is null) break;
+                if (pagesThisRun >= _options.MaxPagesPerRun) { more = true; break; }
+            }
+            more |= _stopEarly;
+
+            if (more && !_stopEarly)
+                Info("Sync of connection {ConnectionId} read {Pages} pages this run and has more to read; the next run continues",
+                    psaConnectionId, pagesThisRun);
 
             // Attachments are swept separately, and deliberately outside the ticket loop: providers
             // do not reliably touch a ticket's modified timestamp when a file is attached, so an
@@ -129,27 +217,282 @@ public sealed class ConnectionSyncRunner(
             // Providers that cannot answer that query — ConnectWise indexes documents per record —
             // fall back to reading the tickets this run actually touched. That misses files added to
             // a quiet ticket, which is why the sweep is preferred wherever it exists.
-            if (connection.SyncAttachments && capabilities.SupportsAttachmentDownload)
-                (files, filesRemoved) = capabilities.SupportsAttachmentSweep
-                    ? await ImportAttachmentsAsync(connection, connector, full ? null : connection.LastSuccessfulSyncAt, ct)
-                    : await ImportAttachmentsPerTicketAsync(connection, connector, touched, ct);
+            //
+            // The sweep waits for the ticket read to finish: it only stores files for tickets the
+            // portal holds, and a full one removes files a complete list no longer contains.
+            if (!_stopEarly && _connection!.SyncAttachments && capabilities.SupportsAttachmentDownload)
+            {
+                if (!capabilities.SupportsAttachmentSweep)
+                    (tally.Files, tally.FilesRemoved) = await ImportAttachmentsPerTicketAsync(_connection, connector, tally.Touched, ct);
+                else if (!more)
+                    (tally.Files, tally.FilesRemoved) = await ImportAttachmentsAsync(_connection, connector, fullRead ? null : since, ct);
+            }
 
-            connection.LastSuccessfulSyncAt = clock.GetUtcNow();
-            connection.LastHealthCheckAt = clock.GetUtcNow();
-            connection.Status = ConnectionStatus.Healthy;
-            connection.LastError = null;
+            var now = clock.GetUtcNow();
+            if (!more)
+            {
+                // The whole read is done, so everything changed before it STARTED has been read.
+                // Not "now": a ticket changed while the last page was being read has a modified time
+                // before now, and a cursor at now would never ask for it again.
+                _cursor!.Watermark = (_cursor.ContinuationStartedAt ?? _run!.StartedAt) - _options.Overlap;
+                _cursor.Continuation = null;
+                _cursor.ContinuationSince = null;
+                _cursor.ContinuationStartedAt = null;
+                _cursor.ContinuationFull = false;
+                _cursor.ContinuationPages = 0;
+                _connection!.LastSuccessfulSyncAt = now;
+            }
+            _connection!.LastHealthCheckAt = now;
+            _connection.Status = ConnectionStatus.Healthy;
+            _connection.LastError = null;
+
+            Progress(tally);
+            _run!.Status = more ? SyncRunStatus.Partial : SyncRunStatus.Succeeded;
+            _run.FinishedAt = now;
+            _run.Notice = _notices.Count == 0 ? null : Shorten(string.Join(" ", _notices));
             await db.SaveChangesAsync(ct);
         }
         catch (Exception ex)
         {
-            connection.Status = ConnectionStatus.Degraded;
-            connection.LastError = ex.Message;
-            connection.LastHealthCheckAt = clock.GetUtcNow();
-            await db.SaveChangesAsync(ct);
+            // Recorded on a clean slate, and whatever the caller's token says. The failure may have
+            // BEEN a save, in which case the same unit of work would refuse this one too and the
+            // connection would go on showing its last good state.
+            await RecordRunFailureAsync(psaConnectionId, runId, tally, ex);
             throw;
         }
+        finally
+        {
+            // Outside a run the helpers record nothing: a refresh of one ticket's notes is not a run.
+            (_connection, _run, _cursor) = (null, null, null);
+            _open = [];
+        }
 
-        return new SyncRunResult(fetched, created, updated, skipped, pages, notes, files, filesRemoved, notesRemoved);
+        return new SyncRunResult(tally.Fetched, tally.Created, tally.Updated, tally.Skipped, tally.Pages,
+            tally.Notes, tally.Files, tally.FilesRemoved, tally.NotesRemoved, MoreToRead: more, Failed: _failed, Recovered: _recovered);
+    }
+
+    /// <summary>
+    /// One ticket: save it, then read what hangs off it. Whatever goes wrong here is this ticket's
+    /// problem alone - it is recorded and the run moves on. One ticket that could not be saved used
+    /// to stop the run, and so every run after it.
+    /// </summary>
+    private async Task ApplyOneAsync(
+        IServiceManagementConnector connector, ProviderCapabilities capabilities, IReadOnlyList<FieldMapping> rules,
+        UnifiedTicket ticket, Tally tally, CancellationToken ct)
+    {
+        var connectionId = _connection!.Id;
+        try
+        {
+            tally.Fetched++;
+            tally.Touched.Add(ticket.ExternalId);
+            switch (await sync.UpsertFromProviderAsync(connectionId, ticket, rules, ct))
+            {
+                case TicketSyncOutcome.Created: tally.Created++; break;
+                case TicketSyncOutcome.Updated: tally.Updated++; break;
+                default: tally.Skipped++; break;
+            }
+            Succeeded(ticket.ExternalId, SyncFailure.Operations.Apply);
+
+            if (_connection.ImportNotes)
+            {
+                var (addedNotes, removedNotes) = await ImportNotesAsync(_connection, connector, ticket.ExternalId, ct);
+                tally.Notes += addedNotes;
+                tally.NotesRemoved += removedNotes;
+            }
+            await ResolveAssigneeNameAsync(connectionId, connector, ticket.ExternalId, ct);
+
+            // Time logged provider-side never reaches the portal's stored totals otherwise:
+            // they were only rewritten when time was logged from here, so a technician's own
+            // entry left the dashboards under-reporting.
+            //
+            // Keyed off the ticket being fetched at all, NOT off the upsert outcome: adding a
+            // time entry bumps the provider's activity date (so an incremental page returns
+            // the ticket) but changes none of the fields in the update hash, so the upsert
+            // reports "unchanged" and a stricter guard here skipped every refresh.
+            if (capabilities.SupportsTimeEntries)
+                await RefreshTimeTotalsAsync(connectionId, connector, ticket.ExternalId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && !StopsTheRun(ex))
+        {
+            // The unit of work may be holding the very change that was refused. Start it again
+            // before recording anything, or the record of the failure is refused with it.
+            await ResetAsync(ct);
+            _failures.Record(_connection!, _open, ticket.ExternalId, SyncFailure.Operations.Apply, ex);
+            _failed++;
+            await db.SaveChangesAsync(ct);
+            Warn("Ticket {ExternalId} of connection {ConnectionId} could not be applied ({Category}); it will be tried again",
+                ticket.ExternalId, connectionId, SyncFailureStore.Category(ex));
+        }
+    }
+
+    /// <summary>
+    /// Tries again the failures whose time has come. Each is read fresh from the PSA and put through
+    /// the same path as any other ticket, so a success clears itself and a failure counts once more.
+    /// </summary>
+    private async Task RetryFailuresAsync(
+        IServiceManagementConnector connector, ProviderCapabilities capabilities, IReadOnlyList<FieldMapping> rules,
+        Tally tally, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        var due = _open.Values
+            .Where(f => f.Status == SyncFailureStatus.Pending && f.NextAttemptAt <= now)
+            .OrderBy(f => f.NextAttemptAt)
+            .Select(f => f.ExternalId)
+            .Distinct()
+            .Take(_options.RetriesPerRun)
+            .ToList();
+
+        foreach (var externalId in due)
+        {
+            if (_stopEarly) break;
+            tally.Retried++;
+            var before = _failed;
+            UnifiedTicket? ticket;
+            try
+            {
+                ticket = await connector.GetTicketAsync(externalId, ct);
+            }
+            catch (ConnectorException ex) when (!StopsTheRun(ex))
+            {
+                await FailedAsync(externalId, SyncFailure.Operations.Apply, ex, ct);
+                continue;
+            }
+
+            if (ticket is null)
+            {
+                // Gone from the PSA. There is nothing left to read, so nothing is still owed.
+                foreach (var key in _open.Keys.Where(k => k.ExternalId == externalId).ToList())
+                    _failures.Resolve(_open, key.ExternalId, key.Operation);
+                await db.SaveChangesAsync(ct);
+                continue;
+            }
+
+            await ApplyOneAsync(connector, capabilities, rules, ticket, tally, ct);
+            // Files owed for this ticket. A provider with no tenant-wide sweep reads every ticket
+            // this run touched at the end, this one included; one with a sweep would not look at
+            // this ticket's files again unless they were new, so they are read here.
+            if (capabilities.SupportsAttachmentSweep && _open.ContainsKey((externalId, SyncFailure.Operations.Attachments))
+                && _connection!.SyncAttachments && capabilities.SupportsAttachmentDownload)
+                await ImportAttachmentsPerTicketAsync(_connection, connector, [externalId], ct);
+            if (_failed == before) _recovered++;
+        }
+    }
+
+    // ---- what the helpers report ---------------------------------------------------------------
+
+    /// <summary>
+    /// A read for one ticket failed. Kept, so it is tried again and can be seen - it used to be
+    /// swallowed, and the run reported healthy with the notes or the hours simply not read.
+    /// </summary>
+    private async Task FailedAsync(string externalTicketId, string operation, ConnectorException error, CancellationToken ct)
+    {
+        if (_connection is null || _run is null) return; // a refresh outside a run: nothing to record against
+        if (StopsTheRun(error))
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+
+        _failures.Record(_connection, _open, externalTicketId, operation, error);
+        _failed++;
+        await db.SaveChangesAsync(ct);
+
+        var inARow = _failedInARow[operation] = _failedInARow.GetValueOrDefault(operation) + 1;
+        if (inARow < _options.FailuresInARow) return;
+
+        if (error.IsTransient)
+        {
+            // The PSA is not answering, or is asking us to slow down. Asking for the next five
+            // hundred tickets' notes will not go differently: stop, and carry on next run.
+            if (!_stopEarly)
+                _notices.Add($"The run stopped early: the PSA failed {inARow} requests in a row ({error.Kind}). It carries on from the same place next time.");
+            _stopEarly = true;
+        }
+        else if (_switchedOff.Add(operation))
+        {
+            // A refusal, not an outage: the same answer for every ticket. One line says so, in
+            // place of a failure against each of them.
+            _notices.Add($"Reading {operation} was stopped for the rest of this run after {inARow} refusals in a row ({error.Kind}): {SyncFailureStore.Describe(error)}");
+        }
+    }
+
+    private void Succeeded(string externalTicketId, string operation)
+    {
+        _failedInARow[operation] = 0;
+        if (_open.Count > 0) _failures.Resolve(_open, externalTicketId, operation);
+    }
+
+    /// <summary>The connection itself is refused: no ticket will fare better, so the run ends.</summary>
+    private static bool StopsTheRun(Exception error)
+        => error is ConnectorException { Kind: ConnectorFailureKind.Authentication };
+
+    private void Progress(Tally t)
+    {
+        if (_run is null) return;
+        _runs.Extend(_run);
+        (_run.Fetched, _run.Created, _run.Updated, _run.Skipped, _run.Pages) = (t.Fetched, t.Created, t.Updated, t.Skipped, t.Pages);
+        (_run.Notes, _run.NotesRemoved, _run.Attachments, _run.AttachmentsRemoved) = (t.Notes, t.NotesRemoved, t.Files, t.FilesRemoved);
+        (_run.FailedRecords, _run.Retried, _run.Recovered) = (_failed, t.Retried, _recovered);
+    }
+
+    /// <summary>Drops everything the unit of work is holding and loads the run's own rows again.</summary>
+    private async Task ResetAsync(CancellationToken ct)
+    {
+        var (connectionId, runId, cursorId) = (_connection!.Id, _run!.Id, _cursor?.Id);
+        db.ChangeTracker.Clear();
+        _connection = await db.PsaConnections.FirstAsync(c => c.Id == connectionId, ct);
+        _run = await db.SyncRuns.FirstAsync(r => r.Id == runId, ct);
+        _cursor = cursorId is { } id ? await db.SyncCursors.FirstOrDefaultAsync(c => c.Id == id, ct) : null;
+        _open = await _failures.OpenAsync(connectionId, ct);
+    }
+
+    private async Task RecordRunFailureAsync(Guid connectionId, Guid runId, Tally tally, Exception error)
+    {
+        var none = CancellationToken.None;
+        try
+        {
+            db.ChangeTracker.Clear();
+            var now = clock.GetUtcNow();
+            var stopped = error is OperationCanceledException;
+            var run = await db.SyncRuns.FirstOrDefaultAsync(r => r.Id == runId, none);
+            if (run is not null)
+            {
+                _run = run;
+                Progress(tally);
+                // Stopped is not failed: the process is shutting down, and the next one carries on.
+                run.Status = stopped ? SyncRunStatus.Abandoned : SyncRunStatus.Failed;
+                run.FinishedAt = now;
+                run.LeaseExpiresAt = now;
+                run.Error = stopped ? "The run was stopped before it finished." : Shorten(RunError(error));
+            }
+            if (!stopped && await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == connectionId, none) is { } connection)
+            {
+                connection.Status = ConnectionStatus.Degraded;
+                connection.LastError = error.Message;
+                connection.LastHealthCheckAt = now;
+            }
+            await db.SaveChangesAsync(none);
+        }
+        catch (Exception recording)
+        {
+            // The caller is about to be given the real failure. This one must not take its place.
+            if (logger is not null)
+                Microsoft.Extensions.Logging.LoggerExtensions.LogError(logger, recording,
+                    "The failure of a sync run for connection {ConnectionId} could not be recorded", connectionId);
+        }
+    }
+
+    /// <summary>A failed run's reason, for an administrator: the message where it was written for one, the kind otherwise.</summary>
+    private static string RunError(Exception error)
+        => error is ConnectorException or DeskException ? error.Message : SyncFailureStore.Describe(error);
+
+    private static string Shorten(string text) => text.Length <= 1000 ? text : text[..1000];
+
+    private void Warn(string message, params object?[] args)
+    {
+        if (logger is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(logger, message, args);
+    }
+
+    private void Info(string message, params object?[] args)
+    {
+        if (logger is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(logger, message, args);
     }
 
     public async Task<int> RefreshNotesAsync(Guid psaConnectionId, IReadOnlyCollection<string> externalTicketIds, CancellationToken ct = default)
@@ -201,11 +544,20 @@ public sealed class ConnectionSyncRunner(
             t => t.PsaConnectionId == connection.Id && t.ExternalTicketId == externalTicketId, ct);
         if (ticket is null) return (0, 0);
 
+        // Refused for every ticket so far this run: asking again for this one changes nothing.
+        if (_switchedOff.Contains(SyncFailure.Operations.Notes)) return (0, 0);
+
         IReadOnlyList<UnifiedTicketNote> incoming;
         // A read that throws leaves an UNKNOWN list, not an empty one — returning here also means
         // nothing is reconciled, so a rate-limited ticket never loses its thread.
         try { incoming = await connector.GetNotesAsync(externalTicketId, ct); }
-        catch (ConnectorException) { return (0, 0); } // one ticket's notes must not fail the whole run
+        catch (ConnectorException ex)
+        {
+            // One ticket's notes must not fail the whole run - and must not be forgotten either.
+            await FailedAsync(externalTicketId, SyncFailure.Operations.Notes, ex, ct);
+            return (0, 0);
+        }
+        Succeeded(externalTicketId, SyncFailure.Operations.Notes);
 
         // TIME-ENTRY notes. Both PSAs show a time entry's notes in the ticket's own note stream —
         // ConnectWise's "All notes" view is ticket notes PLUS time-entry notes — but the ticket-notes
@@ -447,9 +799,19 @@ public sealed class ConnectionSyncRunner(
     {
         if (_timeEntriesThisRun.TryGetValue(externalTicketId, out var cached)) return cached;
 
-        IReadOnlyList<UnifiedTimeEntry>? entries;
-        try { entries = await connector.GetTimeEntriesAsync(externalTicketId, ct); }
-        catch (ConnectorException) { entries = null; }
+        IReadOnlyList<UnifiedTimeEntry>? entries = null;
+        if (!_switchedOff.Contains(SyncFailure.Operations.Time))
+        {
+            try
+            {
+                entries = await connector.GetTimeEntriesAsync(externalTicketId, ct);
+                Succeeded(externalTicketId, SyncFailure.Operations.Time);
+            }
+            catch (ConnectorException ex)
+            {
+                await FailedAsync(externalTicketId, SyncFailure.Operations.Time, ex, ct);
+            }
+        }
 
         _timeEntriesThisRun[externalTicketId] = entries;
         return entries;
@@ -484,16 +846,26 @@ public sealed class ConnectionSyncRunner(
         var complete = new List<string>();
         foreach (var externalTicketId in externalTicketIds.Distinct())
         {
+            if (_switchedOff.Contains(SyncFailure.Operations.Attachments) || _stopEarly) break;
             try
             {
                 foreach (var file in await connector.GetAttachmentsAsync(externalTicketId, ct))
                     refs.Add(new ProviderAttachmentRef(externalTicketId, file));
                 complete.Add(externalTicketId);
             }
-            catch (ConnectorException) { /* one ticket's files must not fail the run */ }
+            catch (ConnectorException ex)
+            {
+                // One ticket's files must not fail the run - and are owed until they are read.
+                await FailedAsync(externalTicketId, SyncFailure.Operations.Attachments, ex, ct);
+            }
         }
         if (complete.Count == 0) return (0, 0);
-        return await StoreAttachmentsAsync(connection, connector, refs, complete, ct);
+        var stored = await StoreAttachmentsAsync(connection, connector, refs, complete, ct);
+        // Settled only where the list was read AND every file in it arrived.
+        foreach (var externalTicketId in complete)
+            if (!_filesFailed.Contains(externalTicketId))
+                Succeeded(externalTicketId, SyncFailure.Operations.Attachments);
+        return stored;
     }
 
     /// <summary>
@@ -508,7 +880,14 @@ public sealed class ConnectionSyncRunner(
     {
         ProviderAttachmentSweep sweep;
         try { sweep = await connector.GetRecentAttachmentsAsync(since, ct); }
-        catch (ConnectorException) { return (0, 0); } // files must not fail the whole run
+        catch (ConnectorException ex)
+        {
+            // Files must not fail the whole run. But a sweep that was not read is said, not passed
+            // over: the next one asks from the same point only if this run does not finish clean.
+            if (_run is not null && StopsTheRun(ex)) throw;
+            if (_run is not null) _notices.Add($"The attachment sweep could not be read ({ex.Kind}); files added since the last run are not in yet.");
+            return (0, 0);
+        }
         var incoming = sweep.Items;
 
         // A DATED sweep returns only recent files, so a file's absence from it says nothing about
@@ -597,7 +976,14 @@ public sealed class ConnectionSyncRunner(
 
             DownloadedAttachment? payload;
             try { payload = await connector.DownloadAttachmentAsync(externalTicketId, file.ExternalId, ct); }
-            catch (ConnectorException) { continue; }
+            catch (ConnectorException ex)
+            {
+                // Owed, and on record: a dated sweep will not offer this file again once the cursor
+                // has moved past the day it was attached.
+                _filesFailed.Add(externalTicketId);
+                await FailedAsync(externalTicketId, SyncFailure.Operations.Attachments, ex, ct);
+                continue;
+            }
             // No bytes means the provider cannot serve this file. Recording metadata alone would put
             // an undownloadable row in the customer's list, so skip it and retry on the next run.
             if (payload is null || payload.Content.Length == 0) continue;

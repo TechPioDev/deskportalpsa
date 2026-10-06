@@ -57,8 +57,13 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     /// <summary>How many times the runner swept for attachments.</summary>
     public int AttachmentSweeps { get; private set; }
 
+    /// <summary>Attachment ids whose bytes the provider fails to serve.</summary>
+    public HashSet<string> DownloadFailsFor { get; } = [];
+
     public Task<DownloadedAttachment?> DownloadAttachmentAsync(string ticketId, string attachmentId, CancellationToken ct = default)
     {
+        if (DownloadFailsFor.Contains(attachmentId))
+            throw new ConnectorException(ConnectorFailureKind.Timeout, "download timed out");
         var hit = Attachments.GetValueOrDefault(ticketId, []).FirstOrDefault(a => a.Meta.ExternalId == attachmentId);
         return Task.FromResult(hit.Meta is null
             ? null
@@ -73,13 +78,42 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
 
     public ProviderType Provider => provider;
 
+    /// <summary>Every ticket request the runner made, in order: what it asked for, and from where.</summary>
+    public List<TicketFilter> TicketRequests { get; } = [];
+
+    /// <summary>
+    /// Serve tickets as a real provider does: a page at a time (the cursor is the offset), and only
+    /// those changed since the date asked for. Off by default - most tests want one page of everything.
+    /// </summary>
+    public bool Paged { get; set; }
+
+    /// <summary>Runs on every ticket request, before it is answered; may throw as the provider would.</summary>
+    public Func<TicketFilter, ConnectorException?>? OnTicketRequest { get; set; }
+
     public Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
-        => Task.FromResult(new PaginatedResult<UnifiedTicket>(Tickets, null, false));
+    {
+        TicketRequests.Add(filter);
+        if (OnTicketRequest?.Invoke(filter) is { } failure) throw failure;
+        if (!Paged) return Task.FromResult(new PaginatedResult<UnifiedTicket>(Tickets, null, false));
+
+        var matching = Tickets
+            .Where(t => filter.ModifiedSince is not { } since || t.ModifiedAt is null || t.ModifiedAt >= since)
+            .ToList();
+        var offset = int.Parse(filter.Cursor ?? "0");
+        var items = matching.Skip(offset).Take(filter.PageSize).ToList();
+        var next = offset + items.Count;
+        var more = next < matching.Count;
+        return Task.FromResult(new PaginatedResult<UnifiedTicket>(items, more ? next.ToString() : null, more));
+    }
+
+    /// <summary>Tickets whose notes cannot be read, and how the provider says so.</summary>
+    public Dictionary<string, ConnectorException> NoteReadFailureFor { get; } = [];
 
     public Task<IReadOnlyList<UnifiedTicketNote>> GetNotesAsync(string ticketId, CancellationToken ct = default)
     {
         NoteReads++;
         if (NoteReadFailure is not null) throw NoteReadFailure;
+        if (NoteReadFailureFor.TryGetValue(ticketId, out var failure)) throw failure;
         return Task.FromResult<IReadOnlyList<UnifiedTicketNote>>(Notes.GetValueOrDefault(ticketId, []));
     }
 
@@ -176,9 +210,13 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     /// <summary>How many times the runner asked for time — proves it does not ask needlessly.</summary>
     public int TimeReads { get; private set; }
 
+    /// <summary>Tickets whose time entries cannot be read, and how the provider says so.</summary>
+    public Dictionary<string, ConnectorException> TimeReadFailureFor { get; } = [];
+
     public Task<IReadOnlyList<UnifiedTimeEntry>> GetTimeEntriesAsync(string ticketId, CancellationToken ct = default)
     {
         TimeReads++;
+        if (TimeReadFailureFor.TryGetValue(ticketId, out var failure)) throw failure;
         return Task.FromResult<IReadOnlyList<UnifiedTimeEntry>>(TimeEntries.GetValueOrDefault(ticketId, []));
     }
     /// <summary>When set, pushing time throws it — how a provider REJECTS a payload it dislikes.</summary>
