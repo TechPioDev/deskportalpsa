@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeftRight, Link2, AlertTriangle, RefreshCw, ShieldCheck, CheckCircle2, ChevronDown,
@@ -82,6 +82,16 @@ export default function MappingsPage() {
   const [tab, setTab] = useState<TabKey>('status');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+
+  // A link from a connection's mapping health names the connection and the tab to open on. Read
+  // from the address once the page is in the browser, so the page itself stays static.
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const connection = query.get('connection');
+    if (connection) setConnId(connection);
+    const wanted = query.get('tab');
+    if (wanted && TABS.some((t) => t.key === wanted)) setTab(wanted as TabKey);
+  }, []);
 
   const conn = connections?.find((c) => c.id === connId) ?? connections?.[0];
   const provider = conn ? Number(conn.provider) : null;

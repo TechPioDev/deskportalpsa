@@ -386,6 +386,45 @@ export const PreflightSchema = z.object({
 });
 export type Preflight = z.infer<typeof PreflightSchema>;
 
+/**
+ * One value a PSA uses for a field and what the portal makes of it. `mapsTo` null = nothing maps
+ * it. `treatedAs` says how the portal counts tickets in a status nothing maps: "Open" or "Finished".
+ */
+const MappingValueSchema = z.object({
+  value: z.string(), mapsTo: z.string().nullable(), byFallbackRule: z.boolean().default(false),
+  tickets: z.number(), unmappedTickets: z.number(), listedByPsa: z.boolean(), treatedAs: z.string().nullable().default(null),
+});
+const MappingFieldHealthSchema = z.object({
+  field: z.string(), name: z.string(), values: z.number(), mapped: z.number(), mappedPct: z.number().nullable(),
+  unmappedTickets: z.number(), items: z.array(MappingValueSchema),
+});
+export type MappingFieldHealth = z.infer<typeof MappingFieldHealthSchema>;
+
+/** How well a connection's mapping covers what its PSA sends. `level`: Pass, Optional, Warning or Blocking. */
+export const ConnectionMappingHealthSchema = z.object({
+  connectionId: z.string(), connectionName: z.string(), checkedAt: z.string(), level: z.string(),
+  fields: z.array(MappingFieldHealthSchema),
+  outboundStatuses: z.array(z.object({ portalValue: z.string(), sendsAs: z.string().nullable(), problem: z.string().nullable() })),
+  technicians: z.object({
+    technicians: z.number(), linked: z.number(), linkedPct: z.number().nullable(),
+    unlinked: z.array(z.object({ externalId: z.string(), name: z.string().nullable(), tickets: z.number() })),
+  }),
+  tickets: z.number(), unmappedTickets: z.number(), ticketsWithoutClient: z.number(), notes: z.array(z.string()).default([]),
+});
+export type ConnectionMappingHealth = z.infer<typeof ConnectionMappingHealthSchema>;
+
+/** A sample ticket: what it arrived with and what the rules make of it. A null mapped value = nothing maps it. */
+export const MappingPreviewRowSchema = z.object({
+  reference: z.string(), title: z.string(), sourceStatus: z.string().nullable(), mappedStatus: z.string().nullable(),
+  sourcePriority: z.string().nullable(), mappedPriority: z.string().nullable(), readFromPsa: z.boolean().default(false),
+});
+export type MappingPreviewRow = z.infer<typeof MappingPreviewRowSchema>;
+
+export const MappingApplyResultSchema = z.object({
+  statusesChanged: z.number(), prioritiesChanged: z.number(), changes: z.array(z.string()).default([]),
+});
+export type MappingApplyResult = z.infer<typeof MappingApplyResultSchema>;
+
 /** A record the sync could not read or apply. Kept, and tried again until it goes through. */
 export const SyncFailureSchema = z.object({
   id: z.string(), entity: z.string(), externalId: z.string(), operation: z.string(), category: z.string(),

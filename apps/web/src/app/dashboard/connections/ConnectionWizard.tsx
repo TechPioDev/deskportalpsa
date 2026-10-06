@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { api, type ConnectionSettings } from '@/lib/api';
 import type { ConnectionSummary, ProviderCatalogEntry } from '@/lib/types';
+import { Sample } from './MappingHealth';
 
 // In this order because each step needs the one before: nothing can be tested until it is saved,
 // nothing discovered until the PSA has let the portal in, nothing previewed until the scope is set.
@@ -135,6 +136,12 @@ export function ConnectionWizard({ providers, resume, onClose, onEnabled }: {
   const coverage = useQuery({
     queryKey: ['wizard-coverage', connectionId],
     queryFn: () => api.connectionMappingCoverage(connectionId!),
+    enabled: step === 6 && !!connectionId, retry: false, staleTime: 0,
+  });
+
+  const sample = useQuery({
+    queryKey: ['wizard-sample', connectionId],
+    queryFn: () => api.connectionMappingPreview(connectionId!, 5),
     enabled: step === 6 && !!connectionId, retry: false, staleTime: 0,
   });
 
@@ -409,9 +416,11 @@ export function ConnectionWizard({ providers, resume, onClose, onEnabled }: {
                     </div>
                   ))}
                 </div>
+                {/* What the rules make of real tickets: read from the PSA, mapped, and not kept. */}
+                <Sample rows={sample.data} loading={sample.isLoading} error={sample.isError ? message(sample.error, 'A sample of tickets could not be read.') : null} />
                 <p className="flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
-                  <a href="/dashboard/mappings" target="_blank" rel="noreferrer" className="font-medium text-brand underline underline-offset-2">Open Field Mapping in a new tab</a>
-                  <button type="button" onClick={() => coverage.refetch()} className="inline-flex items-center gap-1 rounded border border-[var(--border)] px-2 py-1 font-medium hover:bg-[var(--bg)]">
+                  <a href={`/dashboard/mappings?connection=${connectionId}&tab=status`} target="_blank" rel="noreferrer" className="font-medium text-brand underline underline-offset-2">Open Field Mapping in a new tab</a>
+                  <button type="button" onClick={() => { coverage.refetch(); sample.refetch(); }} className="inline-flex items-center gap-1 rounded border border-[var(--border)] px-2 py-1 font-medium hover:bg-[var(--bg)]">
                     <RefreshCw size={12} className={coverage.isFetching ? 'animate-spin' : undefined} aria-hidden="true" /> Check again
                   </button>
                   You can also map them after the connection is on.

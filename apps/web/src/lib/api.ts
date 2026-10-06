@@ -8,6 +8,8 @@ import {
   ProviderCatalogEntrySchema, SyncStateSchema, SyncFailureSchema,
   type ProviderCatalogEntry, type SyncState, type SyncFailure,
   ConnectionCheckReportSchema, ConnectionMappingCoverageSchema, ConnectionPreviewSchema, PreflightSchema,
+  ConnectionMappingHealthSchema, MappingPreviewRowSchema, MappingApplyResultSchema,
+  type ConnectionMappingHealth, type MappingPreviewRow, type MappingApplyResult,
   type ConnectionCheckReport, type ConnectionMappingCoverage, type ConnectionPreview, type Preflight,
   MappingRuleSchema, type MappingRule, MappingSnapshotStatusSchema, type MappingSnapshotStatus,
   type TicketDetail, type TicketListItem, type Notification, type Profile,
@@ -1106,6 +1108,14 @@ export const api = {
     request(`/api/admin/connections/${id}/check`, ConnectionCheckReportSchema, { method: 'POST' }) as Promise<ConnectionCheckReport>,
   connectionMappingCoverage: (id: string) =>
     request(`/api/admin/connections/${id}/mapping-coverage`, ConnectionMappingCoverageSchema) as Promise<ConnectionMappingCoverage>,
+  /** How well the connection's mapping covers what its PSA sends, worked out from its tickets each time. */
+  connectionMappingHealth: (id: string) =>
+    request(`/api/admin/connections/${id}/mapping-health`, ConnectionMappingHealthSchema) as Promise<ConnectionMappingHealth>,
+  connectionMappingPreview: (id: string, take = 10) =>
+    request(`/api/admin/connections/${id}/mapping-preview?take=${take}`, z.array(MappingPreviewRowSchema)) as Promise<MappingPreviewRow[]>,
+  /** Re-maps imported tickets still showing the PSA's own word for a value a rule now maps. */
+  applyConnectionMapping: (id: string) =>
+    request(`/api/admin/connections/${id}/mapping-apply`, MappingApplyResultSchema, { method: 'POST' }) as Promise<MappingApplyResult>,
   connectionPreview: (id: string) =>
     request(`/api/admin/connections/${id}/preview`, ConnectionPreviewSchema) as Promise<ConnectionPreview>,
   connectionPreflight: (id: string) =>
