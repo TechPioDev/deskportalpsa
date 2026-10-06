@@ -73,6 +73,8 @@ public sealed class SatisfactionService(DeskDbContext db, TimeProvider clock) : 
                 ClientName = db.ClientCompanies.Where(c => c.Id == s.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                 Reference = db.Tickets.Where(t => t.Id == s.TicketId).Select(t => t.Number ?? t.ExternalTicketId).FirstOrDefault(),
                 Title = db.Tickets.Where(t => t.Id == s.TicketId).Select(t => t.Title).FirstOrDefault(),
+                // The PSA account the rated ticket came from: a PSA login is a person only within it.
+                Conn = db.Tickets.Where(t => t.Id == s.TicketId).Select(t => t.PsaConnectionId).FirstOrDefault(),
             })
             .ToListAsync(ct);
 
@@ -86,7 +88,7 @@ public sealed class SatisfactionService(DeskDbContext db, TimeProvider clock) : 
 
         var byTech = rows
             .GroupBy(r => r.TechnicianAppUserId is null && r.TechnicianExternalId is null
-                ? "" : PersonKey.For(r.TechnicianAppUserId, r.TechnicianExternalId))
+                ? "" : PersonKey.For(r.TechnicianAppUserId, r.Conn, r.TechnicianExternalId))
             .Select(g => Group(g.Key, g.Key == "" ? "Nobody held it" : g.First().TechnicianName ?? "Unknown", g.Select(r => r.Rating).ToList()))
             .OrderByDescending(g => g.Ratings).ThenBy(g => g.Name).ToList();
         var byClient = rows

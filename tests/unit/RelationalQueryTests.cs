@@ -118,7 +118,7 @@ public sealed class RelationalQueryTests : IDisposable
         var page = await reads.PageAsync(new TicketQuery(
             Q: "swelling", Status: "IN_PROGRESS", Priority: "HIGH", Openness: "open", MineOnly: true, FollowingOnly: true,
             UnassignedOnly: true, OverdueOnly: true, DueSoonOnly: true, CompanyName: "Acme", QueueName: "Internal",
-            ConnectionName: "Autotask", PersonKey: PersonKey.For(_me, null), RaisedSince: DateTimeOffset.UtcNow.AddDays(-30),
+            ConnectionName: "Autotask", PersonKey: PersonKey.For(_me, null, null), RaisedSince: DateTimeOffset.UtcNow.AddDays(-30),
             Kind: "internal", Skip: 0, Take: 10));
         page.Total.Should().Be(0);
         (await reads.PageAsync(new TicketQuery(PersonKey: "x:123", Skip: 1, Take: 5))).Total.Should().BeGreaterThanOrEqualTo(0);
@@ -292,9 +292,15 @@ public sealed class RelationalQueryTests : IDisposable
         (await metrics.ForTechnicianAsync(login, Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
         (await metrics.DailyAsync(login)).Should().NotBeNull();
         var reads = new TicketReadService(_db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: _me));
-        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(_me, null)))).Should().NotBeNull();
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(_me, null, null)))).Should().NotBeNull();
+        // A PSA login's key, with its connection and as it was written before keys named one.
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(null, Guid.NewGuid(), "123")))).Total.Should().Be(0);
+        (await reads.PageAsync(new TicketQuery(PersonKey: "x:123"))).Should().NotBeNull();
         (await reads.WorkloadAsync()).Should().NotBeNull();
         (await reads.FacetsAsync()).Should().NotBeNull();
+        // Each of these names a PSA login together with its connection.
+        (await new Desk.Infrastructure.Analytics.PortalCoverageService(_db).CoverageAsync(new Desk.Application.Analytics.MetricsFilter())).Should().NotBeNull();
+        (await new Desk.Infrastructure.Analytics.ClientWorkloadService(_db).ForClientsAsync(new Desk.Application.Analytics.MetricsFilter())).Should().NotBeNull();
     }
 
     [Fact]

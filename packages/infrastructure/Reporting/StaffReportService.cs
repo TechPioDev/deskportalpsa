@@ -32,7 +32,8 @@ public sealed class TechnicianReportBuilder(DeskDbContext db, ITechnicianMetrics
         // One row per person across the period — the same grouping the Technician hours page uses,
         // so the emailed figures match what the recipient sees when they open the portal.
         var technicians = days
-            .GroupBy(d => d.AppUserId is { } u ? "u:" + u : "x:" + (d.TechnicianExternalId ?? d.Name))
+            // With its connection: a PSA login is one person only within its PSA account.
+            .GroupBy(d => d.AppUserId is { } u ? "u:" + u : "x:" + d.PsaConnectionId + ":" + (d.TechnicianExternalId ?? d.Name))
             .Select(g => new TechnicianReportRow(
                 g.First().Name, g.Sum(d => d.Hours), g.Sum(d => d.BillableHours), g.Sum(d => d.Resolved),
                 g.Sum(d => d.TicketsTouched), g.Count()))

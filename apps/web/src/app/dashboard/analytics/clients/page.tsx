@@ -263,7 +263,7 @@ function PeoplePanel({ people, company, from }: {
     <div className="space-y-2">
       <ul className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
         {people.map((p) => (
-          <li key={p.appUserId ?? `x:${p.technicianExternalId}`} className="flex items-baseline justify-between gap-3">
+          <li key={p.key ?? p.appUserId ?? `x:${p.technicianExternalId}`} className="flex items-baseline justify-between gap-3">
             <span className="flex min-w-0 items-baseline gap-2">
               {p.key ? (
                 <Link href={hrefFor(p.key)} title={`Tickets ${p.name} holds or logged time on`}

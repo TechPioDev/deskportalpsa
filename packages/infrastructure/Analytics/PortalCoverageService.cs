@@ -49,7 +49,13 @@ public sealed class PortalCoverageService(DeskDbContext db) : IPortalCoverageSer
         if (filter.To is { } pt) portalQuery = portalQuery.Where(e => e.OccurredAt <= pt);
 
         var portal = await portalQuery
-            .Select(e => new { TicketId = e.TicketId!.Value, e.OccurredAt, e.ActorUserId })
+            .Select(e => new
+            {
+                TicketId = e.TicketId!.Value, e.OccurredAt, e.ActorUserId,
+                // The ticket's connection, not the event's own column: something done in the portal
+                // is recorded with the ticket it was done to and need not carry the connection itself.
+                PsaConnectionId = db.Tickets.Where(t => t.Id == e.TicketId).Select(t => t.PsaConnectionId).FirstOrDefault(),
+            })
             .ToListAsync(ct);
 
         var touched = portal
@@ -58,25 +64,28 @@ public sealed class PortalCoverageService(DeskDbContext db) : IPortalCoverageSer
 
         // Portal events per technician, via the identity mapping. Unmapped people cannot be
         // attributed, and are counted as zero rather than guessed at.
+        //
+        // A login is a login on ONE connection. This took the first login a person had and credited
+        // every event of theirs to it, and looked names up by the id alone: with two PSA accounts a
+        // person linked on both had all their work counted against one, and resource 42 on one
+        // account took the name of resource 42 on the other.
         var identities = await db.UserPsaIdentities.AsNoTracking()
-            .Select(i => new { i.AppUserId, i.ExternalTechnicianId })
+            .Select(i => new { i.AppUserId, i.PsaConnectionId, i.ExternalTechnicianId, i.ExternalTechnicianName })
             .ToListAsync(ct);
-        var externalIdByUser = identities
-            .GroupBy(i => i.AppUserId)
-            .ToDictionary(g => g.Key, g => g.First().ExternalTechnicianId);
+        var loginOf = identities
+            .GroupBy(i => (i.AppUserId, i.PsaConnectionId))
+            .ToDictionary(g => g.Key, g => Login(g.First().ExternalTechnicianId));
 
         var portalEventsByTech = portal
-            .Where(e => e.ActorUserId is not null && externalIdByUser.ContainsKey(e.ActorUserId.Value))
-            .GroupBy(e => externalIdByUser[e.ActorUserId!.Value])
-            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+            .Where(e => e.ActorUserId is not null && e.PsaConnectionId is not null
+                && loginOf.ContainsKey((e.ActorUserId.Value, e.PsaConnectionId.Value)))
+            .GroupBy(e => (Conn: e.PsaConnectionId, Tech: loginOf[(e.ActorUserId!.Value, e.PsaConnectionId!.Value)]))
+            .ToDictionary(g => g.Key, g => g.Count());
 
-        var names = await db.UserPsaIdentities.AsNoTracking()
+        var nameById = identities
             .Where(i => i.ExternalTechnicianName != null)
-            .Select(i => new { i.ExternalTechnicianId, i.ExternalTechnicianName })
-            .ToListAsync(ct);
-        var nameById = names
-            .GroupBy(n => n.ExternalTechnicianId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().ExternalTechnicianName, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(i => (Conn: (Guid?)i.PsaConnectionId, Tech: Login(i.ExternalTechnicianId)))
+            .ToDictionary(g => g.Key, g => g.First().ExternalTechnicianName);
 
         // No row for the account the portal writes as: it is the whole portal team's time under one
         // login, not a technician whose coverage means anything. Its entries still count in the
@@ -84,19 +93,19 @@ public sealed class PortalCoverageService(DeskDbContext db) : IPortalCoverageSer
         var account = await IntegrationIdentity.LoadAsync(db, ct);
         var rows = entries
             .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && !account.IsAccount(e.Conn, e.TechnicianExternalId))
-            .GroupBy(e => e.TechnicianExternalId!, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(e => (e.Conn, Tech: Login(e.TechnicianExternalId!)))
             .Select(g =>
             {
                 var corroborated = g.Count(e => touched.Contains((e.TicketId, e.EntryDate.UtcDateTime.Date)));
                 return new PortalCoverageRow(
-                    g.Key,
+                    g.First().TechnicianExternalId!,
                     nameById.GetValueOrDefault(g.Key),
                     g.Sum(e => e.Hours),
                     g.Count(),
                     corroborated,
                     // Null, not zero, when there is nothing to measure. Zero reads as a finding.
                     g.Any() ? Math.Round(corroborated * 100.0 / g.Count(), 1) : null,
-                    portalEventsByTech.GetValueOrDefault(g.Key, 0));
+                    portalEventsByTech.GetValueOrDefault(g.Key, 0)) { PsaConnectionId = g.Key.Conn };
             })
             .OrderByDescending(r => r.PsaHours)
             .ToList();
@@ -114,4 +123,7 @@ public sealed class PortalCoverageService(DeskDbContext db) : IPortalCoverageSer
             // The flag the surface needs to avoid presenting an absence of evidence as a low score.
             recordedSince is null || (filter.From is { } f && f < recordedSince));
     }
+
+    /// <summary>A PSA login as it is compared: providers do not agree with themselves on case or spacing.</summary>
+    private static string Login(string id) => id.Trim().ToLowerInvariant();
 }
