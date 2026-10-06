@@ -36,6 +36,10 @@ arrive today; Autotask-native webhooks are a later Phase 9 slice.
   mirrored to the portal.
 - **No native create-idempotency.** Autotask cannot dedupe by an arbitrary key, so duplicate-create
   protection is enforced at the platform layer (sync-event idempotency), not in the connector.
+- **What a ticket is filed under is read as words.** `ticketType`, `issueType` and `subIssueType`
+  are picklist ids, like a status, and reach the portal as their labels (an id no longer in the
+  list stays as the id). A sub-issue belongs to an issue, and the same label turns up under more
+  than one; each has its own id. Sent on create as ids: Autotask refuses words for them.
 - **A ticket carries its queue's id beside the name** (`QueueOrBoardId`). A connection's queue
   limit holds ids, and is checked against the id.
 - **The tenant-wide attachment sweep reads every page** (500 a page, up to 20 pages a run) and
