@@ -32,4 +32,19 @@ public sealed class ConnectorException(ConnectorFailureKind kind, string message
     public bool IsTransient => Kind is ConnectorFailureKind.Timeout
         or ConnectorFailureKind.ProviderError
         or ConnectorFailureKind.RateLimited;
+
+    /// <summary>
+    /// Whether the request certainly did nothing at the provider: it was turned away for its rate
+    /// before being looked at, or the provider could not be connected to at all. Then sending it
+    /// again cannot do it twice. A request that was sent and whose answer never came is not this:
+    /// the provider may have carried it out.
+    /// </summary>
+    public bool NeverSent => Kind == ConnectorFailureKind.RateLimited
+        || InnerException is System.Net.Http.HttpRequestException
+        {
+            HttpRequestError: System.Net.Http.HttpRequestError.NameResolutionError
+                or System.Net.Http.HttpRequestError.ConnectionError
+                or System.Net.Http.HttpRequestError.SecureConnectionError
+                or System.Net.Http.HttpRequestError.ProxyTunnelError
+        };
 }

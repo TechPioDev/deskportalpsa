@@ -821,6 +821,62 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     }
 
     [Fact]
+    public async Task Many_workers_taking_the_same_waiting_changes_on_a_real_database_take_each_one_once()
+    {
+        // The same claim, for the changes waiting to reach a PSA: a change taken by two workers is
+        // a reply said to a customer twice. Six workers each read all thirty as due, then each
+        // tries to take every one. PostgreSQL only, for the reason given above.
+        if (Postgres is null) return;
+        var (db, _, _, _, _) = await SeedAsync(1);
+        var connection = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Outbound", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://x", CredentialSecretRef = "m",
+        };
+        var tickets = Enumerable.Range(0, 30).Select(i => new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection.Id,
+            ExternalTicketId = $"waiting-{i}", RequesterName = "R", RequesterEmail = "r@x.test", Title = $"waiting-{i}",
+            PortalStatus = "NEW", PortalPriority = "NORMAL", SyncStatus = TicketSyncStatus.Synced,
+        }).ToList();
+        db.Add(connection);
+        db.AddRange(tickets);
+        var keeping = new Desk.Infrastructure.Sync.OutboundQueue(db, _clock);
+        var ops = tickets.Select(t => keeping.Enqueue(t, Desk.Domain.Sync.OutboundKind.StatusChange, "Status to IN_PROGRESS",
+            new Desk.Infrastructure.Sync.OutboundStatus("IN_PROGRESS", "NEW", null, null), null, Guid.NewGuid().ToString("N"),
+            null, null, "Asha Rao", "The PSA did not answer.", uncertain: false)).ToList();
+        foreach (var op in ops) op.NextAttemptAt = null;   // due now
+        await db.SaveChangesAsync();
+        var ids = ops.Select(o => o.Id).ToList();
+
+        var workers = Enumerable.Range(0, 6).Select(_ => NewContext()).ToList();
+        try
+        {
+            // What each worker was told is due before any of them saved.
+            foreach (var w in workers)
+                (await new Desk.Infrastructure.Sync.OutboundQueue(w, _clock).DueAsync(100)).Should().BeEquivalentTo(ids);
+
+            var taken = await Task.WhenAll(workers.Select((w, k) => Task.Run(async () =>
+            {
+                var queue = new Desk.Infrastructure.Sync.OutboundQueue(w, _clock);
+                var mine = new List<Guid>();
+                foreach (var id in ids.Skip(k * 5).Concat(ids.Take(k * 5)))
+                    if (await queue.ClaimAsync(id) is { } op) mine.Add(op.Id);
+                return mine;
+            })));
+
+            taken.SelectMany(t => t).Should().OnlyHaveUniqueItems("no change was taken by two workers").And.HaveCount(30, "and every change was taken by one");
+            var rows = await db.OutboundOperations.AsNoTracking().Select(o => new { o.State, o.Version, Held = o.LeaseExpiresAt != null }).ToListAsync();
+            rows.Should().HaveCount(30).And.OnlyContain(o => o.State == Desk.Domain.Sync.OutboundState.Pending && o.Version == 1 && o.Held);
+            (await new Desk.Infrastructure.Sync.OutboundQueue(db, _clock).DueAsync(100)).Should().BeEmpty("each is held by the worker that has it");
+            output.WriteLine($"outbound queue: 6 workers each tried all 30 waiting changes on PostgreSQL; taken {string.Join(" + ", taken.Select(t => t.Count))} = 30, each once, {6 * 30 - 30} saves refused");
+        }
+        finally
+        {
+            foreach (var w in workers) await w.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task Ticket_visibility_through_PSA_links_runs_on_a_real_database()
     {
         // The predicate that decides which tickets a person may see is assembled by hand, one clause

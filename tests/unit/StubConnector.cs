@@ -200,11 +200,61 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
 
     public Task<CreateTicketResult> CreateTicketAsync(UnifiedTicketCreateRequest ticket, CancellationToken ct = default)
     {
+        if (WriteFailure is { } away && !WritesLandButAnswerIsLost) throw away;
         CreateRequests.Add(ticket);
+        if (WriteFailure is { } lost) throw lost;
         return Task.FromResult(NextCreateResult);
     }
-    public Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default) => No<UpdateTicketResult>();
-    public Task<CreateNoteResult> AddPublicNoteAsync(string ticketId, UnifiedTicketNoteCreateRequest note, CancellationToken ct = default) => No<CreateNoteResult>();
+    /// <summary>
+    /// The PSA is away, or refuses: every write throws this until it is cleared. Reads go on working
+    /// unless their own failure is set, as a PSA that is slow to write is not always slow to read.
+    /// </summary>
+    public ConnectorException? WriteFailure { get; set; }
+
+    /// <summary>A write the PSA carries out and then fails to answer: done there, and reported here as a failure.</summary>
+    public bool WritesLandButAnswerIsLost { get; set; }
+
+    /// <summary>Every status the stub was asked to set, in order. On by setting <see cref="AcceptsWrites"/>.</summary>
+    public List<(string TicketId, UnifiedTicketUpdate Update)> Updates { get; } = [];
+
+    /// <summary>Every note the stub was sent. A note it took is also in <see cref="Notes"/>, as the PSA would then list it.</summary>
+    public List<(string TicketId, UnifiedTicketNoteCreateRequest Note)> PostedNotes { get; } = [];
+
+    /// <summary>Off, a write is "not part of this stub", as before. On, the stub takes notes and status changes like a PSA.</summary>
+    public bool AcceptsWrites { get; set; }
+
+    /// <summary>What the PSA answers to a status change or a note it does not accept; null is acceptance.</summary>
+    public string? WriteRefusal { get; set; }
+    /// <summary>The one ticket the PSA takes no notes on, where the rest are taken.</summary>
+    public string? RefuseNotesOn { get; set; }
+
+    private int _noteSeq = 7000;
+
+    public Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default)
+    {
+        if (!AcceptsWrites) return No<UpdateTicketResult>();
+        if (WriteFailure is { } away && !WritesLandButAnswerIsLost) throw away;
+        Updates.Add((ticketId, update));
+        if (WriteFailure is { } lost) throw lost;
+        return Task.FromResult(WriteRefusal is { } no ? new UpdateTicketResult(false, no) : new UpdateTicketResult(true, null));
+    }
+
+    public Task<CreateNoteResult> AddPublicNoteAsync(string ticketId, UnifiedTicketNoteCreateRequest note, CancellationToken ct = default)
+    {
+        if (!AcceptsWrites) return No<CreateNoteResult>();
+        if (WriteFailure is { } away && !WritesLandButAnswerIsLost) throw away;
+        if (WriteRefusal is { } no) return Task.FromResult(new CreateNoteResult(false, null, no));
+        if (RefuseNotesOn == ticketId) return Task.FromResult(new CreateNoteResult(false, null, "Notes cannot be added to a completed ticket."));
+        PostedNotes.Add((ticketId, note));
+        var id = (++_noteSeq).ToString();
+        if (!Notes.TryGetValue(ticketId, out var thread)) Notes[ticketId] = thread = [];
+        thread.Add(new UnifiedTicketNote(id, "Integration", note.Body, note.IsPublic, NoteClock?.Invoke() ?? DateTimeOffset.UtcNow));
+        if (WriteFailure is { } lost) throw lost;
+        return Task.FromResult(new CreateNoteResult(true, id, null));
+    }
+
+    /// <summary>What time the PSA stamps a note it takes with. The test's own clock, where it has one.</summary>
+    public Func<DateTimeOffset>? NoteClock { get; set; }
     /// <summary>Time entries per external ticket id.</summary>
     public Dictionary<string, List<UnifiedTimeEntry>> TimeEntries { get; } = [];
 

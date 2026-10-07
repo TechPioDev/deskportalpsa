@@ -26,6 +26,7 @@ import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
 import { TicketDevicePicker } from '@/components/TicketDevicePicker';
 import { api, ApiError, type AssigneeOptions } from '@/lib/api';
 import { portalClassification, psaLevels } from '@/lib/psaLevels';
+import { OutboundChanges, SyncStateChip } from '@/components/OutboundChanges';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 import { isStaffPermissions } from '@/lib/staff';
 
@@ -585,6 +586,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const refreshTime = () =>
     [['time-entries', id], ['ticket', id], ['team'], ['trend']].forEach((k) => qc.invalidateQueries({ queryKey: k }));
 
+  // A status that was asked for while the PSA was away: said until the page is left or it is asked again.
+  const [queuedStatus, setQueuedStatus] = useState<string | null>(null);
   const statusMut = useMutation({
     mutationFn: (v: { status: string; resolution?: string | null }) => api.updateTicketStatus(id, v.status, v.resolution),
     onSuccess: (res) => {
@@ -592,6 +595,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       // one, so choosing Closed straight after Resolved asked for the resolution a second time.
       qc.setQueryData<TicketDetail>(['ticket', id], (old) => (old ? { ...old, portalStatus: res.portalStatus } : old));
       setPendingStatus(null);
+      // The PSA could not be reached: the ticket keeps its status, and what was asked for waits.
+      setQueuedStatus(res.queued ? res.requested ?? null : null);
       [['ticket', id], ['tickets'], ['team'], ['trend'], ['ticket-history', id]].forEach((k) => qc.invalidateQueries({ queryKey: k }));
     },
   });
@@ -634,6 +639,16 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // matters (the conversation bubbles) rather than by starving the whole page.
   return (
     <div className="space-y-4">
+      {/* What was changed here and is not in the PSA yet. Staff only: a client is not sent the list. */}
+      {isStaff && ticket?.outbound && ticket.outbound.length > 0 && (
+        <OutboundChanges ticketId={id} changes={ticket.outbound} canChange={canUpdate} />
+      )}
+      {queuedStatus && ticket && (
+        <p role="status" className="rounded-xl border border-amber-300 bg-amber-50/70 px-4 py-2.5 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+          The PSA could not be reached, so the status is still <span className="font-medium">{ticket.portalStatus}</span>.
+          The change to <span className="font-medium">{queuedStatus}</span> is kept and will be sent when the PSA answers; the ticket changes only once the PSA has accepted it.
+        </p>
+      )}
       {/* Header controls */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link href="/dashboard/tickets" className="inline-flex items-center gap-1.5 text-sm text-[var(--muted)] hover:text-[var(--fg)]">
@@ -1279,6 +1294,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                               three signals compete for the same fact. */}
                           <span className="font-semibold">{n.authorName}</span>
                           <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${incoming ? 'bg-slate-200/70 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'}`}>{incoming ? 'Client' : 'Technician'}</span>
+                          {/* Written while the PSA could not be reached: said on the note itself, so a
+                              reply that is still waiting is not taken for one the customer has. */}
+                          {n.syncState && <SyncStateChip state={n.syncState} />}
                           {!n.isPublic && !isTimeCard && (
                             <span title="Internal note from the PSA — never shown to the client"
                               className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">Internal</span>

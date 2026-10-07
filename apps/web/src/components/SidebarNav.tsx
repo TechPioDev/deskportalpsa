@@ -96,6 +96,7 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
       { href: '/dashboard/assistant', label: 'Assistant', icon: Sparkles, permissions: ['connections.manage'] },
       { href: '/dashboard/mappings', label: 'Field Mapping', icon: SlidersHorizontal, permissions: ['mappings.view'] },
       { href: '/dashboard/health', label: 'Integration Health', icon: Activity, permissions: ['integration.health.view'] },
+      { href: '/dashboard/outbound', label: 'Unsent changes', icon: Inbox, permissions: ['integration.health.view'] },
     ],
   },
   {

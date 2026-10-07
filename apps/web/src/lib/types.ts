@@ -63,6 +63,8 @@ export const TicketNoteSchema = z.object({
   // without waiting on the live entry list. Null for provider-side te- notes.
   timeEntryHours: z.number().nullable().default(null),
   timeEntryBillable: z.boolean().nullable().default(null),
+  // "Pending Sync" or "Sync Failed" for a note the PSA does not have yet; null for every note it has.
+  syncState: z.string().nullable().default(null),
 });
 
 export const AttachmentSchema = z.object({
@@ -156,6 +158,8 @@ export const TicketDetailSchema = z.object({
     workType: z.string().nullable().default(null), subcategory: z.string().nullable().default(null),
     mapped: z.boolean().nullable().default(null),
   }).nullable().default(null),
+  // Changes made here that the PSA does not have yet, or refused. Staff only; null where there are none.
+  outbound: z.array(z.lazy(() => TicketOutboundSchema)).nullable().default(null),
   // The PSA's custom fields an administrator chose to bring in. For a client, only the ones marked
   // as theirs to see are sent at all. Null when there are none (or from an older API).
   customFields: z.array(z.object({
@@ -438,6 +442,19 @@ const MappingFieldHealthSchema = z.object({
   unmappedTickets: z.number(), items: z.array(MappingValueSchema),
 });
 export type MappingFieldHealth = z.infer<typeof MappingFieldHealthSchema>;
+
+/** A change to a ticket that its PSA does not have: `state` is "Pending Sync" or "Sync Failed". */
+export const TicketOutboundSchema = z.object({
+  id: z.string(), kind: z.string(), summary: z.string(), state: z.string(), attempts: z.number(), maxAttempts: z.number(),
+  requestedAt: z.string(), requestedBy: z.string().nullable(), nextAttemptAt: z.string().nullable(), lastError: z.string().nullable(),
+});
+export type TicketOutbound = z.infer<typeof TicketOutboundSchema>;
+
+/** The same, in the list of every unsent change, with the ticket it is on. */
+export const OutboundRowSchema = TicketOutboundSchema.extend({
+  ticketId: z.string(), ticketReference: z.string().nullable(), ticketTitle: z.string(), connectionName: z.string(),
+});
+export type OutboundRow = z.infer<typeof OutboundRowSchema>;
 
 /** One of a PSA's custom fields, with what has been decided about it on a connection. */
 export const CustomFieldSchema = z.object({

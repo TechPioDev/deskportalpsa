@@ -234,6 +234,11 @@ public static class DependencyInjection
         services.AddScoped<IAttentionService, AttentionService>();
         services.AddSingleton<IAttentionDigestRunner, AttentionDigestRunner>();
         services.AddScoped<ITicketResyncService, Sync.TicketResyncService>();
+        // Changes that could not be given to a PSA when they were made: kept, and tried again.
+        services.AddScoped<Sync.OutboundQueue>(sp => new Sync.OutboundQueue(
+            sp.GetRequiredService<DeskDbContext>(), sp.GetRequiredService<TimeProvider>(), sp.GetService<IAuditWriter>()));
+        services.AddScoped<Sync.OutboundProcessor>();
+        services.AddSingleton<Sync.OutboundRunner>();
         // One switch over the whole internal-boards feature; see BoardFeatureOptions for why.
         services.AddSingleton(new Desk.Application.Boards.BoardFeatureOptions
         {

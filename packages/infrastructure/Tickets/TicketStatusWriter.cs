@@ -37,8 +37,12 @@ public sealed class TicketStatusWriter(
     /// False when work goes back because a reviewer sent it back: that is a review finding, counted
     /// as a send-back, not a ticket that came back after it was finished.
     /// </param>
+    /// <param name="actorUserId">
+    /// Who asked for it, where that is not whoever is making this request: a status asked for while
+    /// the PSA was away is sent later by the worker, and the credit for a resolution is still theirs.
+    /// </param>
     public async Task<string> SetAsync(
-        Ticket ticket, string status, string? resolution, CancellationToken ct = default, bool countReopen = true)
+        Ticket ticket, string status, string? resolution, CancellationToken ct = default, bool countReopen = true, Guid? actorUserId = null)
     {
         if (string.IsNullOrWhiteSpace(status))
             throw new ValidationFailedException("A status is required.");
@@ -91,7 +95,7 @@ public sealed class TicketStatusWriter(
             }
             if (Closed(portalStatus)) ticket.ClosedAt ??= DateTimeOffset.UtcNow;
             if (Resolved(portalStatus)) ticket.ResolvedAt ??= DateTimeOffset.UtcNow;
-            return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, reviewed, countReopen, ct);
+            return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, reviewed, countReopen, actorUserId, ct);
         }
 
         if (string.IsNullOrEmpty(ticket.ExternalTicketId))
@@ -114,17 +118,17 @@ public sealed class TicketStatusWriter(
         ticket.PortalStatus = portalStatus;
         ticket.PsaStatus = mappedName;
         // The provider owns a PSA ticket's dates; sync brings them. The reopen is still counted here.
-        return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, reviewed, countReopen, ct);
+        return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, reviewed, countReopen, actorUserId, ct);
     }
 
     private async Task<string> FinishAsync(
         Ticket ticket, string from, string to, bool resolving, bool reopening, string? resolution,
-        bool reviewed, bool countReopen, CancellationToken ct)
+        bool reviewed, bool countReopen, Guid? actorUserId, CancellationToken ct)
     {
         if (resolving && resolution is not null) ticket.Resolution = resolution;
         // Credit for the resolution: whoever finished it here. Taken when it first finishes, so the
         // lead who later moves Resolved to Closed, or approves it in review, does not take it over.
-        if (resolving && !Finished(from) && user?.UserId is { } resolver) ticket.ResolvedByAppUserId = resolver;
+        if (resolving && !Finished(from) && (actorUserId ?? user?.UserId) is { } resolver) ticket.ResolvedByAppUserId = resolver;
         if (reopening)
         {
             ticket.ResolvedByAppUserId = null;

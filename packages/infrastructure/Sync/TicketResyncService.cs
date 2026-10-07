@@ -120,6 +120,7 @@ public sealed class TicketResyncService(
         };
 
         CreateTicketResult created;
+        var (transient, neverSent) = (false, false);
         try
         {
             var connector = await connectors.ResolveAsync(connection.Id, ct);
@@ -128,6 +129,7 @@ public sealed class TicketResyncService(
         catch (ConnectorException ex)
         {
             created = new CreateTicketResult(false, null, ex.Message);
+            (transient, neverSent) = (ex.IsTransient, ex.NeverSent);
         }
 
         if (!created.Success)
@@ -137,7 +139,7 @@ public sealed class TicketResyncService(
             await db.SaveChangesAsync(ct);
             await audit.WriteAsync("ticket.resync_failed", "Ticket", ticket.Id.ToString(),
                 new { ticket.Title, created.Error }, ct);
-            return new ResyncResultDto(false, ticket.Id, null, created.Error);
+            return new ResyncResultDto(false, ticket.Id, null, created.Error, transient, neverSent);
         }
 
         ticket.ExternalTicketId = created.ExternalId;

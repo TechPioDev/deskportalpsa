@@ -21,8 +21,11 @@ public sealed record TimeLogResult(TicketTimeEntry Entry, TimeTotals? Totals);
 /// session (Phase 6) both log time through here, so an hour logged by a clock and an hour typed in
 /// are the same kind of hour.
 /// </summary>
-public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService admin, IAuditWriter? audit = null)
+public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService admin, IAuditWriter? audit = null, Sync.OutboundQueue? outbound = null)
 {
+    /// <summary>How a push went: taken, not answered (it may be tried again), or refused.</summary>
+    public sealed record PushResult(bool Ok, bool Transient, string? Error);
+
     /// <summary>A user's identity in the given PSA, or null when they have none (then the connection's default resource is used).</summary>
     public async Task<string?> TechnicianIdAsync(Guid? userId, Guid psaConnectionId, CancellationToken ct)
         => userId is not { } uid ? null
@@ -104,8 +107,35 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
         => audit is null ? Task.CompletedTask
             : audit.WriteAsync("ticket.time.logged", "Ticket", ticket.Id.ToString(), extra is null ? detail : new { time = detail, context = extra }, ct);
 
-    /// <summary>Pushes a portal record to the PSA and stamps the outcome on it either way.</summary>
+    /// <summary>
+    /// Pushes a portal record to the PSA and stamps the outcome on it either way. Where the PSA
+    /// could not be reached the hour is not left as failed for somebody to notice: it waits, and is
+    /// tried again by the outbound queue.
+    /// </summary>
     public async Task<bool> PushAsync(TicketTimeEntry record, Ticket ticket, IServiceManagementConnector connector, CancellationToken ct)
+    {
+        var pushed = await PushDetailedAsync(record, ticket, connector, ct);
+        if (pushed.Ok || !pushed.Transient || outbound is null || !HasPsa(ticket)) return pushed.Ok;
+
+        // Once only: an hour already waiting is not put in the queue a second time.
+        var waiting = await db.OutboundOperations.AnyAsync(o => o.Kind == Desk.Domain.Sync.OutboundKind.TimeEntry
+            && o.TargetId == record.Id && o.State == Desk.Domain.Sync.OutboundState.Pending, ct);
+        if (!waiting)
+        {
+            var by = record.AppUserId is { } author
+                ? await db.AppUsers.AsNoTracking().Where(u => u.Id == author).Select(u => u.DisplayName).FirstOrDefaultAsync(ct) : null;
+            var op = outbound.Enqueue(ticket, Desk.Domain.Sync.OutboundKind.TimeEntry, $"{record.Hours:0.##} h logged",
+                new Sync.OutboundTime(record.Id), record.Id, Guid.NewGuid().ToString("N"), record.AppUserId, null, by, pushed.Error, uncertain: true);
+            record.SyncStatus = TimeEntrySyncStatus.Pending;
+            await db.SaveChangesAsync(ct);
+            await outbound.AuditQueuedAsync(op, ct);
+        }
+        return false;
+    }
+
+    /// <summary>The push itself, saying how it went. <paramref name="fromQueue"/>: a retry by the outbound queue, which keeps the hour waiting itself.</summary>
+    public async Task<PushResult> PushDetailedAsync(
+        TicketTimeEntry record, Ticket ticket, IServiceManagementConnector connector, CancellationToken ct, bool fromQueue = false)
     {
         // A worklog read FROM the PSA is the PSA's own entry. Sent to it, it would come back as a
         // second one, and that one would be read and sent again. Nothing asks for this; were
@@ -120,7 +150,8 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
         // A second try. The first one failed as far as the portal could tell - but a push whose
         // answer was lost may have been carried out, and sent again it is a second entry: the
         // customer billed the same hour twice. So the PSA is asked first whether it has it.
-        if (record.SyncStatus == TimeEntrySyncStatus.Failed && string.IsNullOrEmpty(record.ExternalEntryId))
+        // "Failed", or still waiting after a try that went wrong: either way it has been sent before.
+        if ((record.SyncStatus == TimeEntrySyncStatus.Failed || record.SyncError is not null) && string.IsNullOrEmpty(record.ExternalEntryId))
         {
             try
             {
@@ -137,7 +168,7 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
                     if (audit is not null)
                         await audit.WriteAsync("ticket.time.reconciled", "Ticket", ticket.Id.ToString(),
                             new { entryId = record.Id, externalEntryId = already, record.Hours }, ct);
-                    return true;
+                    return new PushResult(true, false, null);
                 }
             }
             catch (ConnectorException ex)
@@ -146,11 +177,12 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
                 // worse than an hour that waits for the PSA to answer.
                 record.SyncError = $"Could not check whether the PSA already has this entry, so it was not sent again: {ex.Message}";
                 await db.SaveChangesAsync(ct);
-                return false;
+                return new PushResult(false, ex.IsTransient, record.SyncError);
             }
         }
 
         CreateTimeEntryResult result;
+        var transient = false;
         try
         {
             result = await connector.AddTimeEntryAsync(ticket.ExternalTicketId!, request, ct);
@@ -159,21 +191,23 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
         {
             // A provider REJECTION is a failed push, not an unhandled fault: keep what it said, now.
             result = new CreateTimeEntryResult(false, null, ex.Message);
+            transient = ex.IsTransient;
         }
 
         if (!result.Success)
         {
-            record.SyncStatus = TimeEntrySyncStatus.Failed;
+            // Waiting, where the queue is holding it; failed otherwise, for the retry on the ticket.
+            record.SyncStatus = transient && fromQueue ? TimeEntrySyncStatus.Pending : TimeEntrySyncStatus.Failed;
             record.SyncError = result.Error;
             await db.SaveChangesAsync(ct);
-            return false;
+            return new PushResult(false, transient, result.Error);
         }
 
         record.ExternalEntryId = result.ExternalId;
         record.SyncStatus = TimeEntrySyncStatus.Synced;
         record.SyncError = null;
         await db.SaveChangesAsync(ct);
-        return true;
+        return new PushResult(true, false, null);
     }
 
     /// <summary>Re-reads the ticket's entries from the PSA (the system of record) and rewrites the portal aggregates.</summary>
