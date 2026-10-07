@@ -163,17 +163,129 @@ ticket list: those changed after the first runs, and have two.
 | Ticket list, first page (7) | 74 to 77 ms | 424 to 681 ms |
 | Sync of 200 tickets, half changed and half new (1,837) | 1.8 to 3.4 s | 3.0 to 3.6 s |
 
-## What is still slow, and is not changed here
+## The three reads of the ticket list that took seconds
 
-Three reads of the ticket list are a pass over every ticket, and take seconds at half a million.
-They are older than Phase 9, they are instant at today's size, and each needs more than a line;
-one needs a migration. They are measured here so that nobody finds them by waiting.
+The dashboard summary, the ticket page's filter lists and the search by text were left at 3 to 6
+seconds on half a million tickets when the rest of this page was written. The owner asked for
+them to be put right before Phase 9 closes, profiled first. This is that work
+(`feat/psa-phase9-ticket-reads`).
 
-| | 100,000 tickets | 500,000 tickets | Why | What it needs |
+### What the profile showed
+
+Each of the three was a pass over every ticket, once for each thing it shows, and each pass was
+the same plan: one process reading the whole table.
+
+- **The table is wide.** 505,000 tickets are 434 MB, because a ticket carries its description;
+  PostgreSQL here holds 128 MB of it in memory at a time (production is set the same). A pass
+  over the tickets took 0.4 to 0.8 s whatever it was counting.
+- **The summary made five such passes** (open, waiting, by priority, by source, high priority) and
+  eleven smaller queries: 16 in all.
+- **The filter lists made five**, one for each of status, priority, queue, connection and who holds
+  a ticket, and then joined every one of a million time entries to its ticket to find who had logged
+  time: 1.4 of the 2.6 seconds.
+- **The search made two**, one to count and one to list. Looking for a few letters anywhere in a
+  subject is "contains", which an ordinary index cannot answer. And one of its five conditions,
+  the client's name, was asked of each ticket's own client, which no index on tickets can answer
+  either: with that one in it, none of the others could use an index.
+- No query was repeated for each row (no N+1), nothing was tracked that did not need to be, and
+  each list already asked for a page and not for everything.
+
+### What was changed
+
+| | Before | After |
+|---|---|---|
+| Search | The client's name matched ticket by ticket | The clients whose name matches are found first and given as a list of ids; a trigram index (`IX_tickets_search`) answers "contains" on the number, the subject, the requester and the PSA's own number |
+| Summary | A count for each figure, each a pass | One pass, grouped by source, priority and holder, every figure added up from the groups; read from an index of the open work (`IX_tickets_open`) that carries everything the counting needs |
+| Filter lists: status, priority, queue | Three lists of distinct values, three passes | One list of the distinct combinations, one pass |
+| Filter lists: connections | "Which connections have a visible ticket" | Each connection asked for one visible ticket of its own, from an index |
+| Filter lists: people | Every ticket read for its holder, and every time entry joined to its ticket | Each kind of person found by walking an index from one value to the next, so the work is in proportion to the number of people and not of tickets. A time entry now carries the PSA account of its ticket, so that this needs no join |
+
+The search finds what it found before. The same five conditions are sent, in the same words; only
+where the client's name is looked up has moved. A search of one or two letters cannot use a
+trigram index and is still a pass over the tickets, and searching inside the conversation (off
+unless asked for) is unchanged.
+
+The people are found by index only for someone who may see every PSA ticket, which is who the
+benchmark measures (an administrator). For someone whose sight is narrowed to their own tickets,
+"is this login on a ticket I can see" is a question about each ticket, so their tickets are read
+as before: one pass now where it was three, and the people as before. Both ways are held to the
+same answer by the same tests.
+
+### Before and after
+
+The data set is the benchmark's: 100 connections, 500,000 tickets, 1,000,000 time entries, one
+connection holding half. Five tickets in seven are open, which is far more than a real desk and
+is the worst case for the summary. "Before" is four runs and "after" is three; each read is made
+twice and the second is the one given.
+
+| 500,000 tickets | Queries before | after | Time before | Time after |
 |---|---|---|---|---|
-| Dashboard summary (16 queries) | 0.44 to 0.56 s | 2.9 to 6.4 s | Sixteen counts, each over every open ticket | One pass with all the counts in it |
-| Filter lists on the ticket page (13) | 0.44 to 0.79 s | 2.8 to 4.9 s | To list everyone who logged time, every time entry is joined to its ticket: 3 of the 4.9 seconds | The people found without that join, or kept for a minute |
-| Search by text (7) | 1.4 to 2.4 s | 2.9 to 4.0 s | It reads the text of every ticket | A trigram index: a migration, and an extension PostgreSQL has had since 13 |
+| Search by text | 7 | 8 | 2.4 to 4.0 s | 28 to 140 ms |
+| Dashboard summary | 16 | 8 | 2.4 to 6.4 s | 352 to 621 ms |
+| Filter lists | 13 | 17 | 2.6 to 4.9 s | 382 to 588 ms |
+| Ticket list, one connection | 7 | 7 | 230 to 263 ms | 17 to 40 ms |
+
+| 100,000 tickets | Time before | Time after (four or five runs) |
+|---|---|---|
+| Search by text | 1.4 to 2.4 s | 12 to 58 ms |
+| Dashboard summary | 0.44 to 0.56 s | 65 to 475 ms |
+| Filter lists | 0.44 to 0.79 s | 84 to 369 ms |
+
+The highest "after" figure in each row of the smaller table is from one run made while the machine
+was still busy with the larger one; the others are 12 to 15 ms, 65 to 97 ms and 84 to 115 ms.
+
+The filter lists make more queries than they did (17 for 13) and take a fraction of the time: five of
+the 17 walk an index and the rest are lookups by key. What is left of the summary and the filter
+lists is one pass each: over the index of open work, and over the tickets for their distinct
+statuses, priorities and queues. On a desk where most tickets are closed, the first is a pass over
+a small index.
+
+### The indexes added
+
+Measured on the 500,000-ticket database. The tickets were 434 MB with 130 MB of indexes before.
+
+| Index | On | Size | What it is for |
+|---|---|---|---|
+| `IX_tickets_search` (trigram, GIN) | tickets | 46 MB | Search by a few letters of the number, subject, requester or PSA number |
+| `IX_tickets_open` (partial, covering) | tickets | 29 MB | The dashboard summary |
+| organization, PSA account, PSA login | tickets | 4 MB | The PSA logins that hold tickets; one connection's tickets |
+| organization, who resolved it (where anyone did) | tickets | 8 kB | The people here who resolved a ticket |
+| organization, PSA account, PSA login (where nobody here is on it) | time entries | 14 MB | The PSA logins that logged time |
+
+### What it costs
+
+- **Space.** 79 MB more of indexes on the tickets (209 MB where there were 130), and 14 MB on the
+  time entries.
+- **Writes.** Every new or changed ticket has more indexes to keep. A first import of 5,000 tickets
+  into the 500,000-ticket database took 44 to 70 s over three runs, against 55 to 69 s before the
+  indexes: no difference that can be told from the noise. Rewriting the status of 10,712 tickets
+  ("apply to tickets already here") took 2.7 to 3.5 s over three runs, against 2.4 to 2.8 s before (a
+  fourth, made in the middle of the full benchmark, took 14.2 s).
+- **The migration** (`TicketListReads`) adds one nullable column to the time entries and gives
+  every entry already there its ticket's PSA account: 26 to 33 s for a million entries on this
+  machine, in one statement, and the table is about twice its size afterwards until the space is
+  used again (301 MB where it was 142). It builds its indexes with the table locked against
+  writes for as long as that takes: seconds at this size, nothing at production's 151 tickets. On
+  a table too large to hold still, each can be built beforehand with `CREATE INDEX CONCURRENTLY`
+  under the same name; the search index is made `IF NOT EXISTS` for that reason.
+- **`pg_trgm`.** The search index needs this extension. It ships with PostgreSQL, production's
+  server has it available, and the database's owner may add it; the migration does.
+- **Two things have to stay the same.** The index of open work is used only while its condition
+  is word for word what "open" is sent to the database as, and the search index only while the
+  search goes on sending `lower(...) LIKE`. Neither can be seen to break from the results, so the
+  benchmark asks PostgreSQL for the plan of each and fails if the index is not in it.
+- **Nothing is cached.** Every figure is read when it is asked for.
+
+### What holds it
+
+- `TicketListReadsTests` (15, every run, on a SQL translator and through the real visibility
+  rule): what the summary counts, what the filter lists offer, what a search finds, that a ticket
+  on a board the caller is not on is in none of them, that the two ways of finding people agree,
+  and that neither ever offers another organization's.
+- The benchmark, on PostgreSQL: the counts and the lists against what was loaded, the two plans,
+  the five index walks, and the query counts (8, 8 and 17).
+
+## What is still slow, and is not changed here
 
 Also not changed:
 
@@ -186,6 +298,14 @@ Also not changed:
   [audit](PHASE9_PSA_INTEGRATION_ARCHITECTURE_AUDIT.md)). The benchmark's database held only the
   few thousand its own syncs wrote, so a table of millions of them was not measured. Each is
   looked up by its connection and key, which is indexed.
+- **Someone who sees only their own tickets** still has the filter lists found by a pass over the
+  tickets: one now, where it was three, with the people found as before. It was not measured; the
+  benchmark is an administrator's.
+- **A search of one or two letters, and a search inside the conversation,** read every ticket (and
+  every note) as before.
+- **Deep pages of the ticket list.** Page 201 took 403 to 807 ms at half a million: the database
+  counts past ten thousand tickets to reach it. Nobody pages that far by hand; an export should
+  not go through it.
 - Applying a mapping loads each ticket it rewrites, description and all, 500 at a time. That is
   bounded, and slower than one UPDATE would be. Nothing in the portal updates rows in bulk,
   because that passes by the checks every save makes (the tenant, the time stamp).
