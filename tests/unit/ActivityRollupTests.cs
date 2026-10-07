@@ -130,6 +130,74 @@ public class ActivityRollupTests
             .ActorExternalId.Should().Be("R1");
     }
 
+    private static Guid AddPerson(DeskDbContext db, Guid org, Guid connection, string login)
+    {
+        var user = Guid.NewGuid();
+        db.AppUsers.Add(new AppUser { Id = user, MspOrganizationId = org, Email = $"{user:N}@t.test", DisplayName = "P" });
+        db.UserPsaIdentities.Add(new UserPsaIdentity
+        {
+            MspOrganizationId = org, AppUserId = user, PsaConnectionId = connection, ExternalTechnicianId = login,
+        });
+        return user;
+    }
+
+    [Fact]
+    public async Task A_PSA_id_never_resolves_to_a_person_in_another_organization()
+    {
+        // One pass covers every tenant. Two tenants on the same PSA number their people the same
+        // way, so the id alone used to resolve to whichever tenant's user was read first - and that
+        // user's id was written into the other tenant's facts.
+        var clock = new TestClock();
+        await using var db = await SeedAsync();
+        var otherOrg = Guid.NewGuid();
+        var otherConn = Guid.NewGuid();
+        var theirs = AddPerson(db, otherOrg, otherConn, "5");
+        var ours = AddPerson(db, Org, Conn, "5");
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            MspOrganizationId = Org, OccurredAt = clock.GetUtcNow().AddHours(-1), Source = ActivitySource.Psa,
+            Kind = ActivityKind.NoteAdded, ActorExternalId = "5", PsaConnectionId = Conn, ClientCompanyId = Company,
+        });
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            MspOrganizationId = otherOrg, OccurredAt = clock.GetUtcNow().AddHours(-1), Source = ActivitySource.Psa,
+            Kind = ActivityKind.NoteAdded, ActorExternalId = "5", PsaConnectionId = otherConn,
+        });
+        await db.SaveChangesAsync();
+
+        await new ActivityRollupService(db, clock).RunAsync();
+
+        var facts = await db.ActivityDailyFacts.IgnoreQueryFilters().ToListAsync();
+        facts.Single(f => f.MspOrganizationId == Org).ActorAppUserId.Should().Be(ours);
+        facts.Single(f => f.MspOrganizationId == otherOrg).ActorAppUserId.Should().Be(theirs);
+    }
+
+    [Fact]
+    public async Task The_same_PSA_id_on_two_accounts_is_two_people()
+    {
+        var clock = new TestClock();
+        await using var db = await SeedAsync();
+        var secondAccount = Guid.NewGuid();
+        var onFirst = AddPerson(db, Org, Conn, "5");
+        var onSecond = AddPerson(db, Org, secondAccount, "5");
+        void Observed(Guid? connection, int hoursAgo) => db.ActivityEvents.Add(new ActivityEvent
+        {
+            MspOrganizationId = Org, OccurredAt = clock.GetUtcNow().AddHours(-hoursAgo), Source = ActivitySource.Psa,
+            Kind = ActivityKind.NoteAdded, ActorExternalId = "5", PsaConnectionId = connection, ClientCompanyId = Company,
+        });
+        Observed(Conn, 1);
+        Observed(secondAccount, 2);
+        Observed(null, 3);
+        await db.SaveChangesAsync();
+
+        await new ActivityRollupService(db, clock).RunAsync();
+
+        var people = await db.ActivityDailyFacts.IgnoreQueryFilters().Select(f => f.ActorAppUserId).ToListAsync();
+        // The event that names no account could be either of them, so it is credited to nobody
+        // rather than to whichever was read first.
+        people.Should().BeEquivalentTo(new Guid?[] { onFirst, onSecond, null });
+    }
+
     [Fact]
     public async Task An_unmapped_actor_stays_null_rather_than_being_guessed_at()
     {

@@ -17,6 +17,8 @@ public sealed class ConnectorResolver(DeskDbContext db, IEnumerable<IConnectorFa
     private readonly IReadOnlyDictionary<ProviderType, IConnectorFactory> _factories =
         factories.ToDictionary(f => f.Provider);
 
+    public bool Supports(ProviderType provider) => _factories.ContainsKey(provider);
+
     public async Task<IServiceManagementConnector> ResolveAsync(Guid psaConnectionId, CancellationToken ct = default)
     {
         var connection = await db.PsaConnections

@@ -105,6 +105,9 @@ services:
       Attachments__SigningKey: ${ATTACHMENT_SIGNING_KEY}
       Attachments__PublicBaseUrl: "https://${PUBLIC_HOST}"
       Sync__PollIntervalMinutes: ${SYNC_POLL_MINUTES:-5}
+      # Stated here as it is for the api: the worker makes every scheduled PSA call. (It is also the
+      # default outside local mode, so a service added later is covered without remembering this.)
+      Connectors__BlockPrivateEgress: "true"
       # Outbound email (scheduled reports). Off while SMTP_HOST is empty. Set these in .env.prod on the
       # server only — the password never goes into the repository or the portal UI.
       Email__Smtp__Host: ${SMTP_HOST:-}

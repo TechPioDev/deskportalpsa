@@ -129,7 +129,8 @@ public sealed class TicketCommandService(
                     && d.ExternalId != null && d.PsaConnectionId == connection.Id, ct)
                 ?? throw new ValidationFailedException("That device is not one of your company's devices. Choose another, or leave it blank.");
 
-        var rules = await LoadRulesAsync(access.MspOrganizationId, connection.Provider, ct);
+        var rules = await Sync.ConnectionMappingRules.LoadAsync(
+            db, connection.MspOrganizationId, connection.Provider, connection.Id, ct);
         var ctx = new MappingContext
         {
             Provider = connection.Provider, PsaConnectionId = connection.Id,
@@ -444,11 +445,6 @@ public sealed class TicketCommandService(
         }, ct);
         return new TicketNoteDto(note.Id, note.AuthorName, false, note.Body, note.NoteCreatedAt);
     }
-
-    private async Task<List<FieldMapping>> LoadRulesAsync(Guid org, ProviderType provider, CancellationToken ct)
-        => await db.FieldMappings.AsNoTracking()
-            .Where(m => m.Provider == provider && m.IsActive)
-            .ToListAsync(ct);
 
     private string? MapOut(List<FieldMapping> rules, MappingContext ctx, string field, string? value)
     {

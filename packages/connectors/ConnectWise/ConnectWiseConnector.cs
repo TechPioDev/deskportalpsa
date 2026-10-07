@@ -396,8 +396,8 @@ public sealed class ConnectWiseConnector(
     /// query, so there is nothing to sweep. Inbound files are therefore read per ticket rather than
     /// in one dated pass — returning empty here keeps the runner from claiming a sweep happened.
     /// </summary>
-    public Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ProviderAttachmentRef>>([]);
+    public Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+        => Task.FromResult(ProviderAttachmentSweep.Unsupported);
 
     public async Task<DownloadedAttachment?> DownloadAttachmentAsync(string ticketId, string attachmentId, CancellationToken ct = default)
     {
@@ -613,19 +613,7 @@ public sealed class ConnectWiseConnector(
         => Task.FromResult<IReadOnlyList<ExternalFieldDefinition>>([]);
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
-    {
-        if (!request.Headers.TryGetValue("X-Timestamp", out var tsRaw) || !DateTimeOffset.TryParse(tsRaw, out var ts))
-            return Task.FromResult(new WebhookValidationResult(false, "Missing or invalid timestamp."));
-        if (Math.Abs((request.ReceivedAt - ts).TotalSeconds) > config.WebhookMaxSkew.TotalSeconds)
-            return Task.FromResult(new WebhookValidationResult(false, "Timestamp outside allowed skew."));
-
-        var expected = Hmac(request.Body, config.WebhookSecret);
-        var ok = CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(request.RawSignature ?? ""));
-        return Task.FromResult(ok
-            ? new WebhookValidationResult(true, null)
-            : new WebhookValidationResult(false, "Signature mismatch."));
-    }
+        => Task.FromResult(WebhookSignature.Validate(request, config.WebhookSecret, config.WebhookMaxSkew));
 
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default)
     {
@@ -930,6 +918,7 @@ public sealed class ConnectWiseConnector(
         Priority = t.Priority?.Name,
         Category = t.Type?.Name,
         QueueOrBoard = t.Board?.Name,          // Service Board → portal Queue
+        QueueOrBoardId = t.Board is { Id: > 0 } board ? board.Id.ToString() : null,
         AssignedTechnicianExternalId = t.Owner?.Id.ToString(),
         RequesterExternalId = t.Company?.Id.ToString(),
         CompanyName = t.Company?.Name,

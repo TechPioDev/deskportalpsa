@@ -69,7 +69,7 @@ public class AdminTests
         var creds = new Dictionary<string, string> { ["CompanyId"] = "acme", ["PrivateKey"] = "topsecret" };
 
         var summary = await svc.CreateAsync(new CreateConnectionInput(
-            "Prod CW", ProviderType.ConnectWisePsa, "https://cw.local", "tenant-1", creds, "UTC"));
+            "Prod CW", ProviderType.ConnectWisePsa, "https://cw.example", "tenant-1", creds, "UTC"));
 
         var row = await h.Db.PsaConnections.SingleAsync();
         row.CredentialSecretRef.Should().StartWith("mem://");   // opaque reference, not the secret
@@ -87,7 +87,7 @@ public class AdminTests
     {
         var (svc, h) = Connections();
         await svc.CreateAsync(new CreateConnectionInput(
-            "Prod CW", ProviderType.ConnectWisePsa, "https://cw.local", null,
+            "Prod CW", ProviderType.ConnectWisePsa, "https://cw.example", null,
             new Dictionary<string, string> { ["PrivateKey"] = "topsecret" }, null));
 
         var entry = await h.Db.AuditLog.SingleAsync(a => a.Action == "connection.created");

@@ -719,7 +719,9 @@ public partial class WorkPlanTests
         health.Attention.Select(a => (a.Key, a.Severity)).Should().Equal(("sync:" + conn, InsightSeverity.Attention), ("mapping:" + conn, InsightSeverity.Watch));
         health.Attention[0].Title.Should().Be($"Autotask Main has not synced successfully since {now.AddDays(-3):d MMM yyyy HH:mm} UTC.");
         // Nothing that could be used against the PSA leaves: no address, no secret reference, no error text.
-        JsonSerializer.Serialize(health).Should().NotContainAny("secret.example", "secret-ref", "abc123", "401", "Unauthorized");
+        // Whole phrases, not "401" or "abc123" on their own: the answer is full of random ids and
+        // timestamps, and three digits turn up in one of those often enough to fail this by chance.
+        JsonSerializer.Serialize(health).Should().NotContainAny("secret.example", "secret-ref", "token abc123", "401 Unauthorized", "Unauthorized");
         // With the permission, the forecast says the PSA figures are as old as that sync.
         var with = await admin.ForecastAsync(w.Admin.Id, NextWeek);
         (with.CanSeeHealth, with.Attention.Count(a => a.Key == "sync:" + conn)).Should().Be((true, 1));

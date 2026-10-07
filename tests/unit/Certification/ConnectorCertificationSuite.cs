@@ -30,6 +30,9 @@ public abstract class ConnectorCertificationSuite
     /// <summary>Shared webhook secret used to sign the certification's webhook payloads.</summary>
     protected abstract string WebhookSecret { get; }
 
+    /// <summary>The connector as it is built for a connection that has no webhook secret stored.</summary>
+    protected abstract IServiceManagementConnector CreateConnectorWithoutWebhookSecret();
+
     protected static string Hmac(string body, string secret)
         => Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(body)));
 
@@ -201,7 +204,7 @@ public abstract class ConnectorCertificationSuite
         byte[] content = [1, 2, 3];
         await c.AddAttachmentAsync(t.ExternalId!, new SecureAttachment("a.bin", "application/octet-stream", 3, "k", content));
 
-        var swept = await c.GetRecentAttachmentsAsync(null);
+        var swept = (await c.GetRecentAttachmentsAsync(null)).Items;
 
         // Providers do not reliably bump a ticket's modified date when a file is attached, so sync
         // depends on this dated sweep rather than on the ticket page.
@@ -283,12 +286,15 @@ public abstract class ConnectorCertificationSuite
 
     // ---- webhook validation ----
 
-    private WebhookRequest SignedWebhook(string body, DateTimeOffset? ts = null)
-        => new(
-            Headers: new Dictionary<string, string> { ["X-Timestamp"] = (ts ?? Clock.GetUtcNow()).ToString("o") },
+    private WebhookRequest SignedWebhook(string body, DateTimeOffset? ts = null, string? secret = null)
+    {
+        var timestamp = (ts ?? Clock.GetUtcNow()).ToString("o");
+        return new(
+            Headers: new Dictionary<string, string> { [WebhookSignature.TimestampHeader] = timestamp },
             Body: body,
-            RawSignature: Hmac(body, WebhookSecret),
+            RawSignature: WebhookSignature.Compute(timestamp, body, secret ?? WebhookSecret),
             ReceivedAt: Clock.GetUtcNow());
+    }
 
     [Fact]
     public async Task Valid_webhook_signature_passes()
@@ -307,6 +313,40 @@ public abstract class ConnectorCertificationSuite
         var stale = Clock.GetUtcNow() - TimeSpan.FromMinutes(30);
         (await CreateConnector().ValidateWebhookAsync(SignedWebhook("{\"x\":1}", stale))).IsValid.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task A_captured_delivery_cannot_be_replayed_under_a_new_timestamp()
+    {
+        // The timestamp is part of what is signed. When it was only checked, a delivery captured
+        // an hour ago could be sent again with the header changed to "now".
+        var captured = SignedWebhook("{\"x\":1}", Clock.GetUtcNow() - TimeSpan.FromMinutes(30));
+        var replayed = captured with
+        {
+            Headers = new Dictionary<string, string> { [WebhookSignature.TimestampHeader] = Clock.GetUtcNow().ToString("o") },
+        };
+
+        (await CreateConnector().ValidateWebhookAsync(replayed)).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task With_no_webhook_secret_stored_no_delivery_is_valid()
+    {
+        // A connection is given a webhook secret only if someone sets one. Until then the key was
+        // the empty string, and a signature made with the empty string is one anybody can make.
+        var timestamp = Clock.GetUtcNow().ToString("o");
+        const string body = "{\"eventType\":\"ticket.updated\"}";
+        WebhookRequest Signed(string signature) => new(
+            new Dictionary<string, string> { [WebhookSignature.TimestampHeader] = timestamp }, body, signature, Clock.GetUtcNow());
+        var c = CreateConnectorWithoutWebhookSecret();
+
+        (await c.ValidateWebhookAsync(Signed(WebhookSignature.Compute(timestamp, body, "")))).IsValid.Should().BeFalse();
+        // Over the body alone: the form that used to be accepted.
+        (await c.ValidateWebhookAsync(Signed(Hmac(body, "")))).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_delivery_signed_with_another_secret_is_rejected()
+        => (await CreateConnector().ValidateWebhookAsync(SignedWebhook("{\"x\":1}", secret: "not-the-secret"))).IsValid.Should().BeFalse();
 
     [Fact]
     public async Task Webhook_payload_normalizes_to_a_provider_event()

@@ -623,9 +623,11 @@ public partial class WorkPlanTests
         (all.Totals.CompletedWork, all.People.Single(p => p.AppUserId == w.Jason.Id).Figures.CompletedWork).Should().Be((1, 1), "the login linked to Jason is Jason; the other closure is credited to nobody here and is in no row");
         var completed = await admin.WorkAsync(w.Admin.Id, Week, AnalyticsWorkKind.Completed, 0, 50);
         completed.Rows.Should().ContainSingle().Which.Should().Match<AnalyticsWorkRowDto>(r => r.Reference == "Autotask 8001" && r.PersonName == "Jason Carter" && r.Status == "CLOSED");
-        // Jason's own view counts it too (his scope reaches himself, and the link makes the ticket his credit; he cannot open it, so it has no name).
+        // Jason's own view counts it too, and by name: his scope reaches himself, and a ticket the PSA assigned to the login he is linked to is his
+        // to open. (This used to assert a row he could NOT open - credited to him through the link, hidden from him because ticket visibility did not
+        // follow the same link.)
         var mine = await w.As(w.Jason).Analytics.WorkAsync(w.Jason.Id, Week, AnalyticsWorkKind.Completed, 0, 50);
-        mine.Rows.Should().ContainSingle().Which.Should().Match<AnalyticsWorkRowDto>(r => !r.TicketVisible && r.Reference == WorkforceAnalyticsService.HiddenWork && r.Title == null && r.Status == null && r.FinishedAt == At(Tuesday, "10:00"));
+        mine.Rows.Should().ContainSingle().Which.Should().Match<AnalyticsWorkRowDto>(r => r.TicketVisible && r.Reference == "Autotask 8001" && r.Title == "Closed by Jason in Autotask" && r.Status == "CLOSED" && r.FinishedAt == At(Tuesday, "10:00"));
 
         // Sam is not offered for planned work: his recorded time counts, his capacity does not exist (as Team capacity counts it).
         var sam = all.People.Single(p => p.AppUserId == w.Sam.Id);

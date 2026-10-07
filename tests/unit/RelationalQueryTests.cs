@@ -131,6 +131,58 @@ public sealed class RelationalQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task Ticket_visibility_translates_for_every_scope_with_PSA_links_on_two_connections()
+    {
+        // The real scope query. Every other test here passes a no-op in its place, so the predicate
+        // that decides which tickets a person may see had never been through a SQL translator - and
+        // it is built by hand, as an OR-chain with one clause per PSA connection.
+        Desk.Domain.Tenancy.PsaConnection Account(string name) => new()
+        {
+            MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://x", CredentialSecretRef = "m", DefaultTimeEntryResourceId = "api-user",
+        };
+        var first = Account("Autotask - A");
+        var second = Account("Autotask - B");
+        var dept = await _db.Departments.FirstAsync();
+        var teamId = await _db.Teams.Select(t => t.Id).FirstAsync();
+        var colleague = await _db.AppUsers.Where(u => u.Id != _me).Select(u => u.Id).FirstAsync();
+        Ticket Psa(Guid connection, string external, string login) => new()
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection,
+            ExternalTicketId = external, RequesterName = "R", RequesterEmail = "r@x.test", Title = external,
+            PortalStatus = "NEW", PortalPriority = "NORMAL", AssignedTechnicianExternalId = login, SyncStatus = TicketSyncStatus.Synced,
+        };
+        _db.AddRange(first, second,
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = _me, PsaConnectionId = first.Id, ExternalTechnicianId = "5" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = _me, PsaConnectionId = second.Id, ExternalTechnicianId = "812" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = colleague, PsaConnectionId = first.Id, ExternalTechnicianId = "7" },
+            new UserDepartment { MspOrganizationId = Org, AppUserId = _me, DepartmentId = dept.Id, IsPrimary = true },
+            new UserDepartment { MspOrganizationId = Org, AppUserId = colleague, DepartmentId = dept.Id, IsPrimary = true },
+            new UserTeam { MspOrganizationId = Org, AppUserId = colleague, TeamId = teamId },
+            Psa(first.Id, "mine-on-A", "5"), Psa(second.Id, "mine-on-B", "812"),
+            Psa(second.Id, "someone-elses-5-on-B", "5"), Psa(first.Id, "colleagues-on-A", "7"), Psa(first.Id, "the-integrations", "api-user"));
+        await _db.SaveChangesAsync();
+
+        async Task<List<string>> SeenWithAsync(Desk.Domain.Authorization.PermissionScope scope)
+        {
+            var role = new Role { Name = "R-" + scope, MspOrganizationId = Org };
+            role.Permissions.Add(new RolePermission { PermissionKey = Desk.Domain.Authorization.Permissions.TicketsViewAll, Scope = scope });
+            _db.Roles.Add(role);
+            _db.UserRoles.RemoveRange(await _db.UserRoles.Where(r => r.AppUserId == _me).ToListAsync());
+            _db.UserRoles.Add(new UserRole { AppUserId = _me, RoleId = role.Id });
+            await _db.SaveChangesAsync();
+            var visible = await new TicketScopeQuery(_db, new Desk.Infrastructure.Authorization.EffectivePermissionService(_db))
+                .VisibleAsync(_db.Tickets.AsNoTracking(), _me, Desk.Domain.Authorization.Permissions.TicketsViewAll);
+            return await visible.Where(t => t.Origin == TicketOrigin.Psa).Select(t => t.Title).OrderBy(t => t).ToListAsync();
+        }
+
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.Assigned)).Should().Equal("mine-on-A", "mine-on-B");
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.Department)).Should().Equal("colleagues-on-A", "mine-on-A", "mine-on-B");
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.Team)).Should().Equal("colleagues-on-A", "mine-on-A", "mine-on-B");
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.All)).Should().HaveCount(5);
+    }
+
+    [Fact]
     public async Task Technician_metrics_translate_with_either_identity_and_ratings()
     {
         var metrics = new Desk.Infrastructure.Analytics.TechnicianMetricsService(_db, new Desk.Application.Analytics.ProductivityScorer(), _clock);

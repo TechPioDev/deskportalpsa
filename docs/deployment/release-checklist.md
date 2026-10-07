@@ -7,7 +7,7 @@
 - [ ] No open critical/high defects (see [qa-report.md](../testing/qa-report.md))
 - [ ] DB migrations reviewed and reversible; `dotnet ef migrations script` diffed
 - [ ] `ConnectionStrings`, `Keycloak`, `Secrets:EncryptionKey` configured per env — startup refuses to run without a real encryption key in Production
-- [ ] `Connectors:BlockPrivateEgress=true` in production (SSRF guard on)
+- [ ] `Connectors:BlockPrivateEgress` not set to `false` on the api **or the worker** (the SSRF guard is on by default; the worker makes every scheduled PSA call)
 - [ ] Backups verified recent; a restore drill has passed ([backup-and-recovery.md](backup-and-recovery.md))
 - [ ] **Live gates** (production GA): DAST/ZAP, penetration test, k6 load run to §13 targets
 

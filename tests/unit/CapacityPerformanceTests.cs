@@ -735,6 +735,53 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     }
 
     [Fact]
+    public async Task Ticket_visibility_through_PSA_links_runs_on_a_real_database()
+    {
+        // The predicate that decides which tickets a person may see is assembled by hand, one clause
+        // per PSA connection. SQLite translating it does not prove PostgreSQL does, and this is the
+        // query every ticket list, count and detail goes through.
+        var (db, _, teamId, _, ids) = await SeedAsync(6);
+        var (me, teammate) = (ids[0], ids[5]);   // people 0 and 5 share Team 0
+        Desk.Domain.Tenancy.PsaConnection Account(string name) => new()
+        {
+            MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://x", CredentialSecretRef = "m", DefaultTimeEntryResourceId = "api-user",
+        };
+        var (first, second) = (Account("Autotask - A"), Account("Autotask - B"));
+        Ticket Psa(Guid connection, string external, string login) => new()
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection,
+            ExternalTicketId = external, RequesterName = "R", RequesterEmail = "r@x.test", Title = external,
+            PortalStatus = "NEW", PortalPriority = "NORMAL", AssignedTechnicianExternalId = login, SyncStatus = TicketSyncStatus.Synced,
+        };
+        var assigned = new Role { MspOrganizationId = Org, Name = "Technician" };
+        assigned.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAssigned, Scope = PermissionScope.Assigned });
+        var byTeam = new Role { MspOrganizationId = Org, Name = "Team lead" };
+        byTeam.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAll, Scope = PermissionScope.Team });
+        db.AddRange(first, second, assigned, byTeam,
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = me, PsaConnectionId = first.Id, ExternalTechnicianId = "5" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = me, PsaConnectionId = second.Id, ExternalTechnicianId = "812" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = teammate, PsaConnectionId = first.Id, ExternalTechnicianId = "7" },
+            Psa(first.Id, "mine-on-A", "5"), Psa(second.Id, "mine-on-B", "812"), Psa(second.Id, "someone-elses-5-on-B", "5"),
+            Psa(first.Id, "teammates-on-A", "7"), Psa(first.Id, "the-integrations", "api-user"));
+        await db.SaveChangesAsync();
+
+        async Task<List<string>> SeenAsync(Role role)
+        {
+            db.UserRoles.RemoveRange(await db.UserRoles.Where(r => r.AppUserId == me).ToListAsync());
+            db.UserRoles.Add(new UserRole { AppUserId = me, RoleId = role.Id });
+            await db.SaveChangesAsync();
+            var visible = await new Desk.Infrastructure.Tickets.TicketScopeQuery(db, new EffectivePermissionService(db))
+                .VisibleAsync(db.Tickets.AsNoTracking(), me, Permissions.TicketsViewAll);
+            return await visible.Where(t => t.Origin == TicketOrigin.Psa).Select(t => t.Title).OrderBy(t => t).ToListAsync();
+        }
+
+        (await SeenAsync(assigned)).Should().Equal("mine-on-A", "mine-on-B");
+        (await SeenAsync(byTeam)).Should().Equal("mine-on-A", "mine-on-B", "teammates-on-A");
+        output.WriteLine($"ticket visibility through PSA links: {(Postgres is null ? "SQLite" : "PostgreSQL")}, team {teamId}");
+    }
+
+    [Fact]
     public async Task Every_capacity_query_runs_on_a_real_database()
     {
         var (db, admin, teamId, skillId, ids) = await SeedAsync(6);

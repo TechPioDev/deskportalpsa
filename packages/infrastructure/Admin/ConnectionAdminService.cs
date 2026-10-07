@@ -18,8 +18,11 @@ public sealed class ConnectionAdminService(
     IConnectorResolver connectors,
     IConnectionFieldCache fieldCache,
     IObjectStorage storage,
-    TimeProvider clock) : IConnectionAdminService
+    TimeProvider clock,
+    Security.ConnectorEndpointPolicy? endpointPolicy = null) : IConnectionAdminService
 {
+    private readonly Security.ConnectorEndpointPolicy _endpoints = endpointPolicy ?? Security.ConnectorEndpointPolicy.Strict;
+
     public async Task<IReadOnlyList<ConnectionSummary>> ListAsync(CancellationToken ct = default)
     {
         var rows = await db.PsaConnections.AsNoTracking()
@@ -75,6 +78,13 @@ public sealed class ConnectionAdminService(
         if (input.Credentials.Count == 0)
             throw new ValidationFailedException("At least one credential value is required.");
 
+        // Both checked before anything is stored, the credentials included. A connection to a PSA
+        // nothing here can talk to would sit enabled and fail every poll; an address that is not
+        // the PSA's would be sent the credentials.
+        if (!connectors.Supports(input.Provider))
+            throw new ValidationFailedException($"{input.Provider} cannot be connected yet.");
+        var endpoint = _endpoints.Validate(input.Provider, input.ApiEndpoint);
+
         // Secret goes to the encrypted store; only the opaque reference is persisted on the row.
         var secretRef = await secrets.WriteAsync($"{input.Provider}/{input.Name}", input.Credentials, ct);
 
@@ -82,7 +92,7 @@ public sealed class ConnectionAdminService(
         {
             Name = input.Name,
             Provider = input.Provider,
-            ApiEndpoint = input.ApiEndpoint,
+            ApiEndpoint = endpoint,
             // ConnectWise's company id is both a credential and the name its web links route by.
             // Defaulted from the credentials so an administrator who leaves the box empty still
             // gets working "open in ConnectWise" links.
@@ -297,8 +307,12 @@ public sealed class ConnectionAdminService(
         var connection = await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == connectionId, ct)
             ?? throw new NotFoundException("PSA connection");
 
+        // Before anything changes: an edit that fails the check must leave the connection, and the
+        // credentials stored for it, exactly as they were.
+        var endpoint = _endpoints.Validate(connection.Provider, input.ApiEndpoint);
+
         connection.Name = input.Name;
-        connection.ApiEndpoint = input.ApiEndpoint;
+        connection.ApiEndpoint = endpoint;
         connection.TenantIdentifier = TenantIdentifierFor(connection.Provider, input.TenantIdentifier, input.Credentials) ?? connection.TenantIdentifier;
         connection.TimeZone = input.TimeZone ?? connection.TimeZone;
         connection.LogoUrl = NormaliseLogoUrl(input.LogoUrl);

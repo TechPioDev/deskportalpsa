@@ -198,8 +198,8 @@ export default function ConnectionsPage() {
           <Input label="API endpoint" value={form.apiEndpoint} onChange={(v) => setForm({ ...form, apiEndpoint: v })}
               placeholder={provider === 2 ? 'https://webservices31.autotask.net/ATServicesRest/' : 'https://api-na.myconnectwise.net/v4_6_release/apis/3.0/'}
               hint={provider === 2
-                ? 'Your Autotask zone URL. The version segment is optional — /ATServicesRest/ and /ATServicesRest/v1.0/ both work.'
-                : 'Your ConnectWise API base, ending in /apis/3.0/.'} />
+                ? 'Your Autotask zone URL: https, on autotask.net. The version segment is optional — /ATServicesRest/ and /ATServicesRest/v1.0/ both work.'
+                : 'Your ConnectWise API base, starting with https:// and ending in /apis/3.0/.'} />
             <Input label="Tenant identifier (optional)" value={form.tenantIdentifier} onChange={(v) => setForm({ ...form, tenantIdentifier: v })}
               hint="A label for your own reference — not required, and not sent to the PSA." />
           </div>
