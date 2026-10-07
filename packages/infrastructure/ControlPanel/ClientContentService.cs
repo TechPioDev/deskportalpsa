@@ -303,6 +303,10 @@ public sealed class ClientContentService(DeskDbContext db, IAuditWriter audit, T
 
     private async Task EnsureSectionAsync(ClientAccess access, ControlPanelSection section, CancellationToken ct)
     {
+        // A company the person was only GIVEN is not theirs to run. The sections they may manage
+        // were granted for their own company and are not kept company by company, so without this
+        // a grant to look at a second company would have let them edit its control panel too.
+        if (access.IsGranted) throw new ForbiddenException("The control panel is for your own company. Switch back to it to manage these settings.");
         if (access.IsCompanyAdministrator) return;
         var granted = await db.ClientAccessGrants.AsNoTracking()
             .AnyAsync(g => g.ClientUserId == access.ClientUserId && g.Section == section, ct);

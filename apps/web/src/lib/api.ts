@@ -10,6 +10,7 @@ import {
   ConnectionCheckReportSchema, ConnectionMappingCoverageSchema, ConnectionPreviewSchema, PreflightSchema,
   ConnectionMappingHealthSchema, MappingPreviewRowSchema, MappingApplyResultSchema,
   type ConnectionMappingHealth, type MappingPreviewRow, type MappingApplyResult,
+  MyCompanySchema, ClientUserAccessSchema, type MyCompany, type ClientUserAccess,
   ClassificationMappingSchema, ClassificationPreviewSchema, ClassificationApplyResultSchema,
   type ClassificationMapping, type ClassificationPreview, type ClassificationApplyResult, type ClassificationRule,
   type ConnectionCheckReport, type ConnectionMappingCoverage, type ConnectionPreview, type Preflight,
@@ -1035,6 +1036,21 @@ export const api = {
   storageUsage: () =>
     request('/api/admin/storage', z.object({ usedBytes: z.number(), fileCount: z.number(), ticketCount: z.number() })),
   profile: () => request('/api/profile', ProfileSchema) as Promise<Profile>,
+  /** The companies the signed-in client user can act in: their own first. Empty for staff. */
+  myCompanies: () => request('/api/my-companies', z.array(MyCompanySchema)) as Promise<MyCompany[]>,
+  /** Staff: client users with the further companies each has been given. */
+  clientAccessUsers: (search?: string) =>
+    request(`/api/admin/client-access/users${search && search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''}`,
+      z.array(ClientUserAccessSchema)) as Promise<ClientUserAccess[]>,
+  clientAccessCompanies: () =>
+    request('/api/admin/client-access/companies', z.array(z.object({ id: z.string(), name: z.string() }))),
+  /** Gives a client user a further company, or changes what the grant gives. */
+  setClientCompanyAccess: (clientUserId: string, companyId: string, grant: { seesAllTickets: boolean; canCreate: boolean }) =>
+    request(`/api/admin/client-access/users/${clientUserId}/companies/${companyId}`, ClientUserAccessSchema,
+      { method: 'PUT', body: JSON.stringify(grant) }) as Promise<ClientUserAccess>,
+  removeClientCompanyAccess: (clientUserId: string, companyId: string) =>
+    request(`/api/admin/client-access/users/${clientUserId}/companies/${companyId}`, ClientUserAccessSchema,
+      { method: 'DELETE' }) as Promise<ClientUserAccess>,
   updateProfile: (body: { displayName: string; email: string }) =>
     request('/api/profile', ProfileSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<Profile>,
 

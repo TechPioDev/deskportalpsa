@@ -384,6 +384,43 @@ public sealed class AdminClassificationController(IClassificationMappingService 
     public async Task<IActionResult> Apply(Guid connectionId, CancellationToken ct) => Ok(await svc.ApplyAsync(connectionId, ct));
 }
 
+/// <summary>
+/// Which companies a client user can see into besides their own. Each is given here, one person
+/// and one company at a time; nothing else creates one.
+///
+/// Held to users.manage, the permission of the desk's own user administration, and deliberately
+/// not to clientusers.manage: that one is in the built-in client administrator role, and a
+/// client must never be able to give a company to anyone, themselves least of all.
+/// </summary>
+[ApiController]
+[Route("api/admin/client-access")]
+public sealed class AdminClientAccessController(IClientCompanyAccessService svc) : ControllerBase
+{
+    [HttpGet("users")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> ListUsers([FromQuery] string? search, [FromQuery] int take = 50, CancellationToken ct = default)
+        => Ok(await svc.ListUsersAsync(search, take, ct));
+
+    [HttpGet("users/{clientUserId:guid}")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> OneUser(Guid clientUserId, CancellationToken ct) => Ok(await svc.GetUserAsync(clientUserId, ct));
+
+    [HttpGet("companies")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> Companies(CancellationToken ct) => Ok(await svc.CompaniesAsync(ct));
+
+    /// <summary>Gives the person the company, or changes what the grant gives.</summary>
+    [HttpPut("users/{clientUserId:guid}/companies/{clientCompanyId:guid}")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> Grant(Guid clientUserId, Guid clientCompanyId, [FromBody] SetCompanyGrantInput input, CancellationToken ct)
+        => Ok(await svc.GrantAsync(clientUserId, clientCompanyId, input, ct));
+
+    [HttpDelete("users/{clientUserId:guid}/companies/{clientCompanyId:guid}")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> Revoke(Guid clientUserId, Guid clientCompanyId, CancellationToken ct)
+        => Ok(await svc.RevokeAsync(clientUserId, clientCompanyId, ct));
+}
+
 /// <summary>Background job monitor with dead-letter reprocessing.</summary>
 [ApiController]
 [Route("api/admin/jobs")]

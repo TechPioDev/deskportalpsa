@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authConfig, oidc, cookies as ck, isProd } from '@/lib/authConfig';
+import { readActingCompany } from '@/lib/actingCompany';
 
 // Backend-for-frontend proxy. The browser calls same-origin /api/bff/*; this handler attaches the
 // access token (from the httpOnly cookie) server-side and forwards to the .NET API. The token never
@@ -25,7 +26,7 @@ async function refresh(refreshToken: string) {
 /** The view-as routes always run as the administrator themselves, never as the person viewed. */
 const isViewAsControl = (path: string[]) => path[0] === 'api' && path[1] === 'view-as';
 
-function upstreamHeaders(req: NextRequest, token: string | undefined, viewAs?: string): Headers {
+function upstreamHeaders(req: NextRequest, token: string | undefined, viewAs?: string, company?: string | null): Headers {
   const h = new Headers();
   // x-desk-alert-key: a monitoring tool's key. Only the web app is reachable from outside, so an
   // alert from NinjaOne or Datto arrives here; dropping the header would make every delivery
@@ -37,6 +38,10 @@ function upstreamHeaders(req: NextRequest, token: string | undefined, viewAs?: s
   if (token) h.set('authorization', `Bearer ${token}`);
   // Only ever from our own httpOnly cookie: the allow-list above drops any such header the browser sends.
   if (viewAs) h.set('x-desk-view-as', viewAs);
+  // The company a client user with more than one has chosen to look at, from the cookie and only
+  // when it reads as an id. It decides nothing: the API checks it against what the person has been
+  // given, on every request. A header of that name from the browser is dropped by the list above.
+  if (company) h.set('x-desk-company', company);
   return h;
 }
 
@@ -80,10 +85,11 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path: string[] }
   const bodyBuf = hasBody ? Buffer.from(await req.arrayBuffer()) : undefined;
   let access = req.cookies.get(ck.access)?.value;
   const viewAs = isViewAsControl(path) ? undefined : req.cookies.get(ck.viewAs)?.value;
+  const company = readActingCompany(req.headers.get('cookie'));
 
   const call = (token?: string) =>
     fetchWithRetry(
-      () => fetch(target, { method: req.method, headers: upstreamHeaders(req, token, viewAs), body: bodyBuf, cache: 'no-store', redirect: 'manual' }),
+      () => fetch(target, { method: req.method, headers: upstreamHeaders(req, token, viewAs, company), body: bodyBuf, cache: 'no-store', redirect: 'manual' }),
       req.method);
 
   let upstream = await call(access);

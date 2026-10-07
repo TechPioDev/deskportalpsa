@@ -74,6 +74,15 @@ public sealed class PortalController(
 
     public sealed record UpdateProfileRequest(string DisplayName, string Email);
 
+    /// <summary>
+    /// The companies the signed-in client user can act in: their own, then each they were given.
+    /// Asked of the person and not of the company the request names, so that someone whose grant
+    /// was just taken away can still be told what they have left. Empty for staff.
+    /// </summary>
+    [HttpGet("my-companies")]
+    public async Task<IActionResult> MyCompanies([FromServices] Desk.Application.Admin.IClientCompanyAccessService companies, CancellationToken ct)
+        => Ok(await companies.MineAsync(user.Subject ?? "", ct));
+
     private async Task<ClientAccess> AccessAsync(CancellationToken ct)
         => await accessResolver.ResolveAsync(user.Subject ?? "", ct)
            ?? throw new ForbiddenException("This endpoint is for client portal users.");

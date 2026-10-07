@@ -300,7 +300,7 @@ public sealed class AccountSettingsService(
     /// <summary>The account's tickets a device page may list: the ones the client can see at all -
     /// provider tickets and monitoring boards shown to them, never the team's internal work.</summary>
     private IQueryable<Desk.Domain.Tickets.Ticket> DeviceTickets(ClientAccess access)
-        => Desk.Infrastructure.Tickets.TicketReadService.ClientVisible(db, access with { IsCompanyAdministrator = true });
+        => Desk.Infrastructure.Tickets.TicketReadService.ClientVisible(db, access with { IsCompanyAdministrator = true, GrantSeesAllTickets = null });
 
     private static DeviceDto Dto(Device d, int open, int total) => new(
         d.Id, d.Name, d.Type, d.Identifier, d.Notes, d.FromPsa, d.IsActive, d.WarrantyExpiresAt, d.LastSyncedAt, open, total);
@@ -362,6 +362,10 @@ public sealed class AccountSettingsService(
 
     private async Task EnsureSectionAsync(ClientAccess access, ControlPanelSection section, CancellationToken ct)
     {
+        // A company the person was only GIVEN is not theirs to run. The sections they may manage
+        // were granted for their own company and are not kept company by company, so without this
+        // a grant to look at a second company would have let them edit its control panel too.
+        if (access.IsGranted) throw new ForbiddenException("The control panel is for your own company. Switch back to it to manage these settings.");
         if (access.IsCompanyAdministrator) return;
         var granted = await db.ClientAccessGrants.AsNoTracking()
             .AnyAsync(g => g.ClientUserId == access.ClientUserId && g.Section == section, ct);

@@ -434,6 +434,22 @@ const MappingFieldHealthSchema = z.object({
 });
 export type MappingFieldHealth = z.infer<typeof MappingFieldHealthSchema>;
 
+/** A company a client user can act in: their own, or one they were given. */
+export const MyCompanySchema = z.object({
+  id: z.string(), name: z.string(), isOwn: z.boolean(), seesAllTickets: z.boolean(), canCreate: z.boolean(),
+});
+export type MyCompany = z.infer<typeof MyCompanySchema>;
+
+/** A client user and the further companies the desk has given them. */
+export const ClientUserAccessSchema = z.object({
+  id: z.string(), displayName: z.string(), email: z.string(), isActive: z.boolean(), hasSignedIn: z.boolean(),
+  homeCompanyId: z.string(), homeCompanyName: z.string(),
+  grants: z.array(z.object({
+    companyId: z.string(), companyName: z.string(), seesAllTickets: z.boolean(), canCreate: z.boolean(), grantedAt: z.string(),
+  })),
+});
+export type ClientUserAccess = z.infer<typeof ClientUserAccessSchema>;
+
 /** How far a connection's classification rules reach, counted from its tickets and the rules as they are. */
 export const ClassificationHealthSchema = z.object({
   rules: z.number(), classifiedTickets: z.number(), unmappedTickets: z.number(),

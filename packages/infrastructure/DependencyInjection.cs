@@ -225,6 +225,7 @@ public static class DependencyInjection
         services.AddScoped<IConnectionAdminService, ConnectionAdminService>();
         services.AddScoped<IMappingAdminService, MappingAdminService>();
         services.AddScoped<IClassificationMappingService, ClassificationMappingService>();
+        services.AddScoped<IClientCompanyAccessService, ClientCompanyAccessService>();
         services.AddScoped<IJobMonitorService, JobMonitorService>();
         services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();
         services.AddScoped<IAttentionService, AttentionService>();

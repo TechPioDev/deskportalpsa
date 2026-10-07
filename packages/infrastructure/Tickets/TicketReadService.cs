@@ -37,7 +37,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             t.ClientCompanyId == access.ClientCompanyId
             && (t.Origin == TicketOrigin.Psa
                 || db.Boards.Any(b => b.Id == t.BoardId && b.ClientVisible))
-            && (access.IsCompanyAdministrator || t.RequesterUserId == access.ClientUserId));
+            && (access.SeesAllTickets || t.RequesterUserId == access.ClientUserId));
 
     public async Task<IReadOnlyList<TicketListItem>> ListAsync(ClientAccess access, CancellationToken ct = default)
         => await ClientRows(Visible(access).AsNoTracking().OrderByDescending(t => t.CreatedAt)).ToListAsync(ct);

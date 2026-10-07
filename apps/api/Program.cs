@@ -33,6 +33,8 @@ builder.Services.AddDeskInfrastructure(config);
 // ---- Identity plumbing ----
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+// Which company a client's request names. It decides nothing: the resolver checks it against the person's grants.
+builder.Services.AddScoped<Desk.Application.Tickets.IActingCompany, Desk.Api.Auth.HttpActingCompany>();
 builder.Services.AddScoped<Desk.Application.Common.ICorrelationContext, Desk.Api.Auth.HttpCorrelationContext>();
 builder.Services.AddScoped<IClaimsTransformation, DeskClaimsTransformation>();
 
