@@ -103,6 +103,7 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
     tone: 'sky',
     items: [
       { href: '/dashboard/users', label: 'Users', icon: Users, permissions: ['users.manage'] },
+      { href: '/dashboard/client-access', label: 'Client access', icon: Building2, permissions: ['users.manage'] },
       { href: '/dashboard/roles', label: 'Roles & Permissions', icon: ShieldCheck, permissions: ['roles.manage'] },
       { href: '/dashboard/permissions', label: 'Effective Permissions', icon: KeyRound, permissions: ['roles.manage'] },
       { href: '/dashboard/departments', label: 'Departments & Teams', icon: Building2, permissions: ['users.manage'] },

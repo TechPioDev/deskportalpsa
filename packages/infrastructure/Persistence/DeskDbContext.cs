@@ -31,6 +31,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<PsaConnection> PsaConnections => Set<PsaConnection>();
     public DbSet<ClientCompany> ClientCompanies => Set<ClientCompany>();
     public DbSet<ClientUser> ClientUsers => Set<ClientUser>();
+    public DbSet<ClientCompanyAccess> ClientCompanyAccess => Set<ClientCompanyAccess>();
     public DbSet<AppUser> AppUsers => Set<AppUser>();
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();

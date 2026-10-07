@@ -22,7 +22,10 @@ public sealed class ControlPanelService(DeskDbContext db, IAuditWriter audit) : 
             .FirstOrDefaultAsync(c => c.Id == access.ClientCompanyId, ct)
             ?? throw new NotFoundException("Client company");
 
-        IReadOnlyList<string> sections = access.IsCompanyAdministrator
+        // In a company the person was only given there is no control panel: the sections they hold
+        // are their own company's.
+        IReadOnlyList<string> sections = access.IsGranted ? []
+            : access.IsCompanyAdministrator
             ? AllSectionKeys
             : await EffectiveSectionsAsync(access.ClientUserId, ct);
 
@@ -199,6 +202,10 @@ public sealed class ControlPanelService(DeskDbContext db, IAuditWriter audit) : 
 
     private async Task EnsureSectionAsync(ClientAccess access, ControlPanelSection section, bool write, CancellationToken ct)
     {
+        // A company the person was only GIVEN is not theirs to run. The sections they may manage
+        // were granted for their own company and are not kept company by company, so without this
+        // a grant to look at a second company would have let them edit its control panel too.
+        if (access.IsGranted) throw new ForbiddenException("The control panel is for your own company. Switch back to it to manage these settings.");
         if (access.IsCompanyAdministrator) return;
         var granted = await db.ClientAccessGrants.AsNoTracking()
             .AnyAsync(g => g.ClientUserId == access.ClientUserId && g.Section == section, ct);
@@ -208,7 +215,8 @@ public sealed class ControlPanelService(DeskDbContext db, IAuditWriter audit) : 
 
     private static void RequireAdmin(ClientAccess access)
     {
-        if (!access.IsCompanyAdministrator)
+        // Never in a company the person was only given: a grant does not make anyone its administrator.
+        if (access.IsGranted || !access.IsCompanyAdministrator)
             throw new ForbiddenException("Only a company administrator can manage users and access.");
     }
 

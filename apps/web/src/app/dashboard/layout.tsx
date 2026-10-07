@@ -9,6 +9,7 @@ import { MobileNav } from '@/components/SidebarNav';
 import { SidebarShell, SidebarProvider, SidebarToggle } from '@/components/SidebarShell';
 import { UpdateWatchdog } from '@/components/UpdateWatchdog';
 import { ViewAsBanner } from '@/components/ViewAs';
+import { CompanySwitcher } from '@/components/CompanySwitcher';
 
 
 
@@ -29,6 +30,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <SidebarToggle />
           <HeaderSearch />
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+            {/* Only for a client user who has been given more than one company; nothing otherwise. */}
+            <CompanySwitcher />
             <TimerWidget />
             <NotificationsBell />
             <a href="/user-guide.pdf" target="_blank" rel="noopener noreferrer" className="hidden items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)] sm:inline-flex">

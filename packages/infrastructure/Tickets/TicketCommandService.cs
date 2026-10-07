@@ -161,7 +161,10 @@ public sealed class TicketCommandService(
             IssueType = connection.DefaultIssueType,
             SubIssueType = connection.DefaultSubIssueType,
             ExternalCompanyId = company.ExternalCompanyId,
-            RequesterExternalId = requester.ExternalContactId,
+            // The person's contact in the PSA is a contact of their OWN company there. Raising a
+            // ticket for a company they were given, that id would name somebody else's contact on
+            // this company's ticket (or be refused): the ticket goes with their e-mail and no contact id.
+            RequesterExternalId = requester.ClientCompanyId == company.Id ? requester.ExternalContactId : null,
             RequesterEmail = requester.Email,
             DeviceExternalId = device?.ExternalId,
             IdempotencyKey = idempotencyKey,
