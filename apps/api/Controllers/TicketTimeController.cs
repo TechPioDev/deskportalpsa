@@ -99,9 +99,13 @@ public sealed class TicketTimeController(
         var connector = await connectors.ResolveAsync(listConnectionId, ct);
         var entries = await connector.GetTimeEntriesAsync(ticket.ExternalTicketId, ct);
 
+        // Only what was logged HERE says where an entry came from and who logged it. The portal
+        // also keeps a worklog of each entry made in the PSA itself; that row is the PSA's entry
+        // again, not a portal origin for it, and it gives nobody a claim to the hour.
         var portalByExternalId = local
-            .Where(l => l.ExternalEntryId is not null)
-            .ToDictionary(l => l.ExternalEntryId!, l => l);
+            .Where(l => l.ExternalEntryId is not null && l.Source == TimeEntrySource.Portal)
+            .GroupBy(l => l.ExternalEntryId!)
+            .ToDictionary(g => g.Key, g => g.First());
 
         var rows = entries.Select(e =>
         {

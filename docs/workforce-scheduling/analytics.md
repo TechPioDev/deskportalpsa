@@ -261,7 +261,6 @@ every other workforce read.
 |---|---|
 | Quality signals (reopened, escalations, SLA met / breached, first response, satisfaction, review) | Already on the productivity dashboard with their own definitions; two numbers for one fact would be worse than a link |
 | A productivity score | None introduced; the existing weighted score stays on its own page and is not used here |
-| Importing PSA-side time rows | A sync change (Phase 6 deferred item); a note says that time is in no day |
 | Aggregation tables, caching, materialized summaries | Raw reads were benchmarked first (above); not needed at the measured volumes |
 | Excel export | CSV opens in every spreadsheet; one format to keep safe |
 | Email of the dashboard, scheduled analytics reports | The staff-report scheduler exists; wiring these tables into it is a later, separate change |
@@ -273,7 +272,7 @@ every other workforce read.
 | Capacity utilization reads low this week | The period has not ended: later days hold capacity and no time yet (the note says so) | Choose last week, or wait |
 | A person's capacity is 0 and utilization N/A | No working schedule in force on those dates | Set their schedule (Workforce → person → Work schedule) |
 | A person shows "not offered" for capacity | They are not offered for planned work (`IsSchedulable` off), so their capacity does not count, as Team capacity counts it | Workforce → person → offered for planned work |
-| Recorded time is lower than the PSA's figure for the same person | Time entered directly in the PSA has no portal row and is not in any day | Expected; the note states it. PSA-side rows are a deferred sync change |
+| Recorded time is lower than the PSA's figure for the same person | Their PSA login is not linked to them, so the time entered under it is in nobody's day; or the ticket has not been read since the time was entered | Link the login (Users, PSA identity). "Re-sync all" reads every ticket's time |
 | "Work you cannot open" in a client, source or priority table | The caller may not open that ticket (ticket scope) | Expected: the time counts, the ticket's identity does not travel |
 | A client or priority filter shows less time than the person recorded | The filter matches only tickets the caller may open; time on tickets they cannot open is left out rather than attributed | Expected; an administrator's view has it all |
 | Variance reads N/A early in the week although work is planned | Nothing was planned up to today yet: later days are not compared until they arrive | Expected; the panel says how much was planned so far |

@@ -289,7 +289,8 @@ public sealed partial class WorkforceAnalyticsService(
         public string SourceGroupLabel => !Visible ? HiddenWork : SourceName;
     }
     private sealed record Alloc(Guid Id, Guid AppUserId, Guid TicketId, DateOnly Date, int Minutes, bool Confirmed, DateTimeOffset StartsAt, DateTimeOffset EndsAt);
-    private sealed record Entry(Guid Id, Guid AppUserId, Guid TicketId, DateOnly Date, DateTimeOffset At, int Seconds, bool Billable, string? WorkType, TimeEntrySyncStatus Sync);
+    /// <param name="FromPsa">Entered in the PSA itself and counted for the person its login is linked to; nobody logged it here.</param>
+    private sealed record Entry(Guid Id, Guid AppUserId, Guid TicketId, DateOnly Date, DateTimeOffset At, int Seconds, bool Billable, string? WorkType, TimeEntrySyncStatus Sync, bool FromPsa = false);
     private sealed record Live(Guid Id, Guid AppUserId, Guid TicketId, DateOnly Date, DateTimeOffset StartedAt, int Seconds, WorkSessionStatus Status);
     /// <summary>A finished work item with what the quality signals read: the promises it carried and whether they were kept.</summary>
     private sealed record Done(Guid TicketId, Guid CreditUserId, DateTimeOffset FinishedAt, DateOnly Date,
@@ -430,13 +431,20 @@ public sealed partial class WorkforceAnalyticsService(
                 .Select(a => new Alloc(a.Id, a.AppUserId, a.TicketId, DateOf(a.AppUserId, a.StartsAt), a.PlannedMinutes, a.Status == WorkAllocationStatus.Planned, a.StartsAt, a.EndsAt))
                 .Where(a => InRange(a.Date)).ToList();
 
-            // Every portal entry, whatever its sync state: rejected time is still work. PSA-side time has no row here.
+            // Every portal entry, whatever its sync state: rejected time is still work. Time entered
+            // in the PSA itself is added below, for the people its logins are linked to.
             var eq = db.TicketTimeEntries.AsNoTracking()
                 .Where(e => e.AppUserId != null && ids.Contains(e.AppUserId.Value) && e.EntryDate >= lo && e.EntryDate < hi);
             if (filter.Ids is { } allowedE) eq = eq.Where(e => allowedE.Contains(e.TicketId));
             entries = (await eq.Select(e => new { e.Id, AppUserId = e.AppUserId!.Value, e.TicketId, e.EntryDate, e.Hours, e.Billable, e.WorkTypeLabel, e.SyncStatus }).ToListAsync(ct))
                 .Select(e => new Entry(e.Id, e.AppUserId, e.TicketId, DateOf(e.AppUserId, e.EntryDate), e.EntryDate, (int)Math.Round(e.Hours * 3600m, MidpointRounding.AwayFromZero), e.Billable, Blank(e.WorkTypeLabel), e.SyncStatus))
                 .Where(e => InRange(e.Date)).ToList();
+            // Recorded work as well: an hour is not less worked for having been written down in the PSA.
+            entries.AddRange((await PsaLoggedTime.ForAsync(db, ids, lo, hi, ct))
+                .Where(x => filter.Ids is not { } allowedP || allowedP.Contains(x.Entry.TicketId))
+                .Select(x => new Entry(x.Entry.Id, x.AppUserId, x.Entry.TicketId, DateOf(x.AppUserId, x.Entry.EntryDate), x.Entry.EntryDate,
+                    (int)Math.Round(x.Entry.Hours * 3600m, MidpointRounding.AwayFromZero), x.Entry.Billable, Blank(x.Entry.WorkTypeLabel), x.Entry.SyncStatus, FromPsa: true))
+                .Where(e => InRange(e.Date)));
 
             // Live clocks: not entries yet, counted by the server's clock, on the day they started.
             var sq = db.WorkSessions.AsNoTracking().Include(s => s.Segments)
@@ -901,7 +909,12 @@ public sealed partial class WorkforceAnalyticsService(
         if (f.FinishedWithoutDate > 0) notes.Add($"{f.FinishedWithoutDate} finished work item{(f.FinishedWithoutDate == 1 ? " has" : "s have")} no completion date and {(f.FinishedWithoutDate == 1 ? "is" : "are")} in no period.");
         if (f.People.Any(p => (f.TeamIdsOf.GetValueOrDefault(p.Id)?.Count ?? 0) > 1)) notes.Add("A person in more than one team appears under each of them; the organization total counts them once.");
         if (t.Clients.ContainsKey("hidden")) notes.Add("Some recorded or planned time is on work you cannot open: its time counts, and it is listed as one row without its client, source or priority.");
-        notes.Add("Time entered directly in a PSA has no portal row and is not in any day's actual time; it reaches the ticket's totals only.");
+        // Time entered in a PSA itself is recorded work, for the person whose login it is under. Said
+        // every time, with how much of the figure it is: the reader of a low number needs to know
+        // that an unlinked login's hours are in nobody's day, and of a high one where the hours came from.
+        var fromPsa = f.Entries.Where(e => e.FromPsa).Sum(e => (long)e.Seconds);
+        notes.Add((fromPsa > 0 ? $"{Duration(fromPsa)} of the actual time was entered directly in a PSA. " : "")
+            + "Time entered in a PSA counts for the person whose PSA login it is under; under a login linked to nobody here it is in no person's day, and is on the ticket.");
         if (f.Kind != ActualKindFilter.All) notes.Add($"Only {(f.Kind == ActualKindFilter.Planned ? "planned" : "reactive")} work's recorded time is counted; planned minutes, capacity and variance are unchanged.");
         return notes;
         static string People(int n) => n == 1 ? "1 person has" : $"{n} people have";
@@ -934,7 +947,7 @@ public sealed partial class WorkforceAnalyticsService(
                     var planned = plannedKeys.Contains((e.AppUserId, e.TicketId, e.Date));
                     if (!Wanted(planned)) continue;
                     rows.Add(Row("entry", e.Id, e.Date, e.At, e.AppUserId, Meta(e.TicketId), (int)Math.Round(e.Seconds / 60.0, MidpointRounding.AwayFromZero), e.Seconds, e.Billable, planned,
-                        e.Sync switch { TimeEntrySyncStatus.Synced => "Recorded", TimeEntrySyncStatus.Pending => "Not in the PSA yet", _ => "PSA push failed" }, null, null));
+                        e.FromPsa ? "Logged in the PSA" : e.Sync switch { TimeEntrySyncStatus.Synced => "Recorded", TimeEntrySyncStatus.Pending => "Not in the PSA yet", _ => "PSA push failed" }, null, null));
                 }
                 foreach (var l in f.Lives)
                 {

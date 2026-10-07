@@ -336,12 +336,14 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
 
         // Constant whatever the size: one load (people, teams, calendar, allocations, entries, clocks, finished and open work, the
         // tickets, visibility, names), then memory. Measured 27 / 27 / 27 / 26 / 26 / 29 / 18 at 50, 100 and 500 people alike.
-        overviewWeek.Commands.Should().BeLessThanOrEqualTo(27);
-        overviewMonth.Commands.Should().BeLessThanOrEqualTo(27);
-        teamWeek.Commands.Should().BeLessThanOrEqualTo(27);
-        person.Commands.Should().BeLessThanOrEqualTo(26);
-        drill.Commands.Should().BeLessThanOrEqualTo(26);
-        export.Commands.Should().BeLessThanOrEqualTo(29);
+        // One more each than before time entered in the PSA itself was counted as recorded work: the
+        // people's PSA logins are read, and where any of them has one, the time filed under it (one more).
+        overviewWeek.Commands.Should().BeLessThanOrEqualTo(28);
+        overviewMonth.Commands.Should().BeLessThanOrEqualTo(28);
+        teamWeek.Commands.Should().BeLessThanOrEqualTo(28);
+        person.Commands.Should().BeLessThanOrEqualTo(27);
+        drill.Commands.Should().BeLessThanOrEqualTo(27);
+        export.Commands.Should().BeLessThanOrEqualTo(30);
         filters.Commands.Should().BeLessThanOrEqualTo(18);
         foreach (var ms in new[] { overviewWeek.Ms, overviewMonth.Ms, teamWeek.Ms, person.Ms, drill.Ms, export.Ms, filters.Ms }) ms.Should().BeLessThan(30_000);
 
@@ -376,7 +378,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         (await analytics.WorkAsync(admin, week with { ClientId = client.Id }, AnalyticsWorkKind.Completed, 0, 50)).Rows.Should().ContainSingle().Which.Reference.Should().Be("Autotask 9001");
         (await analytics.FiltersAsync(admin)).Should().Match<AnalyticsFilterOptionsDto>(o => o.Clients.Count == 1 && o.Priorities.Contains("HIGH") && o.Sources.Any(s => s.Key == "psa:" + connection.Id));
         // The filters add the two existence checks and the caller's ticket scope (a filter on what a ticket says about itself matches only tickets the caller may open), and nothing that grows.
-        narrowed.Commands.Should().BeLessThanOrEqualTo(33);
+        narrowed.Commands.Should().BeLessThanOrEqualTo(34);
         // A technician's own view with the same kind of filter, so the "may open" subquery of a narrower ticket scope (assigned) is translated too.
         var technician = new Role { MspOrganizationId = Org, Name = "Technician", BuiltInType = RoleType.Technician };
         technician.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAssigned, Scope = PermissionScope.Assigned });
@@ -533,9 +535,10 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         return line.Length <= max ? line : line[..max] + "…";
     }
 
-    private const int MaxForecast = 53;
+    // Two more than before PSA-entered time was counted: the period and the one it is compared with each read the people's PSA logins.
+    private const int MaxForecast = 55;
     private const int MaxHealth = 12;
-    private const int MaxTrends = 28;
+    private const int MaxTrends = 30;
 
     private async Task<(int Commands, long Ms, T Result)> MeasureAsync<T>(Func<Task<T>> work)
     {
@@ -655,10 +658,11 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         teamToday.Result.People.Should().HaveCount(people + 1);
         teamToday.Result.Working.Should().Be(1, "the administrator's clock");
         // Constant whatever the size: a day is the person's capacity, their allocations, entries and sessions; the team is one query each over everyone.
-        myDay.Commands.Should().BeLessThanOrEqualTo(27);
+        // One more each for a day and a team's day: the PSA logins of the people shown.
+        myDay.Commands.Should().BeLessThanOrEqualTo(28);
         // The active lookup reads the day the clock started on once (the outside-the-schedule fact): the session plus one capacity day.
         active.Commands.Should().BeLessThanOrEqualTo(17);
-        teamToday.Commands.Should().BeLessThanOrEqualTo(27);
+        teamToday.Commands.Should().BeLessThanOrEqualTo(28);
 
         plan.Result.Allocations.Should().HaveCount(perPerson * 5);
         plan.Result.Days.Where(d => d.IsWorkingDay).Should().OnlyContain(d => d.ConfirmedMinutes == perPerson * 60);

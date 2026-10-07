@@ -317,6 +317,32 @@ figures and not ranges.
   its connection; an index on the three levels would cost every ticket write for the sake of a
   page opened now and then.
 
+## Time entered in the PSA, kept as worklogs
+
+A later slice ([worklogs.md](worklogs.md)) keeps each time entry a PSA holds as a row. It is done
+in the pass that already read a ticket's time for its totals, so the PSA is asked nothing more:
+one request for a ticket's time in a run, as before, and asserted.
+
+Measured with a PSA whose every ticket carries two time entries, read twice. One run at each size
+on each database.
+
+| | 200 tickets | 2,000 tickets |
+|---|---|---|
+| First import, PostgreSQL | 12.2 commands a ticket, 11.8 ms | 12.1 commands a ticket, 16.2 ms |
+| Read again, nothing new, PostgreSQL | 10.1 commands a ticket, 7.6 ms | 10.1 commands a ticket, 6.6 ms |
+| First import, SQLite (a row at a time) | 14.2 commands a ticket | 14.1 commands a ticket |
+| Read again, SQLite | 10.1 commands a ticket | 10.1 commands a ticket |
+
+The work for a ticket does not grow with the number of tickets, and is asserted (no more than 15
+and 11 commands a ticket). Of those commands, keeping the entries is one read of the ticket's
+worklogs and one write of the new rows; the rest is what a sync of a ticket with time already did.
+A second read adds no row: 4,000 worklogs after two reads of 2,000 tickets, and none sent back.
+
+The workforce screens each make one more query than they did (the people's PSA logins), and one
+more again where any of them has a login (the time under it). The counts are the same at 50, 100
+and 500 people and are asserted: a person's day and the team's day 28 where they were 27, the
+overview 28 for 27, the forecast 55 for 53 (it reads two periods).
+
 ## What is still slow, and is not changed here
 
 Also not changed:

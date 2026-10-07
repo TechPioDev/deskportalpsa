@@ -107,6 +107,12 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
     /// <summary>Pushes a portal record to the PSA and stamps the outcome on it either way.</summary>
     public async Task<bool> PushAsync(TicketTimeEntry record, Ticket ticket, IServiceManagementConnector connector, CancellationToken ct)
     {
+        // A worklog read FROM the PSA is the PSA's own entry. Sent to it, it would come back as a
+        // second one, and that one would be read and sent again. Nothing asks for this; were
+        // something to, it is refused here, where every push passes.
+        if (record.Source == TimeEntrySource.Provider)
+            throw new InvalidOperationException("A time entry read from the PSA is never sent to it.");
+
         var request = new UnifiedTimeEntryCreateRequest(record.Hours, record.WorkTypeId, record.WorkRoleId,
             record.Billable ? BillableOption.Billable : BillableOption.DoNotBill,
             record.Notes, MemberIdentifier: record.TechnicianExternalId);

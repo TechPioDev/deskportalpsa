@@ -478,6 +478,73 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         (await check.Tickets.AsNoTracking().CountAsync(t => t.PortalStatus == "CLOSED")).Should().Be(tickets / Statuses.Length + (tickets % Statuses.Length > 4 ? 1 : 0));
     }
 
+    /// <summary>
+    /// The same, for a PSA whose tickets carry time: two entries a ticket, each kept as a worklog.
+    /// The work for a ticket is the same for the two-thousandth as for the first, a second read
+    /// adds no worklog, and none is ever sent back.
+    /// </summary>
+    [Theory]
+    [InlineData(200)]
+    [InlineData(2_000)]
+    public async Task A_sync_keeps_the_PSAs_time_as_worklogs_for_the_same_work_a_ticket_however_many_it_reads(int tickets)
+    {
+        Guid connectionId;
+        await using (var db = await CreateAsync())
+        {
+            var connection = Connection("Main");
+            connectionId = connection.Id;
+            db.Add(connection);
+            await db.SaveChangesAsync();
+        }
+        var psaSide = new StubConnector(ProviderType.ConnectWisePsa) { Paged = true, SupportsAttachmentDownload = false, SupportsTimeEntries = true };
+        for (var i = 0; i < tickets; i++)
+        {
+            var ticket = Arriving(i, _clock.GetUtcNow().AddDays(-1));
+            psaSide.Tickets.Add(ticket);
+            psaSide.TimeEntries[ticket.ExternalId] =
+            [
+                new UnifiedTimeEntry($"e{i}a", $"m-{i % Technicians}", 0.5m, true, _clock.GetUtcNow().AddHours(-i % 200), null) { TechnicianName = $"Tech {i % Technicians:00}" },
+                new UnifiedTimeEntry($"e{i}b", $"m-{(i + 1) % Technicians}", 0.25m, false, _clock.GetUtcNow().AddHours(-i % 200 - 1), null) { TechnicianName = $"Tech {(i + 1) % Technicians:00}" },
+            ];
+        }
+
+        async Task<(int Commands, long Ms, SyncRunResult Result, int Held)> RunAsync()
+        {
+            await using var db = NewContext(platform: true);
+            var runner = new ConnectionSyncRunner(db, new Fixed(psaSide),
+                new TicketSyncService(db, new MappingEngine(), new SyncEventStore(db, _clock), _clock, new RecordingActivity()),
+                new InMemoryObjectStorage(new AttachmentStorageOptions(), _clock), new HeuristicMalwareScanner(), _clock);
+            var run = await MeasureAsync(() => runner.RunAsync(connectionId, new SyncRunRequest(Full: true)));
+            return (run.Commands, run.Ms, run.Result, db.ChangeTracker.Entries().Count());
+        }
+
+        var first = await RunAsync();
+        (first.Result.Created, first.Result.Failed).Should().Be((tickets, 0));
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        var again = await RunAsync();
+        (again.Result.Created, again.Result.Failed).Should().Be((0, 0));
+
+        output.WriteLine($"{tickets} tickets with two time entries each | first import {first.Commands} q ({(double)first.Commands / tickets:0.0} a ticket) {first.Ms} ms ({(double)first.Ms / tickets:0.00} ms a ticket)"
+            + $" | read again {again.Commands} q ({(double)again.Commands / tickets:0.0} a ticket) {again.Ms} ms ({(double)again.Ms / tickets:0.00} ms a ticket)");
+
+        await using var check = NewContext();
+        var worklogs = await check.TicketTimeEntries.AsNoTracking().Where(e => e.PsaConnectionId == connectionId).ToListAsync();
+        worklogs.Should().HaveCount(tickets * 2, "one worklog for each entry, after two reads of every one of them")
+            .And.OnlyContain(w => w.Source == TimeEntrySource.Provider && w.SyncStatus == TimeEntrySyncStatus.Synced && w.AppUserId == null);
+        worklogs.Select(w => w.ExternalEntryId).Distinct().Should().HaveCount(tickets * 2);
+        worklogs.Sum(w => w.Hours).Should().Be(tickets * 0.75m);
+        (await check.Tickets.AsNoTracking().SumAsync(t => (double)t.TimeWorkedHours)).Should().Be((double)(tickets * 0.75m), "the worklogs and the totals are the same hours");
+        psaSide.PushedTime.Should().BeEmpty("nothing read from the PSA is sent to it");
+        psaSide.TimeReads.Should().Be(tickets * 2, "a ticket's time is asked for once a run, as it was before the entries were kept");
+
+        // The work for a ticket, at two hundred and at two thousand alike: measured 14.1 commands on a
+        // first import and 10.1 when it is read again (on SQLite, which writes a row at a time). Of
+        // those, keeping the entries is one read of the ticket's worklogs and the rows themselves.
+        first.Commands.Should().BeLessThanOrEqualTo(tickets * 15 + 50);
+        again.Commands.Should().BeLessThanOrEqualTo(tickets * 11 + 50);
+        new[] { first.Held, again.Held }.Should().OnlyContain(held => held <= 400, "a page is let go of once it is saved, its worklogs with it");
+    }
+
     // ---- the benchmark -------------------------------------------------------------------------
 
     /// <summary>

@@ -841,6 +841,11 @@ public sealed class ConnectionSyncRunner(
         ticket.TimeWorkedHours = entries.Sum(e => e.Hours);
         ticket.BillableHours = entries.Where(e => e.Billable).Sum(e => e.Hours);
         ticket.NonBillableHours = entries.Where(e => !e.Billable).Sum(e => e.Hours);
+        // The same entries, kept as worklogs: time entered in the PSA itself is recorded work here
+        // too, each entry once, under the login it was filed with. From the read already made for
+        // the totals, so it asks nothing more of the PSA. Saved with the totals: the two are one
+        // account of the same hours and are not left disagreeing by a failure between them.
+        await ProviderWorklogs.ReconcileAsync(db, ticket, entries, ct);
         await db.SaveChangesAsync(ct);
     }
 
