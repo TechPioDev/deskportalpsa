@@ -189,6 +189,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     private void ApplyInvariants()
     {
         var now = clock.GetUtcNow();
+        List<Desk.Domain.Tickets.TicketTimeEntry>? unplaced = null;
 
         foreach (var entry in ChangeTracker.Entries())
         {
@@ -202,6 +203,12 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
             {
                 ue.UpdatedAt = now;
             }
+
+            // A time entry carries the PSA account of its ticket. Noted here and given it below, all
+            // of them together: asked for one at a time, a thousand entries saved at once was a
+            // thousand looks through everything this unit of work holds.
+            if (entry is { Entity: Desk.Domain.Tickets.TicketTimeEntry time, State: EntityState.Added } && time.PsaConnectionId is null)
+                (unplaced ??= []).Add(time);
 
             // Audit log is append-only.
             if (entry.Entity is AuditLogEntry && entry.State is EntityState.Modified or EntityState.Deleted)
@@ -230,5 +237,34 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
                 }
             }
         }
+
+        if (unplaced is not null) PlaceTimeEntries(unplaced);
+    }
+
+    /// <summary>
+    /// Gives each new time entry the PSA account of its ticket, where whoever made the entry did not.
+    /// "Who has logged time" is read off the entry, and an entry without its account would simply
+    /// not be in the answer - so this is not left to each place that writes one.
+    ///
+    /// The ticket is nearly always in hand: time is logged on a ticket that was just read. Those
+    /// that are not are asked for together, once. A ticket with no PSA is an answer, not a miss.
+    /// </summary>
+    private void PlaceTimeEntries(List<Desk.Domain.Tickets.TicketTimeEntry> entries)
+    {
+        var wanted = entries.Where(e => e.Ticket is null).Select(e => e.TicketId).ToHashSet();
+        var account = new Dictionary<Guid, Guid?>();
+        if (wanted.Count > 0)
+        {
+            foreach (var ticket in ChangeTracker.Entries<Desk.Domain.Tickets.Ticket>())
+                if (wanted.Remove(ticket.Entity.Id)) account[ticket.Entity.Id] = ticket.Entity.PsaConnectionId;
+        }
+        if (wanted.Count > 0)
+        {
+            var ids = wanted.ToList();
+            foreach (var ticket in Tickets.IgnoreQueryFilters().AsNoTracking().Where(t => ids.Contains(t.Id)).Select(t => new { t.Id, t.PsaConnectionId }).ToList())
+                account[ticket.Id] = ticket.PsaConnectionId;
+        }
+        foreach (var entry in entries)
+            entry.PsaConnectionId = entry.Ticket is { } own ? own.PsaConnectionId : account.GetValueOrDefault(entry.TicketId);
     }
 }

@@ -52,6 +52,12 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
 {
     private static readonly Guid Org = Guid.NewGuid();
     private static readonly string? Postgres = Environment.GetEnvironmentVariable("DESK_TEST_POSTGRES");
+    /// <summary>
+    /// A directory. When set, the benchmark writes every statement of each read there, with the
+    /// values it was sent with, and leaves its database in place: a slow statement can then be put
+    /// to EXPLAIN exactly as it ran. The database's name is printed; dropping it is by hand.
+    /// </summary>
+    private static readonly string? Profile = Environment.GetEnvironmentVariable("DESK_TEST_PROFILE");
     private readonly string _database = $"desk_p9_{Guid.NewGuid():N}";
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
     private readonly TestClock _clock = new();
@@ -64,17 +70,30 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         public double DatabaseMs { get; private set; }
         /// <summary>The time each statement took in all, by its text: which one to look at when a figure grows.</summary>
         private readonly Dictionary<string, (int Times, double Ms)> _statements = [];
+        private readonly Dictionary<string, string> _parameters = [];
+        private readonly Dictionary<string, List<DbParameter>> _sentWith = [];
 
         public void Reset()
         {
             (Commands, DatabaseMs) = (0, 0);
             _statements.Clear();
+            _parameters.Clear();
+            _sentWith.Clear();
         }
 
         /// <summary>The statements that took longest in all since the last reset.</summary>
         public IEnumerable<string> Costliest(int take) => _statements
             .OrderByDescending(x => x.Value.Ms).Take(take)
             .Select(x => $"{x.Value.Ms:0} ms in {x.Value.Times} ({x.Value.Ms / x.Value.Times:0.00} ms each): {OneLine(x.Key, 230)}");
+
+        /// <summary>The statements since the last reset whose text contains <paramref name="part"/>, costliest first, each with what it was sent with.</summary>
+        public IEnumerable<(string Sql, List<DbParameter> Parameters)> Sent(string part) => _statements
+            .Where(x => x.Key.Contains(part)).OrderByDescending(x => x.Value.Ms)
+            .Select(x => (x.Key, _sentWith.GetValueOrDefault(x.Key) ?? []));
+
+        /// <summary>Every statement since the last reset, costliest first, whole and with the values it was sent with.</summary>
+        public string Dump() => string.Join("\n\n", _statements.OrderByDescending(x => x.Value.Ms)
+            .Select(x => $"-- {x.Value.Ms:0} ms in {x.Value.Times}\n-- {_parameters.GetValueOrDefault(x.Key)}\n{x.Key};"));
 
         private static string OneLine(string sql, int max)
         {
@@ -87,12 +106,29 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
             DatabaseMs += eventData.Duration.TotalMilliseconds;
             var seen = _statements.GetValueOrDefault(command.CommandText);
             _statements[command.CommandText] = (seen.Times + 1, seen.Ms + eventData.Duration.TotalMilliseconds);
+            _parameters[command.CommandText] = string.Join(", ", command.Parameters.Cast<DbParameter>().Select(x => $"{x.ParameterName}={x.Value}"));
+            _sentWith[command.CommandText] = command.Parameters.Cast<DbParameter>().Where(x => x is ICloneable).Select(x => (DbParameter)((ICloneable)x).Clone()).ToList();
         }
 
         public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
         {
             Took(command, eventData);
             return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
+
+        // A statement sent without awaiting it is still a statement, and its time is still the database's.
+        public override DbDataReader ReaderExecuted(DbCommand command, CommandExecutedEventData eventData, DbDataReader result)
+        {
+            Commands++;
+            Took(command, eventData);
+            return base.ReaderExecuted(command, eventData, result);
+        }
+
+        public override object? ScalarExecuted(DbCommand command, CommandExecutedEventData eventData, object? result)
+        {
+            Commands++;
+            Took(command, eventData);
+            return base.ScalarExecuted(command, eventData, result);
         }
 
         public override ValueTask<int> NonQueryExecutedAsync(DbCommand command, CommandExecutedEventData eventData, int result, CancellationToken cancellationToken = default)
@@ -161,6 +197,31 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         var result = await work();
         sw.Stop();
         return (_counter.Commands, sw.ElapsedMilliseconds, result, Math.Max(0, sw.ElapsedMilliseconds - (long)_counter.DatabaseMs));
+    }
+
+    /// <summary>
+    /// The plan PostgreSQL makes for a statement, with the values it was sent with. Asked on the
+    /// connection itself, not through the unit of work, so that asking is not counted as a query.
+    /// </summary>
+    private static async Task<string> PlanAsync(DeskDbContext db, (string Sql, List<DbParameter> Parameters) statement)
+    {
+        // Opened here and given back here. Left open, the unit of work would hold it for the rest of
+        // the test, and whoever next needed a connection would have to make a new one.
+        await db.Database.OpenConnectionAsync();
+        try
+        {
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "EXPLAIN " + statement.Sql;
+            foreach (var parameter in statement.Parameters) command.Parameters.Add(((ICloneable)parameter).Clone());
+            var lines = new List<string>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) lines.Add(reader.GetString(0));
+            return string.Join('\n', lines);
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
     }
 
     private sealed class Fixed(IServiceManagementConnector c) : IConnectorResolver
@@ -518,11 +579,19 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         {
             ["Id"] = "gen_random_uuid()",
             ["TicketId"] = "k.\"Id\"",
+            // Left without its account, as every entry was before the column existed: the migration's own statement gives it below.
+            ["PsaConnectionId"] = "NULL",
             ["ExternalEntryId"] = "k.\"ExternalTicketId\" || '-' || n",
             ["TechnicianExternalId"] = "k.\"AssignedTechnicianExternalId\"",
             ["TechnicianName"] = "k.\"AssignedTechnicianName\"",
             ["EntryDate"] = "k.\"CreatedAt\" + make_interval(hours => n)",
         });
+        // The statement the migration runs on entries already there, on all of these.
+        var placing = Stopwatch.StartNew();
+        var placed = await db.Database.ExecuteSqlRawAsync(Desk.Infrastructure.Persistence.Configurations.TicketIndexes.GiveTimeEntriesTheirAccount);
+        placing.Stop();
+        placed.Should().Be(entries, "every one of them is on a PSA ticket");
+        (await db.TicketTimeEntries.AsNoTracking().CountAsync(e => e.PsaConnectionId == null)).Should().Be(0, "the one the rest were copied from was given its own as it was saved");
         // A run every five minutes for a year, on the one connection.
         var runs = await CloneAsync(db, "sync_runs", ran.Id, "generate_series(1, 105000) AS n", new()
         {
@@ -534,6 +603,16 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         // what was just loaded, and a count that an index alone could answer visits every row to see if it is visible.
         await db.Database.ExecuteSqlRawAsync("VACUUM ANALYZE");
         seeding.Stop();
+        // What the indexes these reads rest on cost in space, beside the tables they are on.
+        var sizes = await db.Database.SqlQueryRaw<string>("""
+            SELECT relname || ' ' || pg_size_pretty(pg_relation_size(oid)) AS "Value" FROM pg_class
+            WHERE relname IN ('tickets', 'ticket_time_entries', 'IX_tickets_open', 'IX_tickets_search', 'IX_tickets_MspOrganizationId_ResolvedByAppUserId',
+                'IX_tickets_MspOrganizationId_PsaConnectionId_AssignedTechnicia~', 'IX_ticket_time_entries_MspOrganizationId_PsaConnectionId_Techn~')
+            ORDER BY relkind DESC, relname
+            """).ToListAsync();
+        var allIndexes = await db.Database.SqlQueryRaw<string>("""
+            SELECT relname || ' indexes ' || pg_size_pretty(pg_indexes_size(oid)) AS "Value" FROM pg_class WHERE relname IN ('tickets', 'ticket_time_entries') ORDER BY relname
+            """).ToListAsync();
 
         var big = all[0].Id;
         var held = await db.Tickets.AsNoTracking().CountAsync(t => t.PsaConnectionId == big);
@@ -554,6 +633,7 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
             var measured = await MeasureAsync(work);
             // Anything a person would notice waiting for says which statement the time went on.
             if (measured.Ms >= 150) slow.AddRange(_counter.Costliest(2).Select(line => $"    {what}, costliest: {line}"));
+            if (Profile is not null) File.WriteAllText(Path.Combine(Profile, $"{tickets}-{what.Replace(' ', '-')}.sql"), _counter.Dump());
             return measured;
         }
 
@@ -568,7 +648,12 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         var byConnection = await WarmAsync("one connection", () => reads.PageAsync(new TicketQuery(ConnectionName: all[^1].Name, Take: 50)));
         var search = await WarmAsync("search", () => reads.SearchAsync(new TicketQuery(Q: "Ticket 4242")));
         var summary = await WarmAsync("summary", () => reads.SummaryAsync(mineOnly: false));
+        var summaryPlan = await PlanAsync(db, _counter.Sent("GROUP BY").First());
         var facets = await WarmAsync("filter lists", () => reads.FacetsAsync());
+        var walks = _counter.Sent("WITH RECURSIVE").Count();
+        var searchPlans = new List<string>();
+        await MeasureAsync(() => reads.SearchAsync(new TicketQuery(Q: "Ticket 4242")));
+        foreach (var statement in _counter.Sent("LIKE").Where(x => x.Sql.Contains("FROM tickets"))) searchPlans.Add(await PlanAsync(db, statement));
 
         list.Result.Should().HaveCount(connections);
         // Every ticket is on one connection or another, and the first holds half of them.
@@ -582,6 +667,23 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         byConnection.Result.Total.Should().BeGreaterThan(0).And.BeLessThan(tickets);
         search.Result.Total.Should().BeGreaterThan(0);
 
+        // The three reads that were a pass over every ticket for each thing they show. Held first to
+        // what they answer - five tickets in seven are open here, and each connection has twenty-five
+        // logins that hold tickets and log time - and then to how they found it: the search from
+        // its index, the summary from the index of open work, the people by walking theirs.
+        var open = Enumerable.Range(1, tickets).Count(n => n % 7 is not (3 or 4)) + 1;
+        (summary.Result.Open, summary.Result.Unassigned, summary.Result.Overdue).Should().Be((open, 1, 0), "only the one ticket the rest were copied from is held by nobody");
+        summary.Result.OpenBySource.Sum(x => x.Count).Should().Be(open);
+        summary.Result.OpenByPriority.Select(x => x.Label).Should().BeEquivalentTo(["CRITICAL", "HIGH", "LOW", "MEDIUM"]);
+        facets.Result.People.Should().HaveCount(connections * 25);
+        (facets.Result.Statuses.Count, facets.Result.Priorities.Count, facets.Result.Queues.Count, facets.Result.Sources.Count).Should().Be((7, 4, 4, connections));
+        summaryPlan.Should().Contain(Desk.Infrastructure.Persistence.Configurations.TicketIndexes.Open, "the dashboard is counted from the index of open work, not from the tickets");
+        searchPlans.Should().NotBeEmpty().And.OnlyContain(plan => plan.Contains(Desk.Infrastructure.Persistence.Configurations.TicketIndexes.Search), "a search is answered from its index");
+        walks.Should().Be(5, "the people are found by walking five indexes: three for people here, two for PSA logins");
+        search.Commands.Should().BeLessThanOrEqualTo(8);
+        summary.Commands.Should().BeLessThanOrEqualTo(8);
+        facets.Commands.Should().BeLessThanOrEqualTo(17);
+
         // The same number of queries at a hundred thousand and at half a million, at ten connections and at a hundred.
         list.Commands.Should().BeLessThanOrEqualTo(5);
         due.Commands.Should().Be(1);
@@ -590,6 +692,8 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         sample.Commands.Should().BeLessThanOrEqualTo(3);
 
         output.WriteLine($"{connections} connections, {tickets} tickets ({held} on one connection), {entries} time entries, {runs} sync runs; loaded in {seeding.ElapsedMilliseconds / 1000} s");
+        output.WriteLine("  sizes: " + string.Join(" | ", sizes.Concat(allIndexes)));
+        output.WriteLine($"  the migration's statement gave {placed} time entries their account in {placing.ElapsedMilliseconds} ms");
         output.WriteLine($"  connections: list {list.Commands} q {list.Ms} ms | due for a sync {due.Commands} q {due.Ms} ms | sync health {state.Commands} q {state.Ms} ms");
         output.WriteLine($"  mapping page ({held} tickets): health {mapping.Commands} q {mapping.Ms} ms | sample {sample.Commands} q {sample.Ms} ms");
         output.WriteLine($"  ticket list: first page {page.Commands} q {page.Ms} ms | page 201 {deep.Commands} q {deep.Ms} ms | one status {byStatus.Commands} q {byStatus.Ms} ms"
@@ -635,6 +739,11 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
     {
         _connection.Dispose();
         if (Postgres is null) return;
+        if (Profile is not null)
+        {
+            output.WriteLine($"kept for profiling: database {_database}");
+            return;
+        }
         using var db = NewContext();
         db.Database.EnsureDeleted();
     }

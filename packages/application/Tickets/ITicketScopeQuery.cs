@@ -22,6 +22,15 @@ public interface ITicketScopeQuery
 
     /// <summary>Convenience for the common "may this user touch this one ticket" check, used by
     /// every mutation endpoint that currently loads a ticket by id with no scope predicate at all.</summary>
+    /// <summary>
+    /// True when nothing narrows this user's sight of the tickets that came from a PSA: they may
+    /// see every one of them. (The team's own boards are still a matter of membership.) A read
+    /// that only wants to know which PSA logins appear on visible tickets can then be answered
+    /// from an index, with no ticket visited to ask whether it may be seen. False whenever that is
+    /// not certain, and by default: the caller then checks each ticket, as it always did.
+    /// </summary>
+    Task<bool> SeesEveryPsaTicketAsync(Guid appUserId, CancellationToken ct = default) => Task.FromResult(false);
+
     Task<Ticket?> FindAsync(
         IQueryable<Ticket> source, Guid ticketId, Guid appUserId, string permissionKey, CancellationToken ct = default);
 }
