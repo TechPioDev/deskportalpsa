@@ -4000,6 +4000,10 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("\"WorkSessionId\" IS NOT NULL");
 
+                    b.HasIndex("PsaConnectionId", "ExternalEntryId")
+                        .IsUnique()
+                        .HasFilter("\"PsaConnectionId\" IS NOT NULL AND \"ExternalEntryId\" IS NOT NULL");
+
                     b.HasIndex("MspOrganizationId", "AppUserId", "EntryDate");
 
                     b.HasIndex("MspOrganizationId", "PsaConnectionId", "TechnicianExternalId")

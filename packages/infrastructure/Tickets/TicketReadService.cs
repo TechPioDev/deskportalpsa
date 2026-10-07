@@ -389,7 +389,9 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         decimal? hours = null;
         if (mineOnly && user.UserId is { } uid)
             hours = Math.Round((decimal)await db.TicketTimeEntries.AsNoTracking()
-                .Where(e => e.AppUserId == uid && e.EntryDate >= weekStart).SumAsync(e => (double)e.Hours, ct), 2);
+                    .Where(e => e.AppUserId == uid && e.EntryDate >= weekStart).SumAsync(e => (double)e.Hours, ct)
+                // And what they entered in the PSA itself this week, under a login that is linked to them.
+                + (await PsaLoggedTime.ForAsync(db, [uid], weekStart, weekStart.AddDays(8), ct)).Sum(x => x.Entry.Hours), 2);
 
         return new TicketSummary(
             Open: groups.Sum(g => g.Count),

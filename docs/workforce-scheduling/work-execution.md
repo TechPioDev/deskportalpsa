@@ -140,8 +140,9 @@ day and the live clocks that started that day; the running clock itself is recov
 viewed (the header, the Now card). Viewing yesterday while a clock runs today adds nothing to
 yesterday.
 
-Time entered directly in the PSA has no portal row today (it reaches the ticket's totals and its
-time notes) and is not in a day's figure; that is the same rule technician productivity uses.
+Time entered directly in the PSA is in a day's figure too, since Phase 9, for the person whose PSA
+login it is under ([worklogs.md](../integrations/worklogs.md)): the same rule technician
+productivity uses. Under a login linked to nobody it is in no person's day.
 
 ## Manual time and corrections
 
@@ -355,7 +356,6 @@ poll nothing per second; My day and Team today refetch once a minute and on focu
 |---|---|
 | "Complete work" as one server action (stop + status + note) | The existing status change already carries the rules (review, resolution); the screen chains stop then status. |
 | Session edits (changing a segment after the fact) | Corrections are made on the entry, with the reason rule; segments stay the record of what the clock did. |
-| Importing PSA-side time entries as portal rows | A separate sync change; today they reach totals and time notes. |
 | Idempotency keys on the manual time POST | The screens disable the button during the request; the clock's entries are unique by session. |
 | Reactive-vs-planned analytics, utilisation, heatmaps | Phase 7. |
 
@@ -372,5 +372,5 @@ poll nothing per second; My day and Team today refetch once a minute and on focu
 | "Not in the PSA yet" on an item | The entry's push failed or is pending | Retry from the ticket's time panel; the time is counted meanwhile |
 | "Say why the time is being changed (at least 5 characters)." | A lead changing someone else's entry without a reason | Give the reason; it is kept with the change |
 | Actual time on My day does not match the PSA's hours | The PSA bills in increments; the day shows actual seconds | Expected; both are shown on the ticket |
-| Time logged in the PSA itself is missing from My day | PSA-side entries have no portal row | Expected today; see Deferred |
+| Time logged in the PSA itself is missing from My day | The PSA login it is under is not linked to the person, or the ticket has not been read since | Link the login on the person's page (PSA identity); "Re-sync all" reads every ticket's time |
 | The header clock is a few seconds off the day's figure | The device's clock, display only | The logged time is the server's |

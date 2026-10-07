@@ -859,6 +859,11 @@ public sealed class TicketTimeEntryConfig : IEntityTypeConfiguration<TicketTimeE
         b.HasIndex(x => x.TicketId);
         // Reconciling a provider read against portal rows is a lookup by the PSA's own id.
         b.HasIndex(x => x.ExternalEntryId);
+        // One row for one entry of a PSA account, whether it was logged here and pushed out or
+        // entered in the PSA and read back. The reconciling above is what keeps to this; the
+        // database refuses a second row should two reads of the same ticket ever race.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalEntryId }).IsUnique()
+            .HasFilter("\"PsaConnectionId\" IS NOT NULL AND \"ExternalEntryId\" IS NOT NULL");
         // "Hours this technician logged between two dates" is the query every productivity report
         // runs, per person, per range — so it gets the date alongside the person.
         b.HasIndex(x => new { x.MspOrganizationId, x.AppUserId, x.EntryDate });
