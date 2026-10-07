@@ -1288,6 +1288,59 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.ToTable("kb_deflections", (string)null);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Mapping.ClassificationMapping", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IssueType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SubIssueType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Subcategory")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TicketType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WorkType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId", "TicketType", "IssueType", "SubIssueType")
+                        .IsUnique();
+
+                    b.ToTable("classification_mappings", (string)null);
+                });
+
             modelBuilder.Entity("Desk.Domain.Mapping.FieldMapping", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3266,6 +3319,10 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<string>("PortalSubcategory")
                         .HasColumnType("text");
 
+                    b.Property<string>("PortalWorkType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<int?>("Provider")
                         .HasColumnType("integer");
 
@@ -4695,6 +4752,17 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Article");
+                });
+
+            modelBuilder.Entity("Desk.Domain.Mapping.ClassificationMapping", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", "PsaConnection")
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PsaConnection");
                 });
 
             modelBuilder.Entity("Desk.Domain.Organization.Team", b =>

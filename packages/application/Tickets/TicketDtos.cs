@@ -283,7 +283,17 @@ public sealed record TicketDetailDto(
 /// the PSA's: Autotask's ticket type, issue type and sub-issue type; ConnectWise's type, subtype
 /// and item.
 /// </summary>
-public sealed record TicketClassificationDto(string? TicketType, string? IssueType, string? SubIssueType);
+/// <param name="WorkType">What kind of work it is in the portal's words, where one of the connection's rules says. Staff only.</param>
+/// <param name="Subcategory">The portal's subcategory, on the same terms.</param>
+/// <param name="Mapped">
+/// Whether one of the connection's rules names what the ticket is filed under. False is UNMAPPED:
+/// the connection has rules, none names this, and the portal has put nothing in a rule's place.
+/// Null where the connection has no rules at all: the desk has not taken them up, and a ticket is
+/// not called unmapped against rules that do not exist.
+/// </param>
+public sealed record TicketClassificationDto(
+    string? TicketType, string? IssueType, string? SubIssueType,
+    string? WorkType = null, string? Subcategory = null, bool? Mapped = null);
 
 public sealed record TicketBoardDetailsDto(
     Guid BoardId, Guid? BoardTopicId, Guid? DepartmentId, Guid? ClientCompanyId,

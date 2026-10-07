@@ -115,6 +115,15 @@ public class Ticket : TenantEntity
     public string? PsaIssueType { get; set; }
     public string? PsaSubIssueType { get; set; }
 
+    /// <summary>
+    /// What kind of work the ticket is, in the portal's words, where one of the connection's
+    /// classification rules says (as <see cref="PortalCategory"/> and <see cref="PortalSubcategory"/>
+    /// are, where a rule gives them). Nothing where no rule does: it is never worked out from the
+    /// PSA's wording. Not the work type of a time entry, which is the PSA's billing code for an
+    /// hour of work.
+    /// </summary>
+    public string? PortalWorkType { get; set; }
+
     public string? QueueOrBoard { get; set; }
     public string? AssignedTechnicianExternalId { get; set; }
 

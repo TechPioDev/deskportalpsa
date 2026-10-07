@@ -224,6 +224,7 @@ public static class DependencyInjection
         services.AddSingleton<IConnectionFieldCache, ConnectionFieldCache>();
         services.AddScoped<IConnectionAdminService, ConnectionAdminService>();
         services.AddScoped<IMappingAdminService, MappingAdminService>();
+        services.AddScoped<IClassificationMappingService, ClassificationMappingService>();
         services.AddScoped<IJobMonitorService, JobMonitorService>();
         services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();
         services.AddScoped<IAttentionService, AttentionService>();

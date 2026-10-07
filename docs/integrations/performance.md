@@ -121,7 +121,7 @@ to five runs.
 | | Queries | 20,000 tickets on the connection |
 |---|---|---|
 | Connections list | 5 | 248 to 300 ms |
-| Mapping health | 10 | 265 to 337 ms |
+| Mapping health | 12 (10 before the classification rules were counted in it) | 265 to 337 ms; 264 ms with the two more |
 | Sample of ten tickets | 3 | 21 to 40 ms |
 | Mapping coverage (the wizard) | 3 | 5 to 7 ms |
 | Preview before switching on | 5 | 10 to 17 ms |
@@ -158,10 +158,10 @@ ticket list: those changed after the first runs, and have two.
 | Connections list (5 queries) | 28 to 31 ms | 111 to 132 ms |
 | Which connections are due a sync, as the worker asks (1) | under 1 ms | 1 ms |
 | Sync health, a year of runs behind it: 105,000 (4) | 2 to 8 ms | 4 to 5 ms |
-| Mapping health of the connection holding half (9) | 90 to 138 ms | 464 to 714 ms |
+| Mapping health of the connection holding half (9; 11 with the classification rules counted) | 90 to 138 ms; 135 ms with them | 464 to 714 ms; 525 ms with them |
 | Mapping sample (3) | 31 to 55 ms | 118 to 193 ms |
 | Ticket list, first page (7) | 74 to 77 ms | 424 to 681 ms |
-| Sync of 200 tickets, half changed and half new (1,837) | 1.8 to 3.4 s | 3.0 to 3.6 s |
+| Sync of 200 tickets, half changed and half new (1,837; 1,838 since the classification rules are read) | 1.8 to 3.4 s | 3.0 to 3.6 s |
 
 ## The three reads of the ticket list that took seconds
 
@@ -284,6 +284,38 @@ Measured on the 500,000-ticket database. The tickets were 434 MB with 130 MB of 
   and that neither ever offers another organization's.
 - The benchmark, on PostgreSQL: the counts and the lists against what was loaded, the two plans,
   the five index walks, and the query counts (8, 8 and 17).
+
+## Classification rules at volume
+
+Slice 4e ([classification-mapping.md](classification-mapping.md)) added three things an
+administrator can ask of a connection's tickets, and one grouped count to the mapping health
+above. They were measured in the same benchmark, on the connection holding half the tickets,
+which files them under 306 different classifications. **One run at each size**, so these are
+figures and not ranges.
+
+| | Queries | 50,001 tickets on the connection | 250,001 tickets on the connection |
+|---|---|---|---|
+| The Classification page: rules, what tickets are filed under, the figures | 4 | 60 ms | 255 ms |
+| Preview of two rules, with ten of the tickets that would change | 7 | 170 ms | 642 ms |
+| Apply: one ticket in three of the connection rewritten | 107 and 119 | 16,666 tickets in 1.2 s | 83,333 tickets in 5.7 s |
+| Apply again, with nothing left to do | 5 | 105 ms | 0.98 s |
+
+- The page, the preview and the mapping health each make **one grouped pass** over the
+  connection's tickets, by what they are filed under and what they hold. It took about 0.2 s of
+  the 0.25 s at the larger size. Nothing is stored for it, so it cannot be out of date; it is one
+  more pass on a page an administrator opens, not on anything a technician waits for.
+- **Apply reads once and writes by id.** It reads what each classified ticket is filed under and
+  holds (not the ticket), and then sends one statement for every thousand tickets of a kind that
+  change. The first version loaded each ticket to change three words on it, five hundred at a
+  time, as "apply to tickets already here" does for a status: at the rate measured for that
+  (10,712 tickets in 2.7 to 3.5 s) the larger case here would have been over twenty seconds, and
+  it was changed before it was measured. The number of statements is asserted to be no more than
+  a handful plus one for each thousand tickets changed and one for each classification.
+- A ticket as it arrives costs the sync nothing more. The connection's rules are read once for a
+  run: the benchmark's sync of 200 tickets is 1,838 queries where it was 1,837, in 1.6 and 2.2 s.
+- Nothing was indexed for this. The grouped pass reads the connection's tickets by the index on
+  its connection; an index on the three levels would cost every ticket write for the sake of a
+  page opened now and then.
 
 ## What is still slow, and is not changed here
 

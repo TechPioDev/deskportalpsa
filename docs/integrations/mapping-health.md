@@ -167,6 +167,8 @@ alone (migration `PsaTechnicianIgnores`, additive).
 
 ## Not in these slices
 
-Queues, categories and work types keep the PSA's names by design and are not scored. Client
-mapping waits on a decision (may one client login reach two companies?); work types' lower levels
-and custom fields are still to build.
+Queues, categories and a time entry's work types keep the PSA's names by design and are not
+scored. What a PSA files a ticket under (its type, subtype and item) is mapped by rules of its
+own, and the report counts them once a connection has any: see
+[classification-mapping.md](classification-mapping.md). Client mapping and custom fields are
+still to build.

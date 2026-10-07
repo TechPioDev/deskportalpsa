@@ -43,7 +43,13 @@ public sealed class TicketSyncService(
         // Translate provider → portal, passing raw values through when no rule matches.
         var portalStatus = Map(rules, ctx, "status", incoming.Status) ?? incoming.Status ?? "NEW";
         var portalPriority = Map(rules, ctx, "priority", incoming.Priority) ?? incoming.Priority ?? "NORMAL";
-        var portalCategory = Map(rules, ctx, "category", incoming.Category) ?? incoming.Category;
+        // What the connection's classification rules make of the three levels the PSA filed it
+        // under. A rule that gives a category speaks over the category field's own mapping, which
+        // is what the ticket has where no rule does. The work type and the subcategory have no
+        // other source: with no rule for them they are empty, never the PSA's word carried across.
+        var filed = ClassificationRules.Resolve(await ClassificationOfAsync(connection, ct),
+            incoming.TicketType, incoming.IssueType, incoming.SubIssueType);
+        var portalCategory = filed.Category ?? Map(rules, ctx, "category", incoming.Category) ?? incoming.Category;
         var portalQueue = Map(rules, ctx, "queue", incoming.QueueOrBoard) ?? incoming.QueueOrBoard;
 
         var existing = await db.Tickets.FirstOrDefaultAsync(
@@ -64,7 +70,8 @@ public sealed class TicketSyncService(
             string.IsNullOrWhiteSpace(incoming.RequesterName) ? null : incoming.RequesterName,
             string.IsNullOrWhiteSpace(incoming.RequesterEmail) ? null : incoming.RequesterEmail,
             deviceExternalId,
-            Level(incoming.TicketType), Level(incoming.IssueType), Level(incoming.SubIssueType));
+            Level(incoming.TicketType), Level(incoming.IssueType), Level(incoming.SubIssueType),
+            filed.WorkType, filed.Subcategory);
 
         if (existing is not null)
         {
@@ -108,6 +115,8 @@ public sealed class TicketSyncService(
         ticket.PsaPriority = incoming.Priority;
         ticket.PortalCategory = portalCategory;
         ticket.PsaCategory = incoming.Category;
+        ticket.PortalWorkType = filed.WorkType;
+        ticket.PortalSubcategory = filed.Subcategory;
         // Kept as the PSA words them. Cleared when the PSA clears them: the hash above no longer
         // carries a level the ticket has lost, so that change is seen too.
         ticket.PsaTicketType = Level(incoming.TicketType);
@@ -169,6 +178,22 @@ public sealed class TicketSyncService(
 
         await activity.RecordManyAsync(observed, ct);
         return existing is null ? TicketSyncOutcome.Created : TicketSyncOutcome.Updated;
+    }
+
+    // A connection's classification rules, read once for each connection this instance syncs: a
+    // run holds one instance, so a page of tickets is one read and not one for each ticket. Not
+    // tracked, so letting go of a page's tickets does not let go of these.
+    private readonly Dictionary<Guid, IReadOnlyList<ClassificationMapping>> _classification = [];
+
+    private async Task<IReadOnlyList<ClassificationMapping>> ClassificationOfAsync(PsaConnection connection, CancellationToken ct)
+    {
+        if (_classification.TryGetValue(connection.Id, out var held)) return held;
+        // The organization is named, as it is for the field rules: the scheduled sync runs where
+        // the tenant filter is off, and a connection is only ever read by its own organization's rules.
+        var read = await db.ClassificationMappings.AsNoTracking()
+            .Where(m => m.MspOrganizationId == connection.MspOrganizationId && m.PsaConnectionId == connection.Id)
+            .ToListAsync(ct);
+        return _classification[connection.Id] = read;
     }
 
     /// <summary>One level of the PSA's classification as it is stored: trimmed, nothing for blank, and no longer than its column.</summary>
