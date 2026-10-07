@@ -74,6 +74,12 @@ public sealed class PollingSyncService(
                         connectionId, result.Fetched, result.Created, result.Updated,
                         result.Notes, result.NotesRemoved, result.Attachments, result.AttachmentsRemoved);
             }
+            catch (Desk.Application.Common.ConflictException)
+            {
+                // A run already has this connection - someone pressed "Sync now", or an earlier run
+                // of this worker is still going. One at a time; this cycle moves on.
+                logger.LogDebug("Scheduled sync skipped for connection {Connection}: a run is already in progress", connectionId);
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // The runner already marked the connection Degraded with the reason; this log is

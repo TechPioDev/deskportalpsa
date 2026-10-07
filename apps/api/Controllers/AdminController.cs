@@ -19,7 +19,10 @@ public sealed class AdminConnectionsController(
     IConnectionAdminService svc,
     IConnectionSyncRunner syncRunner,
     DeskDbContext db,
-    IConfiguration config) : ControllerBase
+    IConfiguration config,
+    ISyncHealthService syncHealth,
+    Desk.Application.Abstractions.ICurrentUser user,
+    Desk.Application.Admin.IAuditWriter audit) : ControllerBase
 {
     [HttpGet]
     [RequirePermission(Permissions.ConnectionsView)]
@@ -95,9 +98,47 @@ public sealed class AdminConnectionsController(
     [RequirePermission(Permissions.ConnectionsManage)]
     public async Task<IActionResult> Sync(Guid id, [FromQuery] bool full, CancellationToken ct)
     {
-        var result = await syncRunner.RunAsync(id, full, ct);
+        // Under the caller's tenant: another organization's connection is not found, before
+        // anything is recorded about it.
+        if (!await db.PsaConnections.AsNoTracking().AnyAsync(c => c.Id == id, ct))
+            return NotFound();
+        // Recorded as asked for, before it runs: a run that then fails was still requested.
+        await audit.WriteAsync("connection.sync.requested", "PsaConnection", id.ToString(), new { full }, ct);
+
+        // One run per connection. While the scheduled sync (or an earlier click) has it, this
+        // answers 409 and starts nothing: it used to start a second run over the same tickets.
+        var result = await syncRunner.RunAsync(id,
+            new SyncRunRequest(full, Manual: true, RequestedBy: user.DisplayName ?? user.Email ?? user.Subject), ct);
         await EnsureLocalClientIdentityAsync(id, ct);
         return Ok(result);
+    }
+
+    /// <summary>Where the connection's sync stands: its cursor, its recent runs, what it still owes.</summary>
+    [HttpGet("{id:guid}/sync-state")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> SyncState(Guid id, [FromQuery] int runs = 20, CancellationToken ct = default)
+        => Ok(await syncHealth.StateAsync(id, runs, ct));
+
+    /// <summary>The records the sync could not read or apply and has not yet got through.</summary>
+    [HttpGet("{id:guid}/sync-failures")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> SyncFailures(Guid id, CancellationToken ct)
+        => Ok(await syncHealth.FailuresAsync(id, ct));
+
+    [HttpPost("{id:guid}/sync-failures/{failureId:guid}/retry")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> RetrySyncFailure(Guid id, Guid failureId, CancellationToken ct)
+    {
+        await syncHealth.RetryAsync(id, failureId, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:guid}/sync-failures/{failureId:guid}/dismiss")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> DismissSyncFailure(Guid id, Guid failureId, CancellationToken ct)
+    {
+        await syncHealth.DismissAsync(id, failureId, ct);
+        return NoContent();
     }
 
     [HttpPut("{id:guid}")]

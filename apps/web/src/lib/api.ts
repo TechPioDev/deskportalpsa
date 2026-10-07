@@ -1079,7 +1079,14 @@ export const api = {
       { method: 'POST' }),
   syncConnection: (id: string, full = false) =>
     request(`/api/admin/connections/${id}/sync${full ? '?full=true' : ''}`,
-      z.object({ fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number() }),
+      z.object({
+        fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number(),
+        // A run reads a bounded number of pages; when there is more, later runs carry on by themselves.
+        moreToRead: z.boolean().default(false),
+        // Records it could not read or apply. They are kept and tried again.
+        failed: z.number().default(0),
+        recovered: z.number().default(0),
+      }),
       { method: 'POST' }),
   updateConnection: (id: string, body: {
     name: string; apiEndpoint: string; tenantIdentifier?: string; timeZone?: string;

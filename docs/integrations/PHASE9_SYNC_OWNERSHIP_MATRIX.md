@@ -99,7 +99,7 @@ persist:
 | Assignment or queue changed on both sides | Same | Same |
 | A ticket raised in PIO whose create failed, then created by hand in the PSA | Two tickets could exist. The failed one is marked `Error` and visible on the ticket and in integration health | Resolved by a person; resync is an explicit action |
 | A time entry pushed, the answer lost, then retried | Could create a second entry in the PSA | **Open risk today.** Closed in Phase 9 by reconciling before a retry |
-| The same ticket synced by the worker and by "Sync now" at once | Both upsert the same row | **Open risk today** (no lock). Closed in Phase 9 by a per-connection sync lease |
+| The same ticket synced by the worker and by "Sync now" at once | Cannot happen: one run per connection, enforced by the database ([sync-engine.md](sync-engine.md)) | Was an open risk until Phase 9 slice 2a |
 
 **Policy, per field:** `PSA_WINS` for every field in the ticket table marked PSA; `PIO_WINS` (never
 sent) for everything in "PIO only". There is no field with `LATEST_VALID_CHANGE`, and none is

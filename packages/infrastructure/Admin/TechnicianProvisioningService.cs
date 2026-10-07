@@ -91,6 +91,10 @@ public sealed class TechnicianProvisioningService(
         var existing = await db.AppUsers
             .FirstOrDefaultAsync(u => u.MspOrganizationId == tenant.OrganizationId && u.Email.ToLower() == email.ToLower(), ct);
 
+        // Before anyone is created: a login somebody else already holds is refused outright, not
+        // after a new account has been made for it.
+        await PsaIdentityRules.EnsureLoginIsFreeAsync(db, psaConnectionId, tech.ExternalId, existing?.Id ?? Guid.Empty, ct);
+
         Guid userId;
         var created = false;
         if (existing is not null)
