@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
 using Desk.Domain.Enums;
@@ -34,13 +35,43 @@ public sealed class TicketListReadsTests : IDisposable
     private readonly TenantContext _tenant = new();
     private readonly DeskDbContext _db;
     private readonly DateTimeOffset _now = DateTimeOffset.UtcNow;
+    private readonly Statements _sent = new();
     private Guid _me, _asha, _alpha, _beta;
+
+    /// <summary>Every statement sent to the database, so a test can say how an answer was found as well as what it was.</summary>
+    private sealed class Statements : DbCommandInterceptor
+    {
+        public List<string> All { get; } = [];
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            All.Add(command.CommandText);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            All.Add(command.CommandText);
+            return base.ReaderExecuting(command, eventData, result);
+        }
+    }
+
+    /// <summary>The real rule for what the caller may see, which will not say that it is every PSA ticket: each ticket is then read.</summary>
+    private sealed class WillNotSay(ITicketScopeQuery real) : ITicketScopeQuery
+    {
+        public Task<IQueryable<Ticket>> VisibleAsync(IQueryable<Ticket> source, Guid appUserId, string permissionKey, CancellationToken ct = default)
+            => real.VisibleAsync(source, appUserId, permissionKey, ct);
+        public Task<Ticket?> FindAsync(IQueryable<Ticket> source, Guid ticketId, Guid appUserId, string permissionKey, CancellationToken ct = default)
+            => real.FindAsync(source, ticketId, appUserId, permissionKey, ct);
+    }
 
     public TicketListReadsTests()
     {
         _connection.Open();
         _tenant.SetTenant(Org);
         _db = new DeskDbContext(new DbContextOptionsBuilder<DeskDbContext>().UseSqlite(_connection)
+            .AddInterceptors(_sent)
             .ConfigureWarnings(w => w.Throw(
                 RelationalEventId.MultipleCollectionIncludeWarning,
                 CoreEventId.RowLimitingOperationWithoutOrderByWarning,
@@ -55,11 +86,13 @@ public sealed class TicketListReadsTests : IDisposable
         _connection.Dispose();
     }
 
-    private TicketReadService Reads()
+    private TicketReadService Reads(bool byIndex = true, Guid? as_ = null)
     {
-        var permissions = new EffectivePermissionService(_db);
-        return new TicketReadService(_db, new TicketScopeQuery(_db, permissions), new TestCurrentUser(Org, userId: _me));
+        var scope = new TicketScopeQuery(_db, new EffectivePermissionService(_db));
+        return new TicketReadService(_db, byIndex ? scope : new WillNotSay(scope), new TestCurrentUser(Org, userId: as_ ?? _me));
     }
+
+    private bool Walked => _sent.All.Any(sql => sql.Contains("WITH RECURSIVE"));
 
     private void Seed()
     {
@@ -180,10 +213,13 @@ public sealed class TicketListReadsTests : IDisposable
         s.HoursLoggedThisWeek.Should().Be(1.5m);
     }
 
-    [Fact]
-    public async Task The_filter_lists_offer_what_the_tickets_the_caller_can_see_hold_and_nothing_else()
+    [Theory]
+    [InlineData(true)]   // found from the indexes, one person to the next
+    [InlineData(false)]  // found by reading the tickets and their time entries
+    public async Task The_filter_lists_offer_what_the_tickets_the_caller_can_see_hold_and_nothing_else(bool byIndex)
     {
-        var f = await Reads().FacetsAsync();
+        var f = await Reads(byIndex).FacetsAsync();
+        Walked.Should().Be(byIndex, "the two ways of finding people are both held to the same answer");
 
         f.Statuses.Should().Equal("Closed", "IN_PROGRESS", "NEW", "On Hold", "RESOLVED", "Waiting Customer");
         f.Statuses.Should().NotContain("Board Review", "a status seen only on a ticket the caller cannot open");
@@ -199,6 +235,129 @@ public sealed class TicketListReadsTests : IDisposable
         f.People.Select(p => p.Key).Should().Equal(
             PersonKey.For(_asha, null, null), PersonKey.For(null, _beta, "m-1"), PersonKey.For(_me, null, null), PersonKey.For(null, _beta, "m-9"));
         f.People.Select(p => p.Name).Should().NotContain(["API User", "Hidden Person"]);
+    }
+
+    [Fact]
+    public async Task People_found_from_the_indexes_are_never_another_organizations()
+    {
+        // The walk is written by hand, and a statement written by hand is not narrowed to the tenant
+        // for it. Another organization in the same database, with a login and a person of its own.
+        var theirs = Guid.NewGuid();
+        var platform = new TenantContext();
+        platform.SetPlatformScope();
+        await using (var all = new DeskDbContext(new DbContextOptionsBuilder<DeskDbContext>().UseSqlite(_connection).Options, platform, TimeProvider.System))
+        {
+            var them = new AppUser { MspOrganizationId = theirs, DisplayName = "Their Technician", Email = "t@other.test", IsActive = true };
+            var psa = new PsaConnection { MspOrganizationId = theirs, Name = "Their PSA", Provider = ProviderType.ConnectWisePsa, ApiEndpoint = "https://o.example/", CredentialSecretRef = "mem://o", IsEnabled = true };
+            Ticket Of(Action<Ticket> with)
+            {
+                var t = new Ticket
+                {
+                    MspOrganizationId = theirs, Origin = TicketOrigin.Psa, Provider = psa.Provider, PsaConnectionId = psa.Id, ExternalTicketId = Guid.NewGuid().ToString("N")[..8],
+                    RequesterName = "x", RequesterEmail = "x@other.test", Title = "Theirs", PortalStatus = "Their Status", PortalPriority = "Their Priority", QueueOrBoard = "Their Queue",
+                };
+                with(t);
+                return t;
+            }
+            var held = Of(t => (t.AssignedTechnicianExternalId, t.AssignedTechnicianName) = ("o-1", "Their Login"));
+            var theirOwn = Of(t => t.AssignedAppUserId = them.Id);
+            all.AddRange(new MspOrganization { Id = theirs, Name = "Other", Slug = "other" }, them, psa, held, theirOwn,
+                new TicketTimeEntry { MspOrganizationId = theirs, TicketId = held.Id, TechnicianExternalId = "o-2", TechnicianName = "Their Logger", Hours = 1, EntryDate = _now, Source = TimeEntrySource.Provider, SyncStatus = TimeEntrySyncStatus.Synced },
+                new TicketTimeEntry { MspOrganizationId = theirs, TicketId = theirOwn.Id, AppUserId = them.Id, Hours = 1, EntryDate = _now, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Synced });
+            await all.SaveChangesAsync();
+        }
+
+        var f = await Reads().FacetsAsync();
+
+        Walked.Should().BeTrue();
+        f.People.Select(p => p.Name).Should().Equal("Asha Rao", "Bilal Khan", "Dalbir", "Zed Zafar");
+        f.Statuses.Should().NotContain("Their Status");
+        f.Queues.Should().NotContain("Their Queue");
+        f.Sources.Should().NotContain("Their PSA");
+    }
+
+    [Fact]
+    public async Task People_found_from_the_indexes_keep_the_two_odd_cases_the_reading_keeps()
+    {
+        // A login whose only ticket is also held by someone here is that person's ticket, not the
+        // login's: the login is not offered. And a ticket still naming a user who has since been
+        // removed offers them, as someone unknown.
+        var gone = Guid.NewGuid();
+        _db.Tickets.AddRange(
+            new Ticket
+            {
+                MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.ConnectWisePsa, PsaConnectionId = _alpha, ExternalTicketId = "9100",
+                RequesterName = "r", RequesterEmail = "r@a.test", Title = "Held here and there", PortalStatus = "NEW", PortalPriority = "LOW",
+                AssignedAppUserId = _asha, AssignedTechnicianExternalId = "m-5", AssignedTechnicianName = "Only Ever With Asha",
+            },
+            new Ticket
+            {
+                MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.ConnectWisePsa, PsaConnectionId = _alpha, ExternalTicketId = "9101",
+                RequesterName = "r", RequesterEmail = "r@a.test", Title = "Held by someone removed", PortalStatus = "NEW", PortalPriority = "LOW", AssignedAppUserId = gone,
+            });
+        await _db.SaveChangesAsync();
+        _db.ChangeTracker.Clear();
+
+        var walked = (await Reads(byIndex: true).FacetsAsync()).People;
+        var read = (await Reads(byIndex: false).FacetsAsync()).People;
+
+        walked.Should().BeEquivalentTo(read, o => o.WithStrictOrdering());
+        walked.Select(p => p.Name).Should().Equal("Asha Rao", "Bilal Khan", "Dalbir", "Unknown user", "Zed Zafar");
+    }
+
+    [Fact]
+    public async Task Someone_who_sees_only_their_own_tickets_has_the_tickets_read_and_is_offered_only_what_is_on_them()
+    {
+        // Asha's sight is narrowed to what she holds. Whether a login is on a ticket she can see is
+        // then a question about each ticket, so the indexes are not walked.
+        var technician = new Role { MspOrganizationId = Org, Name = "Technician", BuiltInType = RoleType.Technician };
+        technician.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAssigned, Scope = PermissionScope.Assigned });
+        _db.Add(technician);
+        _db.Add(new UserRole { AppUserId = _asha, RoleId = technician.Id });
+        await _db.SaveChangesAsync();
+        _db.ChangeTracker.Clear();
+
+        var f = await Reads(as_: _asha).FacetsAsync();
+
+        Walked.Should().BeFalse();
+        f.People.Select(p => p.Name).Should().Contain("Asha Rao").And.NotContain(["Bilal Khan", "Zed Zafar"], "those are on Beta's ticket, which is not hers");
+        f.Sources.Should().Equal("Alpha PSA");
+    }
+
+    [Fact]
+    public async Task A_time_entry_is_given_the_account_of_its_ticket_whoever_writes_it_and_a_thousand_at_once_cost_one_look()
+    {
+        // "Who has logged time" is read off the entry, with its account. An entry written without
+        // one would not be in the answer, so the save gives it: from the ticket in hand, from a
+        // ticket saved beside it, or by asking - once for all of them, however many there are.
+        var onAlpha = await _db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId == _alpha).Select(t => t.Id).FirstAsync();
+        var onBeta = await _db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId == _beta).Select(t => t.Id).FirstAsync();
+        var onNoPsa = await _db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId == null).Select(t => t.Id).FirstAsync();
+        var fresh = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = _beta, ExternalTicketId = "9200",
+            RequesterName = "r", RequesterEmail = "r@a.test", Title = "Raised in the same breath", PortalStatus = "NEW", PortalPriority = "LOW",
+        };
+        TicketTimeEntry On(Guid ticket) => new()
+        {
+            MspOrganizationId = Org, TicketId = ticket, Hours = 0.25m, EntryDate = _now, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Synced,
+        };
+        var entries = Enumerable.Range(0, 1_000).Select(i => On(i % 2 == 0 ? onAlpha : onBeta)).ToList();
+        var withItsTicket = On(fresh.Id);
+        var onTheTeamsOwn = On(onNoPsa);
+        _db.ChangeTracker.Clear();
+        _db.Add(fresh);
+        _db.AddRange(entries);
+        _db.AddRange(withItsTicket, onTheTeamsOwn);
+        _sent.All.Clear();
+
+        await _db.SaveChangesAsync();
+
+        entries.Where((_, i) => i % 2 == 0).Should().OnlyContain(e => e.PsaConnectionId == _alpha);
+        entries.Where((_, i) => i % 2 == 1).Should().OnlyContain(e => e.PsaConnectionId == _beta);
+        withItsTicket.PsaConnectionId.Should().Be(_beta, "its ticket was being saved beside it, and had not been asked for");
+        onTheTeamsOwn.PsaConnectionId.Should().BeNull("a ticket with no PSA is an answer, not something left undone");
+        _sent.All.Count(sql => sql.StartsWith("SELECT", StringComparison.Ordinal) && sql.Contains("\"tickets\"")).Should().Be(1, "the tickets not in hand are asked for together");
     }
 
     [Theory]

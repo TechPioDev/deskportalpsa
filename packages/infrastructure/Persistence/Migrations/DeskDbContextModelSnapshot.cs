@@ -3392,6 +3392,12 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("DeviceId");
 
+                    b.HasIndex("MspOrganizationId")
+                        .HasDatabaseName("IX_tickets_open")
+                        .HasFilter("upper(\"PortalStatus\") NOT LIKE '%RESOLV%' AND upper(\"PortalStatus\") NOT LIKE '%CLOSED%'");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("MspOrganizationId"), new[] { "Origin", "BoardId", "AssignedAppUserId", "CreatedByUserId", "PortalStatus", "PortalPriority", "PsaConnectionId", "SlaPausedAt", "SlaDueAt", "AssignedTechnicianExternalId" });
+
                     b.HasIndex("AlertSourceId", "SourceAlertId")
                         .IsUnique()
                         .HasFilter("\"SourceAlertId\" IS NOT NULL");
@@ -3416,6 +3422,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("MspOrganizationId", "ResolvedAt");
 
+                    b.HasIndex("MspOrganizationId", "ResolvedByAppUserId")
+                        .HasFilter("\"ResolvedByAppUserId\" IS NOT NULL");
+
                     b.HasIndex("MspOrganizationId", "SlaDueAt");
 
                     b.HasIndex("PsaConnectionId", "ExternalTicketId")
@@ -3423,6 +3432,8 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .HasFilter("\"ExternalTicketId\" IS NOT NULL");
 
                     b.HasIndex("MspOrganizationId", "BoardId", "PortalStatus");
+
+                    b.HasIndex("MspOrganizationId", "PsaConnectionId", "AssignedTechnicianExternalId");
 
                     b.ToTable("tickets", (string)null);
                 });
@@ -3884,6 +3895,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Source")
                         .HasColumnType("integer");
 
@@ -3930,6 +3944,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .HasFilter("\"WorkSessionId\" IS NOT NULL");
 
                     b.HasIndex("MspOrganizationId", "AppUserId", "EntryDate");
+
+                    b.HasIndex("MspOrganizationId", "PsaConnectionId", "TechnicianExternalId")
+                        .HasFilter("\"AppUserId\" IS NULL");
 
                     b.ToTable("ticket_time_entries", (string)null);
                 });
