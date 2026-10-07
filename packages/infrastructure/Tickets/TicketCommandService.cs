@@ -458,7 +458,8 @@ public sealed class TicketCommandService(
         t.ResolvedAt, t.ClosedAt, t.SlaDueAt, t.PsaCreatedAt, t.QueueOrBoard,
         // As the sync hashes them: the provider's contact, or nothing where only a placeholder is held,
         // so the portal's own write still recognises itself when it comes back.
-        TicketContact.Name(t), TicketContact.Email(t), t.DeviceExternalId);
+        TicketContact.Name(t), TicketContact.Email(t), t.DeviceExternalId,
+        t.PsaTicketType, t.PsaIssueType, t.PsaSubIssueType, t.PortalWorkType, t.PortalSubcategory);
 
     private Task RecordPortalEventAsync(Guid org, Guid connId, Ticket ticket, string idemKey, string eventType, CancellationToken ct)
         => syncEvents.TryRegisterAsync(new SyncEventRegistration

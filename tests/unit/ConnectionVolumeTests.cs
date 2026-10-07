@@ -364,7 +364,9 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         // The same at a thousand tickets and at twenty thousand: the database counts, and nothing is read a ticket at a time.
         // Measured 5 / 10 / 3 / 3 / 5 / 6 on SQLite and on PostgreSQL alike.
         list.Commands.Should().BeLessThanOrEqualTo(5);
-        health.Commands.Should().BeLessThanOrEqualTo(10);
+        // Two of them are the classification rules and one grouped count of what tickets are filed under.
+        health.Commands.Should().BeLessThanOrEqualTo(12);
+        health.Result.Classification.Should().BeEquivalentTo(new { Rules = 0, UnmappedTickets = health.Result.Classification!.ClassifiedTickets, TicketsOutOfStep = 0 });
         sample.Commands.Should().BeLessThanOrEqualTo(3);
         coverage.Commands.Should().BeLessThanOrEqualTo(3);
         preview.Commands.Should().BeLessThanOrEqualTo(5);
@@ -567,6 +569,12 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
             ["PsaPriority"] = "(ARRAY['Critical','High','Low','Medium'])[1 + (n / 7) % 4]",
             ["PortalPriority"] = "(ARRAY['CRITICAL','HIGH','LOW','Medium'])[1 + (n / 7) % 4]",
             ["QueueOrBoard"] = "'Board ' || (n / 3) % 4",
+            // Filed as a PSA files work: three types, twelve issue types under them, and an item on four tickets in five.
+            ["PsaTicketType"] = "(ARRAY['Incident','Service Request','Change'])[1 + n % 3]",
+            ["PsaIssueType"] = "'Issue ' || (n / 3) % 12",
+            ["PsaSubIssueType"] = "CASE WHEN n % 5 = 0 THEN NULL ELSE 'Item ' || (n / 36) % 20 END",
+            ["PsaCategory"] = "'Standard'",
+            ["PortalCategory"] = "'Standard'",
             ["AssignedTechnicianExternalId"] = "'m-' || n % 25",
             ["AssignedTechnicianName"] = "'Tech ' || n % 25",
             // A ticket a minute, going back: half a million of them is about a year of a busy desk.
@@ -688,7 +696,7 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
         list.Commands.Should().BeLessThanOrEqualTo(5);
         due.Commands.Should().Be(1);
         state.Commands.Should().BeLessThanOrEqualTo(4);
-        mapping.Commands.Should().BeLessThanOrEqualTo(10);
+        mapping.Commands.Should().BeLessThanOrEqualTo(12);
         sample.Commands.Should().BeLessThanOrEqualTo(3);
 
         output.WriteLine($"{connections} connections, {tickets} tickets ({held} on one connection), {entries} time entries, {runs} sync runs; loaded in {seeding.ElapsedMilliseconds / 1000} s");
@@ -700,6 +708,38 @@ public sealed class ConnectionVolumeTests(ITestOutputHelper output) : IDisposabl
             + $" | one connection {byConnection.Commands} q {byConnection.Ms} ms | search {search.Commands} q {search.Ms} ms | summary {summary.Commands} q {summary.Ms} ms | filter lists {facets.Commands} q {facets.Ms} ms");
 
         foreach (var line in slow) output.WriteLine(line);
+
+        // The classification rules of the big connection: what its tickets are filed under, what two
+        // rules would do, and giving the tickets already there what the rules say. Every other
+        // ticket is the big connection's and one in three is an Incident, so the rules name one
+        // ticket in six of all there are.
+        var classify = new ClassificationMappingService(db, new AuditWriter(db, user, tenant, _clock), new MappingEngine(), _clock);
+        var incidents = Enumerable.Range(1, tickets).Count(n => n % 6 == 0);
+        var filedUnder = await WarmAsync("classification page", () => classify.GetAsync(big));
+        (filedUnder.Result.Health.ClassifiedTickets, filedUnder.Result.Health.UnmappedTickets, filedUnder.Result.Health.TicketsOutOfStep)
+            .Should().Be((held - 1, held - 1, 0), "the one ticket the rest were copied from is filed under nothing");
+        ClassificationRuleDto[] wanted =
+        [
+            new(null, "Incident", null, null, "Support", "Reactive", null),
+            new(null, "Incident", "Issue 3", null, null, null, "Three"),
+        ];
+        var tried = await WarmAsync("classification preview", () => classify.PreviewAsync(big, wanted));
+        (tried.Result.TicketsThatWouldChange, tried.Result.Health.UnmappedTickets).Should().Be((incidents, held - 1 - incidents));
+        await classify.SaveAsync(big, wanted);
+        var applied = await MeasureAsync(() => classify.ApplyAsync(big));
+        applied.Result.TicketsChanged.Should().Be(incidents);
+        var inStep = await MeasureAsync(() => classify.ApplyAsync(big));
+        inStep.Result.TicketsChanged.Should().Be(0);
+        (await db.Tickets.AsNoTracking().CountAsync(t => t.PsaConnectionId == big && t.PortalWorkType == "Reactive" && t.PortalCategory == "Support")).Should().Be(incidents);
+        (await db.Tickets.AsNoTracking().CountAsync(t => t.PsaConnectionId != big && (t.PortalWorkType != null || t.PortalCategory != "Standard")))
+            .Should().Be(0, "the rules are the big connection's and no other's");
+        (await classify.GetAsync(big)).Health.Should().BeEquivalentTo(new { Rules = 2, UnmappedTickets = held - 1 - incidents, TicketsOutOfStep = 0 });
+        filedUnder.Commands.Should().BeLessThanOrEqualTo(4);
+        tried.Commands.Should().BeLessThanOrEqualTo(4 + 10);
+        // One read, and then a statement for every thousand tickets of a kind that change.
+        applied.Commands.Should().BeLessThanOrEqualTo(4 + incidents / 1000 + filedUnder.Result.Health.Classifications);
+        output.WriteLine($"  classification ({held} tickets, {filedUnder.Result.Health.Classifications} classifications): page {filedUnder.Commands} q {filedUnder.Ms} ms | preview {tried.Commands} q {tried.Ms} ms"
+            + $" | apply to {incidents} tickets {applied.Commands} q {applied.Ms} ms | apply with nothing to do {inStep.Commands} q {inStep.Ms} ms");
 
         // A sync of what changed: a hundred tickets the big connection already holds, with a new status, and a hundred it has not seen.
         var changed = new StubConnector(ProviderType.ConnectWisePsa) { Paged = true, SupportsAttachmentDownload = false };

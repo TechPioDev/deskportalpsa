@@ -37,7 +37,9 @@ never sees a secret it was not constructed with.
   (`UnifiedTicketCreateRequest`), in whatever the PSA calls its three levels. The same three are
   on a ticket that is read (`UnifiedTicket.TicketType`, `IssueType`, `SubIssueType`), as words,
   and null where the PSA has none. A connector that sends them and does not read them leaves the
-  portal knowing less about a ticket than it told the PSA.
+  portal knowing less about a ticket than it told the PSA. Nothing more is needed for a desk to say what
+  those levels mean in the portal: the rules of [classification-mapping.md](classification-mapping.md)
+  are written against the words a connector reads, whichever PSA they came from.
 - **What it does not do must still be safe to ask for.** A method behind a capability it does not
   claim returns an empty answer, never an exception (`GetCustomFieldsAsync`, `GetHolidaysAsync`,
   `GetAgreementsAsync`).
@@ -201,6 +203,7 @@ touching most of them; each line says what you get if you do not.
 | `AuthorBackfill` | A one-off repair that skips ConnectWise | Nothing: it is history |
 | `SyncSettings.tsx` (web) | Words: "queue" or "service board", "resource" or "member", the names of the ticket-type levels; and Autotask's rule that a time entry needs a technician and a role they hold | Autotask's words are shown |
 | `tickets/[id]/page.tsx` (web) | The provider's name in two sentences | "the PSA" |
+| `psaLevels.ts` (web) | The PSA's own names for its three levels, on a ticket and on the Classification tab of Field Mapping | Autotask's names: ticket type, issue type, sub-issue type |
 | `mappings/page.tsx` (web) | A curated list of likely values for the older rows | The values discovered from the connection |
 
 These are what is left of finding R7 in the Phase 9 audit. They are wording and convenience, not

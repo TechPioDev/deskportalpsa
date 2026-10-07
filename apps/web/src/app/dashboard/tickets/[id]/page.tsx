@@ -25,7 +25,7 @@ import { ApprovalPanel } from '@/components/ApprovalPanel';
 import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
 import { TicketDevicePicker } from '@/components/TicketDevicePicker';
 import { api, ApiError, type AssigneeOptions } from '@/lib/api';
-import { psaLevels } from '@/lib/psaLevels';
+import { portalClassification, psaLevels } from '@/lib/psaLevels';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 import { isStaffPermissions } from '@/lib/staff';
 
@@ -827,6 +827,11 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     does not use sub-issues would be a question nobody asked. */}
                 {psaLevels(isFromPsa ? Number(ticket.provider) : null, ticket.classification).map((level) => (
                   <Meta key={level.label} label={level.label} value={level.value} />
+                ))}
+                {/* What the desk's own rules make of that, where it has written any. A ticket the
+                    rules do not name reads "Unmapped": nothing stands in for a rule. */}
+                {portalClassification(isFromPsa ? ticket.classification : null).map((row) => (
+                  <Meta key={row.label} label={row.label} value={row.value} />
                 ))}
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 {/* The device it is about, when the PSA or the portal knows one. Serial and warranty

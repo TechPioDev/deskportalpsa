@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeftRight, Link2, AlertTriangle, RefreshCw, ShieldCheck, CheckCircle2, ChevronDown,
-  FileText, Plus, Pencil, Trash2, Info, ListChecks, Flag, LayoutGrid, FolderClosed, Clock, History,
+  FileText, Plus, Pencil, Trash2, Info, ListChecks, Flag, LayoutGrid, FolderClosed, Clock, History, Layers,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MappingRule } from '@/lib/types';
 import { InboundMapping } from './InboundMapping';
+import { ClassificationMapping } from './ClassificationMapping';
 
 const SCOPE_CONNECTION = 2;      // MappingScope.ConnectionOverride
 const DIRECTION_BIDIRECTIONAL = 3; // MappingDirection.Bidirectional
@@ -19,6 +20,9 @@ const TABS = [
   { key: 'queue', label: 'Queue / Board', icon: LayoutGrid },
   { key: 'category', label: 'Category', icon: FolderClosed },
   { key: 'workType', label: 'Work Type', icon: Clock },
+  // Not a field with a value on each side like the others: what the PSA files a ticket under, in up
+  // to three levels, and what that is here. It has a page of its own below, and no table of rows.
+  { key: 'classification', label: 'Classification', icon: Layers },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 
@@ -30,6 +34,7 @@ const CURATED: Record<TabKey, string[]> = {
   queue: ['Service Desk', 'Network Operations', 'Professional Services', 'Triage', 'Onboarding'],
   category: ['Hardware', 'Software', 'Network', 'Account / Access', 'Email', 'Security'],
   workType: [], // discovered live from the connection (see options memo)
+  classification: [],
 };
 
 // Fixed portal-neutral values shown as rows to map even before any rule exists (status/priority are
@@ -163,7 +168,7 @@ export default function MappingsPage() {
   const options = useMemo<{ value: string; label: string }[]>(() => {
     const discovered = ({
       status: fields?.statuses, priority: fields?.priorities, queue: fields?.queuesOrBoards,
-      category: fields?.categories, workType: fields?.workTypes,
+      category: fields?.categories, workType: fields?.workTypes, classification: undefined,
     }[tab] ?? []).map((o) => ({ value: o.syncValue ?? o.value, label: o.label }));
     const base = discovered.length ? discovered : CURATED[tab].map((c) => ({ value: c, label: c }));
 
@@ -183,7 +188,7 @@ export default function MappingsPage() {
   const liveValues = useMemo(() => {
     const discovered = ({
       status: fields?.statuses, priority: fields?.priorities, queue: fields?.queuesOrBoards,
-      category: fields?.categories, workType: fields?.workTypes,
+      category: fields?.categories, workType: fields?.workTypes, classification: undefined,
     }[tab] ?? []);
     // Every form a rule might legitimately hold: the sync value it should have, the label, and the
     // provider id a rule saved before this counted as live too — those still push correctly.
@@ -231,7 +236,9 @@ export default function MappingsPage() {
 
       <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
         <Info size={16} className="mt-0.5 shrink-0" />
-        <p>Field mapping ensures data consistency between Desk Portal and your connected PSA. <strong>Changes are saved automatically.</strong></p>
+        <p>Field mapping ensures data consistency between Desk Portal and your connected PSA.{' '}
+          {/* The classification rules are written, previewed and then saved: nothing there is saved as it is typed. */}
+          <strong>{tab === 'classification' ? 'Classification rules are saved when you choose Save rules.' : 'Changes are saved automatically.'}</strong></p>
       </div>
 
       {/* Connection + tabs */}
@@ -271,7 +278,10 @@ export default function MappingsPage() {
         />
       )}
 
+      {conn && tab === 'classification' && <ClassificationMapping key={conn.id} connectionId={conn.id} />}
+
       {/* Stat cards */}
+      {tab !== 'classification' && (<>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard icon={Link2} iconTone="bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"
           label="Mapped Fields" value={<span>{mapped} <span className="text-[var(--faint)]">/ {rows.length}</span></span>}
@@ -422,6 +432,7 @@ export default function MappingsPage() {
           </table>
         </div>
       </div>
+      </>)}
     </div>
   );
 }

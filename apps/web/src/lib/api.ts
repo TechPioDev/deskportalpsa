@@ -10,6 +10,8 @@ import {
   ConnectionCheckReportSchema, ConnectionMappingCoverageSchema, ConnectionPreviewSchema, PreflightSchema,
   ConnectionMappingHealthSchema, MappingPreviewRowSchema, MappingApplyResultSchema,
   type ConnectionMappingHealth, type MappingPreviewRow, type MappingApplyResult,
+  ClassificationMappingSchema, ClassificationPreviewSchema, ClassificationApplyResultSchema,
+  type ClassificationMapping, type ClassificationPreview, type ClassificationApplyResult, type ClassificationRule,
   type ConnectionCheckReport, type ConnectionMappingCoverage, type ConnectionPreview, type Preflight,
   MappingRuleSchema, type MappingRule, MappingSnapshotStatusSchema, type MappingSnapshotStatus,
   type TicketDetail, type TicketListItem, type Notification, type Profile,
@@ -1107,6 +1109,20 @@ export const api = {
   /** Re-maps imported tickets still showing the PSA's own word for a value a rule now maps. */
   applyConnectionMapping: (id: string) =>
     request(`/api/admin/connections/${id}/mapping-apply`, MappingApplyResultSchema, { method: 'POST' }) as Promise<MappingApplyResult>,
+  /** What a connection's PSA classification means in the portal's words: the rules, and what tickets are filed under. */
+  classificationMapping: (id: string) =>
+    request(`/api/admin/connections/${id}/classification`, ClassificationMappingSchema) as Promise<ClassificationMapping>,
+  /** Replaces the connection's rules. Tickets already here are not touched. */
+  saveClassificationMapping: (id: string, rules: ClassificationRule[]) =>
+    request(`/api/admin/connections/${id}/classification`, ClassificationMappingSchema,
+      { method: 'PUT', body: JSON.stringify(rules) }) as Promise<ClassificationMapping>,
+  /** What these rules would do. Nothing is saved and nothing is changed. */
+  previewClassificationMapping: (id: string, rules: ClassificationRule[]) =>
+    request(`/api/admin/connections/${id}/classification/preview`, ClassificationPreviewSchema,
+      { method: 'POST', body: JSON.stringify(rules) }) as Promise<ClassificationPreview>,
+  /** Gives the tickets already here what the saved rules say. */
+  applyClassificationMapping: (id: string) =>
+    request(`/api/admin/connections/${id}/classification/apply`, ClassificationApplyResultSchema, { method: 'POST' }) as Promise<ClassificationApplyResult>,
   connectionPreview: (id: string) =>
     request(`/api/admin/connections/${id}/preview`, ConnectionPreviewSchema) as Promise<ConnectionPreview>,
   connectionPreflight: (id: string) =>

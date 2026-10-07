@@ -37,7 +37,9 @@ the provider's own id, stored when the provider accepted them.
 | Status | PSA ↔ PIO | **PSA**, write-through | In: mapped through the `status` rules. Out: `TicketStatusWriter` maps the portal value to the provider's and calls the provider first | Unchanged. PSA wins: a status set in PIO exists only once the PSA accepted it, so the two cannot diverge. An unmapped inbound value must be flagged, not guessed (see Mapping) |
 | Priority | PSA → PIO (set once outbound, when PIO creates the ticket) | PSA | In: `priority` rules. Out: only on create | Unchanged: PSA → PIO |
 | Queue / board | PSA ↔ PIO | **PSA**, write-through | In: `queue` rules. Out: `TicketAssignmentController` (reassign) | Unchanged |
-| Category (issue / type) | PSA → PIO (set once outbound on create) | PSA | In: `category` rules, raw kept in `PsaCategory` | PSA → PIO. Work type (type and subtype) is added by mapping, not by a second writer |
+| Category (issue / type) | PSA → PIO (set once outbound on create) | PSA | In: `category` rules, raw kept in `PsaCategory`. A classification rule that gives a category speaks over them (slice 4e) | PSA → PIO. A rule's category is the portal's word and is never sent to the PSA |
+| Classification (the PSA's three levels) | PSA → PIO | PSA | Kept as sent in `PsaTicketType`, `PsaIssueType`, `PsaSubIssueType`. Never written by the portal | PSA → PIO, read only |
+| Work type and subcategory (the portal's) | PIO only | PIO, by the connection's classification rules | [classification-mapping.md](classification-mapping.md): from a rule, or empty. Never the PSA's word carried across | Not sent to the PSA. Staff only |
 | Assigned technician (the PSA's resource / member) | PSA ↔ PIO | **PSA**, write-through | In: `AssignedTechnicianExternalId` + name. Out: reassign, with the role the PSA requires | Unchanged |
 | Portal holder (`AssignedAppUserId`), handovers, followers | PIO only | PIO | Never sent | **PIO only.** Planning and "Take it" never change the PSA's assignee |
 | Requester name and e-mail | PSA → PIO | PSA | Overwritten when the provider names a contact | Unchanged |

@@ -415,7 +415,9 @@ public sealed record TechnicianHealthDto(
 public sealed record MappingHealthDto(
     Guid ConnectionId, string ConnectionName, DateTimeOffset CheckedAt, string Level,
     IReadOnlyList<MappingFieldHealthDto> Fields, IReadOnlyList<OutboundStatusDto> OutboundStatuses,
-    TechnicianHealthDto Technicians, int Tickets, int UnmappedTickets, int TicketsWithoutClient, IReadOnlyList<string> Notes);
+    TechnicianHealthDto Technicians, int Tickets, int UnmappedTickets, int TicketsWithoutClient, IReadOnlyList<string> Notes,
+    /// <summary>How far the connection's classification rules reach. A connection with no rules has not taken them up, which is not a fault.</summary>
+    ClassificationHealthDto? Classification = null);
 
 /// <summary>A sample ticket: what it arrived with and what the rules make of it. A null mapped value = nothing maps it.</summary>
 public sealed record MappingPreviewRowDto(

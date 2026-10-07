@@ -295,10 +295,16 @@ test('a connection is added a step at a time against a PSA and is switched on on
   await expect(page.getByRole('region', { name: 'What the PSA sends' }).getByLabel('What New becomes in the portal')).toHaveValue('NEW');
   await expect(page.getByRole('region', { name: 'What the PSA sends' }).getByLabel('What Closed becomes in the portal')).toHaveValue('CLOSED');
 
-  // The connection's own report, and its sample of tickets, now say the same.
+  // The connection's own report, and its sample of tickets, now say the same. A classification
+  // rule written for the connection is counted there too, with the way to the rules.
+  const classification = `/api/bff/api/admin/connections/${saved.id}/classification`;
+  expect((await page.request.put(classification, { data: [{ ticketType: 'Hardware', issueType: null, subIssueType: null, category: null, workType: 'Break/fix', subcategory: null }] })).ok()).toBeTruthy();
   await page.goto('/dashboard/connections');
   await card.getByRole('button', { name: 'Mapping', exact: true }).click();
   await expect(card.getByText('Mapping health')).toBeVisible();
+  await expect(card.getByText('1 rule · 0 of 0 classified tickets named by one.')).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Classification rules' })).toHaveAttribute('href', `/dashboard/mappings?connection=${saved.id}&tab=classification`);
+  expect((await page.request.put(classification, { data: [] })).ok()).toBeTruthy();
   await expect(card.getByText('Blocking', { exact: true })).toHaveCount(0);
   await expect(statusRow.getByText('Not mapped')).toHaveCount(0);
   await expect(statusRow).toContainText('NEW');
@@ -317,5 +323,134 @@ test('a connection is added a step at a time against a PSA and is switched on on
   // In all of that, nothing was written to the PSA.
   expect(asked.filter((r) => r.method !== 'GET')).toEqual([]);
 
+  await archive(page, name);
+});
+
+test('what a PSA files a ticket under means something here only by a rule, which is previewed before it is saved', async ({ page }) => {
+  const stamp = Date.now().toString().slice(-7);
+  const name = `E2E classify ${stamp}`;
+  asked.length = 0;
+  const wizard = await saveInSetup(page, name, standInBase, `cls${stamp}`);
+  await expect(wizard.getByText('Nothing was changed in the PSA.')).toBeVisible({ timeout: 90_000 });
+  await wizard.getByRole('button', { name: 'Close' }).click();
+  const saved = (await (await page.request.get('/api/bff/api/admin/connections')).json() as { id: string; name: string }[]).find((c) => c.name === name)!;
+  const api = `/api/bff/api/admin/connections/${saved.id}/classification`;
+  const rulesNow = async () => (await (await page.request.get(api)).json() as { rules: Record<string, string | null>[] }).rules;
+
+  await page.goto(`/dashboard/mappings?connection=${saved.id}&tab=classification`);
+  const rules = page.getByRole('region', { name: 'Classification rules' });
+  // ConnectWise's own names for its three levels, and the portal's three beside them.
+  for (const heading of ['Type (PSA)', 'Subtype (PSA)', 'Item (PSA)', 'Category', 'Work type', 'Subcategory']) {
+    await expect(rules.getByRole('columnheader', { name: heading, exact: true }).first()).toBeVisible();
+  }
+  await expect(rules.getByText(/No rules\. Every ticket keeps .* own classification and nothing is translated\./)).toBeVisible();
+  await expect(rules.getByText('No ticket of this connection is filed under anything yet.')).toBeVisible();
+  // The field-by-field table of the other tabs is not this tab's.
+  await expect(page.getByRole('heading', { name: 'Classification Field Mapping' })).toHaveCount(0);
+
+  // A rule for "everything else" is refused in the server's own words, and nothing is saved.
+  await rules.getByRole('button', { name: 'Add a rule' }).click();
+  await rules.getByLabel('Rule 1: Category', { exact: true }).fill('Everything');
+  await expect(rules.getByText('Not saved yet')).toBeVisible();
+  await rules.getByRole('button', { name: 'Save rules' }).click();
+  await expect(rules.getByRole('alert')).toContainText('there is no rule for everything else');
+  expect(await rulesNow()).toEqual([]);
+
+  // Named, previewed - which saves nothing - and then saved.
+  await rules.getByLabel('Rule 1: Type', { exact: true }).fill('Hardware');
+  await rules.getByLabel('Rule 1: Subtype', { exact: true }).fill('Printer');
+  await rules.getByLabel('Rule 1: Category', { exact: true }).fill('Support');
+  await rules.getByLabel('Rule 1: Work type', { exact: true }).fill('Break/fix');
+  await rules.getByRole('button', { name: 'Preview' }).click();
+  await expect(rules.getByText('These rules would change no ticket already here.')).toBeVisible();
+  await expect(rules.getByText('Nothing has been saved or changed.')).toBeVisible();
+  expect(await rulesNow(), 'a preview is not a save').toEqual([]);
+  await rules.getByRole('button', { name: 'Save rules' }).click();
+  await expect(rules.getByText('Saved.')).toBeVisible();
+  await expect(rules.getByText('Not saved yet')).toHaveCount(0);
+  expect(await rulesNow()).toMatchObject([{ ticketType: 'Hardware', issueType: 'Printer', subIssueType: null, category: 'Support', workType: 'Break/fix', subcategory: null }]);
+
+  await page.reload();
+  await expect(rules.getByLabel('Rule 1: Type', { exact: true })).toHaveValue('Hardware');
+  await expect(rules.getByLabel('Rule 1: Subtype', { exact: true })).toHaveValue('Printer');
+  await expect(rules.getByLabel('Rule 1: Item', { exact: true })).toHaveValue('');
+  await expect(rules.getByLabel('Rule 1: Work type', { exact: true })).toHaveValue('Break/fix');
+  await expect(rules.getByText('1 rule names nothing any ticket is filed under')).toBeVisible();
+  // Who changed the rules, and what, is in the audit log.
+  const audited = await (await page.request.get('/api/bff/api/admin/audit')).json() as { action: string; entityId: string | null }[];
+  expect(audited.filter((a) => a.action === 'classification.mapping.changed' && a.entityId === saved.id)).toHaveLength(1);
+
+  // What tickets are filed under, and what applying does to the ones already here. No ticket
+  // can be imported in this suite (see the test above for why), so the server's answers about
+  // tickets are stood in for here; the answers themselves are held by ClassificationMappingTests
+  // on a SQL translator. Everything above this line was the real API.
+  const health = { rules: 1, classifiedTickets: 12, unmappedTickets: 7, classifications: 2, mappedClassifications: 1, coverage: 41.7, rulesMatchingNothing: 0, ticketsOutOfStep: 5 };
+  const seen = [
+    { ticketType: 'Software', issueType: 'Licence', subIssueType: null, tickets: 7, mapped: false, category: null, workType: null, subcategory: null },
+    { ticketType: 'Hardware', issueType: 'Printer', subIssueType: 'Toner', tickets: 5, mapped: true, category: 'Support', workType: 'Break/fix', subcategory: null },
+  ];
+  let applied = false;
+  await page.route(`**${api}`, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    const real = await response.json();
+    await route.fulfill({ response, json: { ...real, seen, health: applied ? { ...health, ticketsOutOfStep: 0 } : health } });
+  });
+  await page.route(`**${api}/preview`, (route) => route.fulfill({
+    json: {
+      seen, health: { ...health, rules: 2, unmappedTickets: 0, mappedClassifications: 2, ticketsOutOfStep: 12 }, ticketsThatWouldChange: 12,
+      sample: [{
+        reference: '9001', title: 'Renew the design licences', ticketType: 'Software', issueType: 'Licence', subIssueType: null,
+        categoryNow: 'Standard', categoryThen: 'Standard', workTypeNow: null, workTypeThen: 'Licensing', subcategoryNow: null, subcategoryThen: null,
+      }],
+    },
+  }));
+  await page.route(`**${api}/apply`, (route) => { applied = true; return route.fulfill({ json: { ticketsChanged: 5, changes: ['Hardware / Printer / Toner \u2192 Support, Break/fix, \u2013 (5)'] } }); });
+  await page.reload();
+
+  await expect(rules.getByText('5 of 12 classified tickets are named by a rule (41.7%) · 7 unmapped.')).toBeVisible();
+  const unmapped = rules.locator('tr', { hasText: 'Licence' });
+  await expect(unmapped.getByText('Unmapped', { exact: true })).toBeVisible();
+  await expect(unmapped).not.toContainText('Support');
+  await expect(rules.locator('tr', { hasText: 'Toner' })).toContainText('Category: Support · Work type: Break/fix');
+  await rules.getByLabel('Unmapped only').check();
+  await expect(rules.locator('tr', { hasText: 'Toner' })).toHaveCount(0);
+
+  // Saved rules, and five tickets that do not hold what they say yet: put right when asked.
+  await expect(rules.getByText('5 tickets already here hold something other than what the rules say.')).toBeVisible();
+  await rules.getByRole('button', { name: 'Apply to tickets already here' }).click();
+  await expect(rules.getByText('Changed 5 tickets.')).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Apply to tickets already here' })).toHaveCount(0);
+
+  // A rule is written from the unmapped line, with the PSA's levels filled in and nothing guessed for the portal's.
+  await unmapped.getByRole('button', { name: 'Write a rule for Software / Licence / \u2013' }).click();
+  await expect(rules.getByLabel('Rule 2: Type', { exact: true })).toHaveValue('Software');
+  await expect(rules.getByLabel('Rule 2: Subtype', { exact: true })).toHaveValue('Licence');
+  for (const target of ['Category', 'Work type', 'Subcategory']) await expect(rules.getByLabel(`Rule 2: ${target}`, { exact: true })).toHaveValue('');
+  await expect(unmapped.getByRole('button', { name: /^Write a rule/ })).toHaveCount(0);
+  await rules.getByLabel('Rule 2: Work type', { exact: true }).fill('Licensing');
+  await rules.getByRole('button', { name: 'Preview' }).click();
+  await expect(rules.getByText('These rules would change 12 tickets already here.')).toBeVisible();
+  await expect(rules.getByText('#9001')).toBeVisible();
+  await expect(rules.getByText('Category: Standard · Work type: Licensing')).toBeVisible();
+  await rules.getByRole('button', { name: 'Discard' }).click();
+  await expect(rules.getByLabel('Rule 2: Type', { exact: true })).toHaveCount(0);
+  for (const url of [`**${api}`, `**${api}/preview`, `**${api}/apply`]) await page.unroute(url);
+
+  // The connection's own mapping health counts the same rule. (Its card shows the line once the
+  // connection is live: the test above reads it there.)
+  const reported = await (await page.request.get(`/api/bff/api/admin/connections/${saved.id}/mapping-health`)).json() as { classification: Record<string, number> };
+  expect(reported.classification).toMatchObject({ rules: 1, classifiedTickets: 0, unmappedTickets: 0, ticketsOutOfStep: 0 });
+
+  // Taken away again: no rules, and the audit log has both changes.
+  await page.goto(`/dashboard/mappings?connection=${saved.id}&tab=classification`);
+  await rules.getByRole('button', { name: 'Remove rule 1' }).click();
+  await rules.getByRole('button', { name: 'Save rules' }).click();
+  await expect(rules.getByText('Saved.')).toBeVisible();
+  expect(await rulesNow()).toEqual([]);
+
+  // In all of that, nothing was written to the PSA.
+  expect(asked.filter((r) => r.method !== 'GET')).toEqual([]);
+  await page.goto('/dashboard/connections');
   await archive(page, name);
 });

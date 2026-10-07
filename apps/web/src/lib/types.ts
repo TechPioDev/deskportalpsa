@@ -151,6 +151,10 @@ export const TicketDetailSchema = z.object({
   // and null when it has none (or from an older API).
   classification: z.object({
     ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+    // What a rule of the connection makes of those levels, in the portal's words. `mapped` false is
+    // UNMAPPED (the connection has rules and none names this); null is a connection with no rules.
+    workType: z.string().nullable().default(null), subcategory: z.string().nullable().default(null),
+    mapped: z.boolean().nullable().default(null),
   }).nullable().default(null),
   assignedAppUserName: z.string().nullable().default(null),
   externalTicketUrl: z.string().nullable().default(null),
@@ -430,6 +434,54 @@ const MappingFieldHealthSchema = z.object({
 });
 export type MappingFieldHealth = z.infer<typeof MappingFieldHealthSchema>;
 
+/** How far a connection's classification rules reach, counted from its tickets and the rules as they are. */
+export const ClassificationHealthSchema = z.object({
+  rules: z.number(), classifiedTickets: z.number(), unmappedTickets: z.number(),
+  classifications: z.number(), mappedClassifications: z.number(), coverage: z.number().nullable(),
+  rulesMatchingNothing: z.number(), ticketsOutOfStep: z.number(),
+});
+export type ClassificationHealth = z.infer<typeof ClassificationHealthSchema>;
+
+/** One rule: tickets the PSA files under these levels are this in the portal. A null level is "whatever it is". */
+export const ClassificationRuleSchema = z.object({
+  id: z.string().nullable().default(null),
+  ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+  category: z.string().nullable(), workType: z.string().nullable(), subcategory: z.string().nullable(),
+});
+export type ClassificationRule = z.infer<typeof ClassificationRuleSchema>;
+
+/** One classification the connection's tickets are filed under. `mapped` false is UNMAPPED. */
+export const ClassificationSeenSchema = z.object({
+  ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+  tickets: z.number(), mapped: z.boolean(),
+  category: z.string().nullable(), workType: z.string().nullable(), subcategory: z.string().nullable(),
+});
+export type ClassificationSeen = z.infer<typeof ClassificationSeenSchema>;
+
+export const ClassificationMappingSchema = z.object({
+  connectionId: z.string(), connectionName: z.string(), provider: z.string(),
+  rules: z.array(ClassificationRuleSchema), seen: z.array(ClassificationSeenSchema), seenShown: z.number(),
+  health: ClassificationHealthSchema,
+  categories: z.array(z.string()).default([]), workTypes: z.array(z.string()).default([]), subcategories: z.array(z.string()).default([]),
+});
+export type ClassificationMapping = z.infer<typeof ClassificationMappingSchema>;
+
+/** What a set of rules would do to the tickets already here. Nothing has been saved or changed. */
+export const ClassificationPreviewSchema = z.object({
+  seen: z.array(ClassificationSeenSchema), health: ClassificationHealthSchema, ticketsThatWouldChange: z.number(),
+  sample: z.array(z.object({
+    reference: z.string(), title: z.string(),
+    ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+    categoryNow: z.string().nullable(), categoryThen: z.string().nullable(),
+    workTypeNow: z.string().nullable(), workTypeThen: z.string().nullable(),
+    subcategoryNow: z.string().nullable(), subcategoryThen: z.string().nullable(),
+  })),
+});
+export type ClassificationPreview = z.infer<typeof ClassificationPreviewSchema>;
+
+export const ClassificationApplyResultSchema = z.object({ ticketsChanged: z.number(), changes: z.array(z.string()).default([]) });
+export type ClassificationApplyResult = z.infer<typeof ClassificationApplyResultSchema>;
+
 /** How well a connection's mapping covers what its PSA sends. `level`: Pass, Optional, Warning or Blocking. */
 export const ConnectionMappingHealthSchema = z.object({
   connectionId: z.string(), connectionName: z.string(), checkedAt: z.string(), level: z.string(),
@@ -442,6 +494,8 @@ export const ConnectionMappingHealthSchema = z.object({
     ignored: z.number().default(0),
   }),
   tickets: z.number(), unmappedTickets: z.number(), ticketsWithoutClient: z.number(), notes: z.array(z.string()).default([]),
+  // Null from an API that does not count it yet.
+  classification: ClassificationHealthSchema.nullable().default(null),
 });
 export type ConnectionMappingHealth = z.infer<typeof ConnectionMappingHealthSchema>;
 

@@ -353,6 +353,37 @@ public sealed class AdminMappingsController(IMappingAdminService svc) : Controll
         => Ok(await svc.SaveSnapshotAsync(provider, connectionId, note, ct));
 }
 
+/// <summary>
+/// What a connection's PSA classification means in the portal's words. Each connection has its own
+/// rules; a connection of another organization is not found. Every change is audited.
+/// </summary>
+[ApiController]
+[Route("api/admin/connections/{connectionId:guid}/classification")]
+public sealed class AdminClassificationController(IClassificationMappingService svc) : ControllerBase
+{
+    /// <summary>The rules, what tickets are filed under, and how far the rules reach.</summary>
+    [HttpGet]
+    [RequirePermission(Permissions.MappingsView)]
+    public async Task<IActionResult> Get(Guid connectionId, CancellationToken ct) => Ok(await svc.GetAsync(connectionId, ct));
+
+    /// <summary>Replaces the rules. Tickets already here are not touched.</summary>
+    [HttpPut]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> Save(Guid connectionId, [FromBody] IReadOnlyList<ClassificationRuleDto> rules, CancellationToken ct)
+        => Ok(await svc.SaveAsync(connectionId, rules, ct));
+
+    /// <summary>What these rules would do. Nothing is saved and nothing is changed.</summary>
+    [HttpPost("preview")]
+    [RequirePermission(Permissions.MappingsView)]
+    public async Task<IActionResult> Preview(Guid connectionId, [FromBody] IReadOnlyList<ClassificationRuleDto> rules, CancellationToken ct)
+        => Ok(await svc.PreviewAsync(connectionId, rules, ct));
+
+    /// <summary>Gives the tickets already here what the saved rules say.</summary>
+    [HttpPost("apply")]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> Apply(Guid connectionId, CancellationToken ct) => Ok(await svc.ApplyAsync(connectionId, ct));
+}
+
 /// <summary>Background job monitor with dead-letter reprocessing.</summary>
 [ApiController]
 [Route("api/admin/jobs")]

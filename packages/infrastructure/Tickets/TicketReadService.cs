@@ -962,7 +962,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 : null,
             // How the desk has filed it in its PSA. The desk's own working, like the rest of what staff see here.
             Classification: includeInternal && (ticket.PsaTicketType ?? ticket.PsaIssueType ?? ticket.PsaSubIssueType) is not null
-                ? new TicketClassificationDto(ticket.PsaTicketType, ticket.PsaIssueType, ticket.PsaSubIssueType)
+                ? new TicketClassificationDto(ticket.PsaTicketType, ticket.PsaIssueType, ticket.PsaSubIssueType,
+                    ticket.PortalWorkType, ticket.PortalSubcategory, await ClassifiedByRuleAsync(ticket, ct))
                 : null,
             ResolvedByName: includeInternal && ticket.ResolvedByAppUserId is { } resolverId
                 ? await db.AppUsers.AsNoTracking().Where(u => u.Id == resolverId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
@@ -992,6 +993,22 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
     /// </summary>
     public async Task<IReadOnlyList<NotificationDto>> RecentActivityForStaffAsync(int take = 10, CancellationToken ct = default)
         => await RecentActivityInAsync(await StaffVisibleAsync(ct), take, ct);
+
+    /// <summary>
+    /// Whether one of the connection's classification rules names what this ticket is filed under,
+    /// asked of the rules as they are now. Not stored on the ticket: a rule written a minute ago
+    /// is true of it already. Null where the connection has no rules to be asked.
+    /// </summary>
+    private async Task<bool?> ClassifiedByRuleAsync(Ticket ticket, CancellationToken ct)
+    {
+        if (ticket.PsaConnectionId is not { } connectionId) return null;
+        var rules = await db.ClassificationMappings.AsNoTracking()
+            .Where(m => m.MspOrganizationId == ticket.MspOrganizationId && m.PsaConnectionId == connectionId)
+            .ToListAsync(ct);
+        if (rules.Count == 0) return null;
+        return Desk.Application.Mapping.ClassificationRules
+            .Resolve(rules, ticket.PsaTicketType, ticket.PsaIssueType, ticket.PsaSubIssueType).Matched;
+    }
 
     private static async Task<IReadOnlyList<NotificationDto>> RecentActivityInAsync(IQueryable<Ticket> scope, int take, CancellationToken ct)
         => await scope

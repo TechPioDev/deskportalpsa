@@ -77,6 +77,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<TicketAttachment> TicketAttachments => Set<TicketAttachment>();
     public DbSet<TicketTimeEntry> TicketTimeEntries => Set<TicketTimeEntry>();
     public DbSet<FieldMapping> FieldMappings => Set<FieldMapping>();
+    public DbSet<ClassificationMapping> ClassificationMappings => Set<ClassificationMapping>();
     public DbSet<FieldMappingVersion> FieldMappingVersions => Set<FieldMappingVersion>();
     public DbSet<SyncEvent> SyncEvents => Set<SyncEvent>();
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();

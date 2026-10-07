@@ -158,6 +158,25 @@ public sealed class PsaTechnicianIgnoreConfig : IEntityTypeConfiguration<Desk.Do
     }
 }
 
+public sealed class ClassificationMappingConfig : IEntityTypeConfiguration<Desk.Domain.Mapping.ClassificationMapping>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Mapping.ClassificationMapping> b)
+    {
+        b.ToTable("classification_mappings");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.TicketType).HasMaxLength(200).IsRequired();
+        b.Property(x => x.IssueType).HasMaxLength(200).IsRequired();
+        b.Property(x => x.SubIssueType).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Category).HasMaxLength(200);
+        b.Property(x => x.WorkType).HasMaxLength(200);
+        b.Property(x => x.Subcategory).HasMaxLength(200);
+        // One rule for one set of levels. A level left open is stored as empty and not as null, so
+        // that this holds for those too: a database treats two nulls as two different things.
+        b.HasIndex(x => new { x.PsaConnectionId, x.TicketType, x.IssueType, x.SubIssueType }).IsUnique();
+        b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class UserPsaIdentityConfig : IEntityTypeConfiguration<Desk.Domain.Identity.UserPsaIdentity>
 {
     public void Configure(EntityTypeBuilder<Desk.Domain.Identity.UserPsaIdentity> b)
@@ -250,6 +269,7 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         b.Property(x => x.Title).HasMaxLength(500).IsRequired();
         b.Property(x => x.RequesterName).HasMaxLength(200).IsRequired();
         b.Property(x => x.RequesterEmail).HasMaxLength(320).IsRequired();
+        b.Property(x => x.PortalWorkType).HasMaxLength(200);
         b.Property(x => x.PsaTicketType).HasMaxLength(200);
         b.Property(x => x.PsaIssueType).HasMaxLength(200);
         b.Property(x => x.PsaSubIssueType).HasMaxLength(200);

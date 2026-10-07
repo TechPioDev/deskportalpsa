@@ -146,6 +146,22 @@ export function MappingHealth({ connectionId }: { connectionId: string }) {
             </ul>
           )}
         </details>
+        {/* The PSA's classification, in the portal's words. A connection with no rules has not
+            taken them up, and is told so without being told off. */}
+        {h.classification && h.classification.classifiedTickets + h.classification.rules > 0 && (
+          <p className="rounded-lg border border-[var(--border)] px-3 py-2.5 text-sm">
+            <span className="font-medium">Classification</span>{' '}
+            <span className="text-[var(--muted)]">
+              {h.classification.rules === 0
+                ? `no rules: ${h.classification.classifiedTickets.toLocaleString()} ${h.classification.classifiedTickets === 1 ? 'ticket keeps' : 'tickets keep'} the PSA's own classification and nothing is translated.`
+                : `${h.classification.rules} ${h.classification.rules === 1 ? 'rule' : 'rules'} · ${(h.classification.classifiedTickets - h.classification.unmappedTickets).toLocaleString()} of ${h.classification.classifiedTickets.toLocaleString()} classified tickets named by one`
+                  + (h.classification.unmappedTickets > 0 ? ` · ${h.classification.unmappedTickets.toLocaleString()} unmapped` : '')
+                  + (h.classification.ticketsOutOfStep > 0 ? ` · ${h.classification.ticketsOutOfStep.toLocaleString()} not yet given what the rules say` : '')
+                  + '.'}
+            </span>{' '}
+            <a href={`/dashboard/mappings?connection=${connectionId}&tab=classification`} className="whitespace-nowrap text-xs underline underline-offset-2">Classification rules</a>
+          </p>
+        )}
         {h.ticketsWithoutClient > 0 && (
           <p className="rounded-lg border border-[var(--border)] px-3 py-2.5 text-sm">
             <span className="font-medium tabular-nums">{h.ticketsWithoutClient.toLocaleString()}</span>{' '}
