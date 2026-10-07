@@ -243,7 +243,19 @@ public sealed record TicketNoteDto(
     // even before (or without) the live entry list loading. Null for provider-side te- notes,
     // whose hours only the live PSA fetch knows.
     decimal? TimeEntryHours = null,
-    bool? TimeEntryBillable = null);
+    bool? TimeEntryBillable = null,
+    // "Pending Sync" or "Sync Failed" for a note written while the PSA could not be reached and not
+    // yet taken by it. Null for every note the PSA has.
+    string? SyncState = null);
+
+/// <summary>
+/// A change to a ticket that has not reached its PSA yet, or that the PSA would not take. Shown on
+/// the ticket to staff. <paramref name="State"/> is "Pending Sync" or "Sync Failed": a change that
+/// is synced is simply the ticket as it is.
+/// </summary>
+public sealed record TicketOutboundDto(
+    Guid Id, string Kind, string Summary, string State, int Attempts, int MaxAttempts,
+    DateTimeOffset RequestedAt, string? RequestedBy, DateTimeOffset? NextAttemptAt, string? LastError);
 
 /// <summary>
 /// Ticket detail for the client portal. Contains ONLY public conversation — internal PSA notes
@@ -321,7 +333,9 @@ public sealed record TicketDetailDto(
     /// For staff, every one of them. For a client, only the ones separately marked as theirs to
     /// see; the rest are not sent at all. Null where there are none.
     /// </summary>
-    IReadOnlyList<TicketCustomFieldDto>? CustomFields = null);
+    IReadOnlyList<TicketCustomFieldDto>? CustomFields = null,
+    /// <summary>Changes made here that the PSA does not have yet, or refused. Staff only; null where there are none.</summary>
+    IReadOnlyList<TicketOutboundDto>? Outbound = null);
 
 /// <param name="Label">What the field is called in the portal.</param>
 /// <param name="DataType">text, number, date, boolean or list.</param>

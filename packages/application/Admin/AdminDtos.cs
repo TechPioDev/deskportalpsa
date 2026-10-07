@@ -139,7 +139,9 @@ public sealed record UnsyncedTicketDto(
 public sealed record UnsyncedTicketsDto(int Count, IReadOnlyList<UnsyncedTicketDto> Tickets);
 
 /// <summary>Outcome of a single resync attempt.</summary>
-public sealed record ResyncResultDto(bool Success, Guid TicketId, string? ExternalTicketId, string? Error);
+/// <param name="Transient">It failed because the PSA could not be reached, not because it refused.</param>
+/// <param name="NeverSent">And the request certainly did nothing there, so sending it again cannot make a second ticket.</param>
+public sealed record ResyncResultDto(bool Success, Guid TicketId, string? ExternalTicketId, string? Error, bool Transient = false, bool NeverSent = false);
 
 /// <summary>A role a staff user can hold, by id (for assignment) and name (for display).</summary>
 public sealed record RoleOptionDto(Guid Id, string Name);

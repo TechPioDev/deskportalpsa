@@ -890,7 +890,11 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             ticket.PortalStatus, ticket.PortalPriority, ticket.PortalCategory, ticket.QueueOrBoard,
             ticket.CreatedAt, ticket.ResolvedAt,
             Conversation: ticket.Notes
-                .Where(n => includeInternal || n.IsPublic) // clients NEVER receive internal notes
+                // Clients NEVER receive internal notes. Nor a reply of the desk's that is still
+                // waiting to reach the PSA or was refused by it: the PSA has not sent it to them,
+                // and it may never. Their own comment that is waiting they do see, marked as such.
+                .Where(n => includeInternal || (n.IsPublic
+                    && (n.SyncState is null or Desk.Domain.Sync.OutboundState.Synced || n.AuthoredByClient)))
                 .OrderBy(n => n.NoteCreatedAt)
                 .Select(n =>
                 {
@@ -901,7 +905,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                         n.ExternalNoteId != null && n.ExternalNoteId.StartsWith("te-")
                             ? n.ExternalNoteId[3..]
                             : te?.ExternalEntryId ?? te?.Id.ToString(),
-                        te?.Hours, te?.Billable);
+                        te?.Hours, te?.Billable,
+                        n.SyncState is { } waiting && waiting != Desk.Domain.Sync.OutboundState.Synced ? Sync.OutboundQueue.Label(waiting) : null);
                 })
                 .ToList(),
             // Filtered the same way the conversation above is, and for the same reason. A file
@@ -968,6 +973,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     ticket.PortalWorkType, ticket.PortalSubcategory, await ClassifiedByRuleAsync(ticket, ct))
                 : null,
             CustomFields: await CustomFieldsOfAsync(ticket, includeInternal, ct),
+            Outbound: includeInternal ? await OutboundOfAsync(ticket.Id, ct) : null,
             ResolvedByName: includeInternal && ticket.ResolvedByAppUserId is { } resolverId
                 ? await db.AppUsers.AsNoTracking().Where(u => u.Id == resolverId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
                 : null,
@@ -1011,6 +1017,18 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         if (rules.Count == 0) return null;
         return Desk.Application.Mapping.ClassificationRules
             .Resolve(rules, ticket.PsaTicketType, ticket.PsaIssueType, ticket.PsaSubIssueType).Matched;
+    }
+
+    /// <summary>What was changed here and has not reached the PSA: waiting, or refused. The oldest first, as they will be sent.</summary>
+    private async Task<IReadOnlyList<TicketOutboundDto>?> OutboundOfAsync(Guid ticketId, CancellationToken ct)
+    {
+        var waiting = await db.OutboundOperations.AsNoTracking()
+            .Where(o => o.TicketId == ticketId && o.State != Desk.Domain.Sync.OutboundState.Synced)
+            .OrderBy(o => o.CreatedAt).ThenBy(o => o.Id)
+            .ToListAsync(ct);
+        return waiting.Count == 0 ? null : waiting.Select(o => new TicketOutboundDto(
+            o.Id, o.Kind.ToString(), o.Summary, Sync.OutboundQueue.Label(o.State), o.Attempts, o.MaxAttempts,
+            o.CreatedAt, o.RequestedByName, o.NextAttemptAt, o.LastError)).ToList();
     }
 
     /// <summary>

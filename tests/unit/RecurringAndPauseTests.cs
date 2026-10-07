@@ -257,7 +257,8 @@ public class RecurringAndPauseTests
         var raised = await new InternalTicketService(k.H.Db, k.H.Tenant, k.H.Clock, new RecordingActivity())
             .CreateAsync(k.Me, new InternalTicketInput(k.BoardId, "Printer", null));
         var me = new TestCurrentUser(Org, userId: k.Me);
-        var status = new TicketStatusController(k.H.Db, new Desk.Infrastructure.Tickets.TicketStatusWriter(k.H.Db, null!, null!), new NoopTicketScopeQuery(), me);
+        var status = new TicketStatusController(k.H.Db, new Desk.Infrastructure.Tickets.TicketStatusWriter(k.H.Db, null!, null!), new NoopTicketScopeQuery(), me,
+            new Desk.Infrastructure.Sync.OutboundQueue(k.H.Db, k.H.Clock));
 
         await status.SetStatus(raised.TicketId, new TicketStatusController.SetStatusRequest("WAITING_CUSTOMER"), default);
 
