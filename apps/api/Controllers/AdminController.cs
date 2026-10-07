@@ -385,6 +385,26 @@ public sealed class AdminClassificationController(IClassificationMappingService 
 }
 
 /// <summary>
+/// Which of a connection's PSA custom fields are brought in, what each is called here, and whether
+/// the client may see it. Nothing is brought in until chosen; a chosen field is staff only until
+/// said otherwise. A connection of another organization is not found. Every change is audited.
+/// </summary>
+[ApiController]
+[Route("api/admin/connections/{connectionId:guid}/custom-fields")]
+public sealed class AdminCustomFieldsController(ICustomFieldService svc) : ControllerBase
+{
+    [HttpGet]
+    [RequirePermission(Permissions.MappingsView)]
+    public async Task<IActionResult> Get(Guid connectionId, CancellationToken ct) => Ok(await svc.GetAsync(connectionId, ct));
+
+    /// <summary>Saves decisions about some fields. A field left out keeps what was decided before.</summary>
+    [HttpPut]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> Save(Guid connectionId, [FromBody] IReadOnlyList<SetCustomFieldInput> changes, CancellationToken ct)
+        => Ok(await svc.SaveAsync(connectionId, changes, ct));
+}
+
+/// <summary>
 /// Which companies a client user can see into besides their own. Each is given here, one person
 /// and one company at a time; nothing else creates one.
 ///

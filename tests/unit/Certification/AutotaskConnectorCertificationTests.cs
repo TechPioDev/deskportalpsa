@@ -53,6 +53,53 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
     }
 
     [Fact]
+    public async Task A_tickets_own_fields_are_read_by_name_with_a_lists_value_in_words()
+    {
+        // The tenant's own fields were listed by name and never read off a ticket. A list's value
+        // is held as an id, like a status: it reaches the portal as the word.
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        var fields = await c.GetCustomFieldsAsync();
+        fields.Select(f => (f.Key, f.Label, f.DataType)).Should().Equal(
+            ("cf_site", "Site", CustomFieldTypes.Text), ("Cost Centre", "Cost centre", CustomFieldTypes.List),
+            ("Warranty Until", "Warranty Until", CustomFieldTypes.Date), ("Seats", "Seats", CustomFieldTypes.Number));
+        fields.Single(f => f.Key == "Cost Centre").Options!.Select(o => (o.Value, o.Label, o.IsActive)).Should().Equal(("7", "Finance", true), ("8", "Operations", false));
+
+        var with = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Laptop will not charge", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u1" });
+        var second = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Dock is dead", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u2" });
+        var without = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "No fields set", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u3" });
+        server.SetTicketUserDefinedFields(long.Parse(with.ExternalId!), ("cf_site", "Mohali"), ("Cost Centre", 7), ("Warranty Until", null), ("Seats", 12.5));
+        server.SetTicketUserDefinedFields(long.Parse(second.ExternalId!), ("cf_site", " "), ("Cost Centre", "99"));
+        int Asked() => server.RequestCounts.Where(r => r.Key.EndsWith("entityInformation/userDefinedFields", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Value);
+        var before = Asked();
+
+        var listed = (await c.GetTicketsAsync(new TicketFilter())).Items;
+        var one = await c.GetTicketAsync(with.ExternalId!);
+
+        var expected = new Dictionary<string, string?> { ["cf_site"] = "Mohali", ["Cost Centre"] = "Finance", ["Warranty Until"] = null, ["Seats"] = "12.5" };
+        one!.CustomFields.Should().BeEquivalentTo(expected);
+        listed.Single(t => t.ExternalId == with.ExternalId).CustomFields.Should().BeEquivalentTo(expected, "a ticket in a list says what the same ticket says by itself");
+        listed.Single(t => t.ExternalId == second.ExternalId).CustomFields.Should().BeEquivalentTo(
+            new Dictionary<string, string?> { ["cf_site"] = null, ["Cost Centre"] = "99" }, "blank is no value, and an id that names nothing in the list stays the id it was");
+        listed.Single(t => t.ExternalId == without.ExternalId).CustomFields.Should().BeEmpty();
+        (Asked() - before).Should().Be(1,
+            "the words for the lists are asked for once, not once a ticket");
+    }
+
+    [Fact]
+    public async Task Tickets_are_still_read_when_the_list_of_their_own_fields_cannot_be()
+    {
+        var server = new FakeAutotaskServer(Clock) { UserDefinedFieldInfoFails = true };
+        var c = Build(server);
+        var with = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Laptop will not charge", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u1" });
+        server.SetTicketUserDefinedFields(long.Parse(with.ExternalId!), ("cf_site", "Mohali"), ("Cost Centre", 7));
+
+        (await c.GetTicketAsync(with.ExternalId!))!.CustomFields.Should().BeEquivalentTo(
+            new Dictionary<string, string?> { ["cf_site"] = "Mohali", ["Cost Centre"] = "7" }, "the value is there; only the word for the list's id is not");
+        await FluentActions.Awaiting(() => c.GetCustomFieldsAsync()).Should().ThrowAsync<ConnectorException>("asked for the list itself, the failure is said");
+    }
+
+    [Fact]
     public async Task What_a_ticket_is_filed_under_is_read_in_Autotasks_own_words()
     {
         // Autotask holds a ticket's type, issue and sub-issue as ids, like its status. They were

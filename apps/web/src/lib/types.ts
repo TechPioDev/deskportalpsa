@@ -156,6 +156,11 @@ export const TicketDetailSchema = z.object({
     workType: z.string().nullable().default(null), subcategory: z.string().nullable().default(null),
     mapped: z.boolean().nullable().default(null),
   }).nullable().default(null),
+  // The PSA's custom fields an administrator chose to bring in. For a client, only the ones marked
+  // as theirs to see are sent at all. Null when there are none (or from an older API).
+  customFields: z.array(z.object({
+    label: z.string(), value: z.string(), dataType: z.string().default('text'), clientVisible: z.boolean().default(false),
+  })).nullable().default(null),
   assignedAppUserName: z.string().nullable().default(null),
   externalTicketUrl: z.string().nullable().default(null),
   contactName: z.string().nullable().default(null),
@@ -433,6 +438,20 @@ const MappingFieldHealthSchema = z.object({
   unmappedTickets: z.number(), items: z.array(MappingValueSchema),
 });
 export type MappingFieldHealth = z.infer<typeof MappingFieldHealthSchema>;
+
+/** One of a PSA's custom fields, with what has been decided about it on a connection. */
+export const CustomFieldSchema = z.object({
+  key: z.string(), label: z.string(), dataType: z.string(), listedByPsa: z.boolean(),
+  import: z.boolean(), portalLabel: z.string(), clientVisible: z.boolean(),
+  editable: z.boolean().default(false), editableReason: z.string().default(''),
+});
+export type CustomField = z.infer<typeof CustomFieldSchema>;
+
+export const CustomFieldSettingsSchema = z.object({
+  connectionId: z.string(), connectionName: z.string(), provider: z.string(), supported: z.boolean(),
+  fields: z.array(CustomFieldSchema), imported: z.number(), clientVisible: z.number(), notes: z.array(z.string()).default([]),
+});
+export type CustomFieldSettings = z.infer<typeof CustomFieldSettingsSchema>;
 
 /** A company a client user can act in: their own, or one they were given. */
 export const MyCompanySchema = z.object({

@@ -967,6 +967,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 ? new TicketClassificationDto(ticket.PsaTicketType, ticket.PsaIssueType, ticket.PsaSubIssueType,
                     ticket.PortalWorkType, ticket.PortalSubcategory, await ClassifiedByRuleAsync(ticket, ct))
                 : null,
+            CustomFields: await CustomFieldsOfAsync(ticket, includeInternal, ct),
             ResolvedByName: includeInternal && ticket.ResolvedByAppUserId is { } resolverId
                 ? await db.AppUsers.AsNoTracking().Where(u => u.Id == resolverId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
                 : null,
@@ -1010,6 +1011,29 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         if (rules.Count == 0) return null;
         return Desk.Application.Mapping.ClassificationRules
             .Resolve(rules, ticket.PsaTicketType, ticket.PsaIssueType, ticket.PsaSubIssueType).Matched;
+    }
+
+    /// <summary>
+    /// The custom fields to show on a ticket. Decided here, from the fields' settings as they are
+    /// now, and not from what the ticket happens to hold: a field that has since been set to
+    /// "ignore" is shown to nobody, and one that is staff-only is not sent to a client even though
+    /// its value is stored. For a client the settings are filtered in the query itself, so a
+    /// staff-only field's value is never read on a client's request.
+    /// </summary>
+    private async Task<IReadOnlyList<TicketCustomFieldDto>?> CustomFieldsOfAsync(Ticket ticket, bool staff, CancellationToken ct)
+    {
+        if (ticket.PsaConnectionId is not { } connectionId || string.IsNullOrEmpty(ticket.CustomFieldsJson)) return null;
+        var held = Desk.Application.Mapping.CustomFieldValues.Read(ticket.CustomFieldsJson);
+        if (held.Count == 0) return null;
+        var keys = held.Keys.ToList();
+        var settings = await db.PsaCustomFields.AsNoTracking()
+            .Where(f => f.MspOrganizationId == ticket.MspOrganizationId && f.PsaConnectionId == connectionId
+                && f.Import && (staff || f.ClientVisible) && keys.Contains(f.ExternalKey))
+            .OrderBy(f => f.PortalLabel).ThenBy(f => f.ExternalKey)
+            .Select(f => new { f.ExternalKey, f.PortalLabel, f.DataType, f.ClientVisible })
+            .ToListAsync(ct);
+        if (settings.Count == 0) return null;
+        return settings.Select(f => new TicketCustomFieldDto(f.PortalLabel, held[f.ExternalKey], f.DataType, f.ClientVisible)).ToList();
     }
 
     private static async Task<IReadOnlyList<NotificationDto>> RecentActivityInAsync(IQueryable<Ticket> scope, int take, CancellationToken ct)

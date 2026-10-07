@@ -48,10 +48,11 @@ public sealed class ConnectWiseConnector(
             SupportsAttachments = true, SupportsAttachmentDownload = true, SupportsAttachmentSweep = false,
             SupportsTimeEntries = true, SupportsAssets = true, SupportsContracts = true,
             SupportsHolidayCalendars = true,
-            // Custom fields: none are read (GetCustomFieldsAsync is empty). Inbound webhooks: not
-            // yet - what this connector validates is the portal's own signed frame, which
-            // ConnectWise cannot send; its callbacks are not understood until the webhook slice.
-            SupportsSlaData = true, SupportsCustomFields = false, SupportsInboundWebhooks = false,
+            // Custom fields: read off each ticket, which carries every one of the tenant's own
+            // fields. Inbound webhooks: not yet - what this connector validates is the portal's own
+            // signed frame, which ConnectWise cannot send; its callbacks are not understood until
+            // the webhook slice.
+            SupportsSlaData = true, SupportsCustomFields = true, SupportsInboundWebhooks = false,
             SupportsOutboundWebhooks = true, SupportsIncrementalSync = true, SupportsBulkRead = true,
             SupportsBulkWrite = false, SupportsCompanies = true, SupportsContacts = true,
             SupportsTechnicians = true, SupportsTeams = true, SupportsQueues = true,
@@ -656,8 +657,51 @@ public sealed class ConnectWiseConnector(
         return items.Select(w => new ExternalFieldOption(w.Id.ToString(), w.Name ?? "")).ToList();
     }
 
-    public Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ExternalFieldDefinition>>([]);
+    /// <summary>
+    /// The tenant's own ticket fields. ConnectWise sends every one of them on each ticket, with its
+    /// caption and kind, whether or not anything was entered: so the fields there are, are read off
+    /// a ticket, and a tenant with no ticket yet lists none. A field is known by its id, which is
+    /// also how a ticket carries its value; a caption can be changed and an id cannot.
+    /// </summary>
+    public async Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
+    {
+        var sample = await GetListAsync<CwTicket>("service/tickets", new() { ["pageSize"] = "1", ["orderBy"] = "id desc" }, ct);
+        return (sample.FirstOrDefault()?.CustomFields ?? [])
+            .Where(f => f.Id > 0)
+            .GroupBy(f => f.Id).Select(g => g.First())
+            .Select(f => new ExternalFieldDefinition(
+                f.Id.ToString(), string.IsNullOrWhiteSpace(f.Caption) ? $"Field {f.Id}" : f.Caption.Trim(), CustomFieldTypeOf(f), false))
+            .ToList();
+    }
+
+    private static string CustomFieldTypeOf(CwCustomField field)
+        => (field.EntryMethod ?? "").ToLowerInvariant() is "list" or "option" ? CustomFieldTypes.List
+            : (field.Type ?? "").ToLowerInvariant() switch
+            {
+                "number" or "percent" => CustomFieldTypes.Number,
+                "date" => CustomFieldTypes.Date,
+                "checkbox" => CustomFieldTypes.Boolean,
+                _ => CustomFieldTypes.Text,
+            };
+
+    /// <summary>A ticket's custom fields by id. A field nothing was entered in is there, with no value.</summary>
+    private static IReadOnlyDictionary<string, string?> CustomFieldsOf(CwTicket t)
+    {
+        if (t.CustomFields is not { Count: > 0 } fields) return NoCustomFields;
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var field in fields.Where(f => f.Id > 0))
+            values[field.Id.ToString()] = field.Value is not { } v ? null : v.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => string.IsNullOrWhiteSpace(v.GetString()) ? null : v.GetString(),
+                System.Text.Json.JsonValueKind.Number => v.GetRawText(),
+                System.Text.Json.JsonValueKind.True => "true",
+                System.Text.Json.JsonValueKind.False => "false",
+                _ => null,
+            };
+        return values;
+    }
+
+    private static readonly IReadOnlyDictionary<string, string?> NoCustomFields = new Dictionary<string, string?>();
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
         => Task.FromResult(WebhookSignature.Validate(request, config.WebhookSecret, config.WebhookMaxSkew));
@@ -996,6 +1040,7 @@ public sealed class ConnectWiseConnector(
         TicketType = Name(t.Type),
         IssueType = Name(t.SubType),
         SubIssueType = Name(t.Item),
+        CustomFields = CustomFieldsOf(t),
         QueueOrBoard = t.Board?.Name,          // Service Board → portal Queue
         QueueOrBoardId = t.Board is { Id: > 0 } board ? board.Id.ToString() : null,
         AssignedTechnicianExternalId = t.Owner?.Id.ToString(),

@@ -126,6 +126,8 @@ internal sealed class AtTicket
     [JsonPropertyName("resolvedDueDateTime")] public DateTimeOffset? ResolvedDueDateTime { get; set; }
     // Falls back to the ticket's own due date where no SLA applies to it.
     [JsonPropertyName("dueDateTime")] public DateTimeOffset? DueDateTime { get; set; }
+    // The tenant's own fields on a ticket, each by its name with the value as Autotask holds it.
+    [JsonPropertyName("userDefinedFields")] public List<AtUserDefinedField>? UserDefinedFields { get; set; }
     // The configuration item (installed product) the ticket is about; absent when none is set.
     [JsonPropertyName("configurationItemID")] public long? ConfigurationItemId { get; set; }
 }
@@ -178,9 +180,19 @@ internal sealed class AtFieldInfoResult
     [JsonPropertyName("fields")] public List<AtFieldInfo> Fields { get; set; } = [];
 }
 
+internal sealed class AtUserDefinedField
+{
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("value")] [JsonConverter(typeof(FlexibleStringConverter))] public string? Value { get; set; }
+}
+
 internal sealed class AtFieldInfo
 {
     [JsonPropertyName("name")] public string? Name { get; set; }
+    // What the field is called on the screen, where it differs from its name, and what kind it is.
+    [JsonPropertyName("label")] public string? Label { get; set; }
+    [JsonPropertyName("dataType")] public string? DataType { get; set; }
+    [JsonPropertyName("isPickList")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsPickList { get; set; }
     [JsonPropertyName("picklistValues")] public List<AtPicklistValue> PicklistValues { get; set; } = [];
 }
 

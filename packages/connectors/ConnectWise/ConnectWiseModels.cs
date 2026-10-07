@@ -56,9 +56,21 @@ internal sealed class CwMember
     [JsonPropertyName("inactiveFlag")] public bool InactiveFlag { get; set; }
 }
 
+/// <summary>One of the tenant's own fields as a ticket carries it: its id, what the screen calls it, its kind and its value.</summary>
+internal sealed class CwCustomField
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("caption")] public string? Caption { get; set; }
+    [JsonPropertyName("type")] public string? Type { get; set; }
+    [JsonPropertyName("entryMethod")] public string? EntryMethod { get; set; }
+    // A string, a number or a checkbox's true and false, and absent where nothing was entered.
+    [JsonPropertyName("value")] public System.Text.Json.JsonElement? Value { get; set; }
+}
+
 internal sealed class CwTicket
 {
     [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("customFields")] public List<CwCustomField>? CustomFields { get; set; }
     [JsonPropertyName("summary")] public string? Summary { get; set; }
     [JsonPropertyName("initialDescription")] public string? InitialDescription { get; set; }
     [JsonPropertyName("board")] public CwRef? Board { get; set; }

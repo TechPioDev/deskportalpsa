@@ -290,6 +290,21 @@ public abstract class ConnectorCertificationSuite
     }
 
     [Fact]
+    public async Task The_custom_fields_it_lists_can_each_be_told_apart_and_named()
+    {
+        // An administrator chooses among these by name, and the choice is kept against the key. A
+        // field with no key cannot be chosen, and two with one key cannot be told apart.
+        var c = CreateConnector();
+        if (!(await c.GetCapabilitiesAsync()).SupportsCustomFields) return;
+
+        var fields = await c.GetCustomFieldsAsync();
+        // None listed is an answer too (ConnectWise lists none until it has a ticket to read them off).
+        fields.Where(f => string.IsNullOrWhiteSpace(f.Key) || string.IsNullOrWhiteSpace(f.Label)).Should().BeEmpty();
+        fields.Select(f => f.Key).Should().OnlyHaveUniqueItems();
+        fields.Where(f => !CustomFieldTypes.All.Contains(f.DataType)).Should().BeEmpty("a kind the portal does not know is said as text");
+    }
+
+    [Fact]
     public async Task A_capability_that_is_not_claimed_is_still_safe_to_ask_for()
     {
         // The screens offer what a connector says it can do. So what it says it cannot do must not

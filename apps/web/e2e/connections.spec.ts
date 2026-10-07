@@ -33,6 +33,12 @@ test.beforeAll(async () => {
       id: 501, summary: 'Printer offline', initialDescription: 'The front desk printer will not print.',
       status: { id: 10, name: 'New' }, priority: { id: 3, name: 'Priority 1 - High' },
       board: { id: 1, name: 'Service Desk' }, company: { id: 1, name: 'Acme Corp' }, lastUpdated: '2026-10-01T09:00:00Z',
+      // The tenant's own fields, as ConnectWise sends them on every ticket.
+      customFields: [
+        { id: 12, caption: 'Asset tag', type: 'Text', entryMethod: 'EntryField', value: 'LT-0042' },
+        { id: 13, caption: 'Notes for the engineer', type: 'TextArea', entryMethod: 'EntryField', value: 'Owner is difficult; quote high' },
+        { id: 14, caption: 'Under contract', type: 'Checkbox', entryMethod: 'EntryField', value: true },
+      ],
     };
     if (path.endsWith('/service/tickets')) { res.end(JSON.stringify((url.searchParams.get('page') ?? '1') === '1' ? [ticket] : [])); return; }
     if (path.endsWith('/service/tickets/501')) { res.end(JSON.stringify(ticket)); return; }
@@ -448,6 +454,81 @@ test('what a PSA files a ticket under means something here only by a rule, which
   await rules.getByRole('button', { name: 'Save rules' }).click();
   await expect(rules.getByText('Saved.')).toBeVisible();
   expect(await rulesNow()).toEqual([]);
+
+  // In all of that, nothing was written to the PSA.
+  expect(asked.filter((r) => r.method !== 'GET')).toEqual([]);
+  await page.goto('/dashboard/connections');
+  await archive(page, name);
+});
+
+test('a custom field of the PSA is brought in only when chosen, and shown to clients only when that is confirmed', async ({ page }) => {
+  const stamp = Date.now().toString().slice(-7);
+  const name = `E2E fields ${stamp}`;
+  asked.length = 0;
+  const wizard = await saveInSetup(page, name, standInBase, `fld${stamp}`);
+  await expect(wizard.getByText('Nothing was changed in the PSA.')).toBeVisible({ timeout: 90_000 });
+  await wizard.getByRole('button', { name: 'Close' }).click();
+  const saved = (await (await page.request.get('/api/bff/api/admin/connections')).json() as { id: string; name: string }[]).find((c) => c.name === name)!;
+  const api = `/api/bff/api/admin/connections/${saved.id}/custom-fields`;
+  type Field = { key: string; label: string; dataType: string; import: boolean; portalLabel: string; clientVisible: boolean; editable: boolean };
+  const now = async () => await (await page.request.get(api)).json() as { imported: number; clientVisible: number; fields: Field[] };
+
+  // The PSA's own fields, read from it. None is chosen, for anybody, and nothing is saved by looking.
+  await page.goto(`/dashboard/mappings?connection=${saved.id}&tab=customFields`);
+  const fields = page.getByRole('region', { name: 'Custom fields' });
+  await expect(fields.getByText('0 of 3 brought in · 0 shown to clients.')).toBeVisible();
+  for (const label of ['Asset tag', 'Notes for the engineer', 'Under contract']) {
+    await expect(fields.getByLabel(`Bring in ${label}`)).not.toBeChecked();
+    await expect(fields.getByLabel(`Who sees ${label}`)).toBeDisabled();
+  }
+  await expect(fields.getByText('Read only')).toHaveCount(3);
+  expect((await now()).fields.map((f) => [f.key, f.label, f.dataType, f.import, f.clientVisible, f.editable])).toEqual(
+    expect.arrayContaining([['12', 'Asset tag', 'text', false, false, false], ['13', 'Notes for the engineer', 'text', false, false, false], ['14', 'Under contract', 'boolean', false, false, false]]));
+
+  // Two are brought in, one under a name of the desk's own. Staff only, without being asked.
+  await fields.getByLabel('Bring in Asset tag').check();
+  await fields.getByLabel('What Asset tag is called in the portal').fill('Device tag');
+  await fields.getByLabel('Bring in Notes for the engineer').check();
+  await expect(fields.getByLabel('Who sees Asset tag')).toHaveValue('staff');
+  await expect(fields.getByText('2 changes not saved yet')).toBeVisible();
+  expect((await now()).imported, 'ticking is not saving').toBe(0);
+  await fields.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(fields.getByText('2 of 3 brought in · 0 shown to clients.')).toBeVisible();
+  expect(await now()).toMatchObject({ imported: 2, clientVisible: 0 });
+
+  // Showing one to clients is a second choice, and is not saved until it has been confirmed in words.
+  await fields.getByLabel('Who sees Asset tag').selectOption('client');
+  await expect(fields.getByText('Clients will see')).toBeVisible();
+  await expect(fields.getByText('Device tag', { exact: true })).toBeVisible();
+  await expect(fields.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await fields.getByRole('checkbox', { name: /Clients will see/ }).check();
+  await fields.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(fields.getByText('2 of 3 brought in · 1 shown to clients.')).toBeVisible();
+
+  await page.reload();
+  await expect(fields.getByLabel('What Asset tag is called in the portal')).toHaveValue('Device tag');
+  await expect(fields.getByLabel('Who sees Asset tag')).toHaveValue('client');
+  await expect(fields.getByLabel('Who sees Notes for the engineer')).toHaveValue('staff');
+  await expect(fields.getByLabel('Bring in Under contract')).not.toBeChecked();
+  expect((await now()).fields.filter((f) => f.import).map((f) => [f.key, f.portalLabel, f.clientVisible]).sort()).toEqual([['12', 'Device tag', true], ['13', 'Notes for the engineer', false]]);
+
+  // A field the PSA does not list cannot be chosen, and one that is ignored cannot be shown to clients.
+  const invented = await page.request.put(api, { data: [{ key: '999', import: true, portalLabel: null, clientVisible: false }] });
+  expect(invented.status()).toBe(400);
+  expect(JSON.stringify(await invented.json())).toContain('does not list a custom field 999');
+  expect((await page.request.put(api, { data: [{ key: '14', import: false, portalLabel: null, clientVisible: true }] })).status()).toBe(400);
+  expect(await now()).toMatchObject({ imported: 2, clientVisible: 1 });
+
+  // Who decided what, and who decided clients may see a field, is in the audit log.
+  const audited = (await (await page.request.get('/api/bff/api/admin/audit')).json() as { action: string; entityId: string | null }[]).filter((a) => a.entityId === saved.id);
+  expect(audited.filter((a) => a.action === 'customfields.changed')).toHaveLength(2);
+  expect(audited.filter((a) => a.action === 'customfields.shown_to_clients')).toHaveLength(1);
+
+  // Taken back from clients: one change, no confirmation asked for taking something away.
+  await fields.getByLabel('Who sees Asset tag').selectOption('staff');
+  await expect(fields.getByText('Clients will see')).toHaveCount(0);
+  await fields.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(fields.getByText('2 of 3 brought in · 0 shown to clients.')).toBeVisible();
 
   // In all of that, nothing was written to the PSA.
   expect(asked.filter((r) => r.method !== 'GET')).toEqual([]);

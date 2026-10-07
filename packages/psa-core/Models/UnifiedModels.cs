@@ -34,6 +34,21 @@ public record ExternalFieldOption(string Value, string Label, bool IsActive = tr
 }
 
 /// <summary>Definition of a provider custom field discovered at runtime.</summary>
+/// <summary>
+/// The kinds a custom field can be, as the portal shows them. A connector says one of these for
+/// each field it lists (<see cref="ExternalFieldDefinition.DataType"/>); a kind it cannot tell is text.
+/// </summary>
+public static class CustomFieldTypes
+{
+    public const string Text = "text";
+    public const string Number = "number";
+    public const string Date = "date";
+    public const string Boolean = "boolean";
+    public const string List = "list";
+
+    public static readonly IReadOnlyList<string> All = [Text, Number, Date, Boolean, List];
+}
+
 public record ExternalFieldDefinition(
     string Key,
     string Label,

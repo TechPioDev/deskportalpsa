@@ -114,7 +114,9 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         if (path.EndsWith("ConfigurationItems/entityInformation/fields", StringComparison.OrdinalIgnoreCase))
             return Json("{\"fields\":[{\"name\":\"configurationItemType\",\"picklistValues\":[{\"value\":\"3\",\"label\":\"Server\",\"isActive\":true}]}]}");
         if (path.EndsWith("entityInformation/userDefinedFields", StringComparison.OrdinalIgnoreCase))
-            return Json("{\"fields\":[{\"name\":\"cf_site\",\"picklistValues\":[]}]}");
+            return UserDefinedFieldInfoFails
+                ? Resp(HttpStatusCode.InternalServerError, "{\"errors\":[\"the field list is unavailable\"]}")
+                : Json(UserDefinedFieldInfoJson);
 
         // Query endpoints
         if (path.EndsWith("Companies/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_companies, body));
@@ -227,6 +229,27 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
     }
 
     /// <summary>Points a ticket at a contact, as a ticket raised by that customer carries contactID.</summary>
+    /// <summary>
+    /// The tenant's own ticket fields, as Autotask describes them: a name, the label on the
+    /// screen, a data type, and for a list its values by id. A list's value rides on a ticket as
+    /// the id, like every other picklist.
+    /// </summary>
+    public string UserDefinedFieldInfoJson { get; set; } =
+        "{\"fields\":[" +
+        "{\"name\":\"cf_site\",\"label\":\"Site\",\"dataType\":\"string\",\"isPickList\":false,\"picklistValues\":[]}," +
+        "{\"name\":\"Cost Centre\",\"label\":\"Cost centre\",\"dataType\":\"integer\",\"isPickList\":true,\"picklistValues\":[" +
+            "{\"value\":\"7\",\"label\":\"Finance\",\"isActive\":true},{\"value\":\"8\",\"label\":\"Operations\",\"isActive\":false}]}," +
+        "{\"name\":\"Warranty Until\",\"dataType\":\"datetime\",\"isPickList\":false,\"picklistValues\":[]}," +
+        "{\"name\":\"Seats\",\"label\":\"Seats\",\"dataType\":\"double\",\"isPickList\":false,\"picklistValues\":[]}]}";
+
+    /// <summary>The field list cannot be read. Tickets still can.</summary>
+    public bool UserDefinedFieldInfoFails { get; set; }
+
+    /// <summary>Puts custom field values on a ticket, as Autotask sends them: a list of name and value.</summary>
+    public void SetTicketUserDefinedFields(long ticketId, params (string Name, object? Value)[] fields)
+        => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["userDefinedFields"] =
+            fields.Select(f => new Dictionary<string, object?> { ["name"] = f.Name, ["value"] = f.Value }).ToList();
+
     public void SetTicketContact(long ticketId, long contactId)
         => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["contactID"] = contactId;
 

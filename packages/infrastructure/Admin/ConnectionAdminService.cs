@@ -20,7 +20,7 @@ public sealed partial class ConnectionAdminService(
     IObjectStorage storage,
     TimeProvider clock,
     Security.ConnectorEndpointPolicy? endpointPolicy = null,
-    Desk.Application.Mapping.IMappingEngine? mappingEngine = null) : IConnectionAdminService
+    Desk.Application.Mapping.IMappingEngine? mappingEngine = null) : IConnectionAdminService, ICustomFieldSource
 {
     private readonly Security.ConnectorEndpointPolicy _endpoints = endpointPolicy ?? Security.ConnectorEndpointPolicy.Strict;
 

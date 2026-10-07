@@ -124,6 +124,15 @@ public class Ticket : TenantEntity
     /// </summary>
     public string? PortalWorkType { get; set; }
 
+    /// <summary>
+    /// The values of the PSA's custom fields an administrator chose to bring in for this ticket's
+    /// connection, as one JSON object of field key to value (see <c>CustomFieldValues</c>). Null
+    /// where there are none. A field that was not chosen is not in here: it is not stored at all.
+    /// Who may see each value is decided when a ticket is read, from the field's setting as it is
+    /// then, and never from this column alone.
+    /// </summary>
+    public string? CustomFieldsJson { get; set; }
+
     public string? QueueOrBoard { get; set; }
     public string? AssignedTechnicianExternalId { get; set; }
 
