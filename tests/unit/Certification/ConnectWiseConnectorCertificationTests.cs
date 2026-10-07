@@ -33,6 +33,41 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
     protected override IServiceManagementConnector CreateConnectorWithoutWebhookSecret() => Build(new FakeConnectWiseServer(Clock), "");
 
     [Fact]
+    public async Task A_tickets_own_fields_are_read_by_id_as_ConnectWise_sends_them_on_every_ticket()
+    {
+        // ConnectWise sends each of the tenant's own fields on every ticket, with its caption and
+        // kind, whether or not anything was entered. None of it was read.
+        List<Dictionary<string, object?>> Fields(object? asset, object? contract, object? site, object? seats) =>
+        [
+            new() { ["id"] = 12, ["caption"] = "Asset tag", ["type"] = "Text", ["entryMethod"] = "EntryField", ["value"] = asset },
+            new() { ["id"] = 13, ["caption"] = "Under contract", ["type"] = "Checkbox", ["entryMethod"] = "EntryField", ["value"] = contract },
+            new() { ["id"] = 14, ["caption"] = "Site", ["type"] = "Text", ["entryMethod"] = "List", ["value"] = site },
+            new() { ["id"] = 15, ["caption"] = "Seats", ["type"] = "Number", ["entryMethod"] = "EntryField", ["value"] = seats },
+        ];
+        var server = new FakeConnectWiseServer(Clock);
+        var c = Build(server);
+        (await c.GetCustomFieldsAsync()).Should().BeEmpty("the fields there are, are read off a ticket, and there is none yet");
+
+        server.SeedTicket(new Dictionary<string, object?> { ["id"] = 601L, ["summary"] = "Laptop will not charge", ["company"] = new Dictionary<string, object?> { ["id"] = 1, ["name"] = "Acme" }, ["customFields"] = Fields("LT-0042", true, "Mohali", 12) });
+        server.SeedTicket(new Dictionary<string, object?> { ["id"] = 602L, ["summary"] = "Nothing entered", ["company"] = new Dictionary<string, object?> { ["id"] = 1, ["name"] = "Acme" }, ["customFields"] = Fields(null, false, "", null) });
+        server.SeedTicket(new Dictionary<string, object?> { ["id"] = 603L, ["summary"] = "An older API", ["company"] = new Dictionary<string, object?> { ["id"] = 1, ["name"] = "Acme" } });
+
+        (await c.GetCustomFieldsAsync()).Select(f => (f.Key, f.Label, f.DataType)).Should().BeEquivalentTo(new[]
+        {
+            ("12", "Asset tag", CustomFieldTypes.Text), ("13", "Under contract", CustomFieldTypes.Boolean),
+            ("14", "Site", CustomFieldTypes.List), ("15", "Seats", CustomFieldTypes.Number),
+        });
+
+        var listed = (await c.GetTicketsAsync(new TicketFilter())).Items;
+        var expected = new Dictionary<string, string?> { ["12"] = "LT-0042", ["13"] = "true", ["14"] = "Mohali", ["15"] = "12" };
+        (await c.GetTicketAsync("601"))!.CustomFields.Should().BeEquivalentTo(expected);
+        listed.Single(t => t.ExternalId == "601").CustomFields.Should().BeEquivalentTo(expected, "a ticket in a list says what the same ticket says by itself");
+        listed.Single(t => t.ExternalId == "602").CustomFields.Should().BeEquivalentTo(
+            new Dictionary<string, string?> { ["12"] = null, ["13"] = "false", ["14"] = null, ["15"] = null }, "nothing entered is no value; an unticked box is an answer");
+        listed.Single(t => t.ExternalId == "603").CustomFields.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task A_ticket_carries_its_contact_as_ConnectWise_sends_it_inline()
     {
         var server = new FakeConnectWiseServer(Clock);

@@ -135,6 +135,7 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
         => Task.FromResult(new ProviderCapabilities
         {
             SupportsTimeEntries = SupportsTimeEntries,
+            SupportsCustomFields = CustomFields.Count > 0 || CustomFieldFailure is not null,
             SupportsAttachments = true,
             SupportsAttachmentDownload = SupportsAttachmentDownload,
             SupportsAttachmentSweep = SupportsAttachmentSweep,
@@ -255,7 +256,14 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     public Task<IReadOnlyList<ExternalFieldOption>> GetCategoriesAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldOption>>();
     public Task<IReadOnlyList<ExternalFieldOption>> GetWorkTypesAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldOption>>();
     public Task<IReadOnlyList<ExternalFieldOption>> GetWorkRolesAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldOption>>();
-    public Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldDefinition>>();
+    /// <summary>The PSA's custom fields. Listing any makes the stub one that reads custom fields.</summary>
+    public List<ExternalFieldDefinition> CustomFields { get; } = [];
+
+    /// <summary>The PSA cannot be asked for its custom fields just now.</summary>
+    public ConnectorException? CustomFieldFailure { get; set; }
+
+    public Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
+        => CustomFieldFailure is { } failure ? throw failure : Task.FromResult<IReadOnlyList<ExternalFieldDefinition>>(CustomFields);
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default) => No<WebhookValidationResult>();
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default) => No<NormalizedProviderEvent>();
 }

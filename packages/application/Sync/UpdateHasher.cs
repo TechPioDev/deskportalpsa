@@ -41,7 +41,7 @@ public static class UpdateHasher
         DateTimeOffset? psaCreatedAt = null, string? queueOrBoard = null,
         string? contactName = null, string? contactEmail = null, string? deviceExternalId = null,
         string? ticketType = null, string? issueType = null, string? subIssueType = null,
-        string? workType = null, string? subcategory = null)
+        string? workType = null, string? subcategory = null, string? customFields = null)
     {
         var fields = new Dictionary<string, string?>
         {
@@ -86,6 +86,10 @@ public static class UpdateHasher
         // hashes it had. (The category a rule gives is in "category" above.)
         if (!string.IsNullOrEmpty(workType)) fields["workType"] = workType;
         if (!string.IsNullOrEmpty(subcategory)) fields["subcategory"] = subcategory;
+        // The custom field values kept for the ticket, on the same terms once more: a field chosen
+        // for import after a ticket arrived changes the hash of the tickets that carry it, and so
+        // reaches them the next time each is read. A connection that imports none is untouched.
+        if (!string.IsNullOrEmpty(customFields)) fields["customFields"] = customFields;
         return Compute(fields);
     }
 }

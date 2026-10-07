@@ -315,7 +315,18 @@ public sealed record TicketDetailDto(
     /// <summary>Who resolved it in the portal - the person productivity credits it to. Staff only.</summary>
     string? ResolvedByName = null,
     /// <summary>What the PSA files the ticket under, in its own three levels. Staff only, and null when it has none.</summary>
-    TicketClassificationDto? Classification = null);
+    TicketClassificationDto? Classification = null,
+    /// <summary>
+    /// The PSA's custom fields an administrator chose to bring in, with a value on this ticket.
+    /// For staff, every one of them. For a client, only the ones separately marked as theirs to
+    /// see; the rest are not sent at all. Null where there are none.
+    /// </summary>
+    IReadOnlyList<TicketCustomFieldDto>? CustomFields = null);
+
+/// <param name="Label">What the field is called in the portal.</param>
+/// <param name="DataType">text, number, date, boolean or list.</param>
+/// <param name="ClientVisible">Whether the client sees it too. Always true in what a client is sent.</param>
+public sealed record TicketCustomFieldDto(string Label, string Value, string DataType, bool ClientVisible);
 
 /// <summary>
 /// The PSA's own classification of a ticket, as it sent it. Which words the three levels go by is
