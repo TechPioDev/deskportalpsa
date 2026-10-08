@@ -753,6 +753,12 @@ export const api = {
         queueOrBoard: z.string().nullable(),
       }).passthrough(),
       { method: 'PUT', body: JSON.stringify(body) }),
+  /** Moves a ticket's due date later, with a reason. A PSA ticket's goes to the PSA first. */
+  extendDueDate: (id: string, dueAt: string, reason: string) =>
+    request(`/api/tickets/${id}/due-date`, z.object({
+      dueAt: z.string().nullable(), originalDueAt: z.string().nullable(), extensions: z.number(),
+      lastExtendedAt: z.string().nullable(), lastExtendedByName: z.string().nullable(), lastReason: z.string().nullable(),
+    }), { method: 'POST', body: JSON.stringify({ dueAt, reason }) }),
   updateTicketStatus: (id: string, status: string, resolution?: string | null) =>
     // `queued` when the PSA could not be reached: the ticket keeps the status it has, and what was
     // asked for waits to be sent. `portalStatus` is then the status the ticket STILL has.

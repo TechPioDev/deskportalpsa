@@ -335,7 +335,9 @@ public sealed record TicketDetailDto(
     /// </summary>
     IReadOnlyList<TicketCustomFieldDto>? CustomFields = null,
     /// <summary>Changes made here that the PSA does not have yet, or refused. Staff only; null where there are none.</summary>
-    IReadOnlyList<TicketOutboundDto>? Outbound = null);
+    IReadOnlyList<TicketOutboundDto>? Outbound = null,
+    /// <summary>How the due date was moved, where it was. Null when never moved, and always for a client.</summary>
+    TicketDueDateDto? DueDate = null);
 
 /// <param name="Label">What the field is called in the portal.</param>
 /// <param name="DataType">text, number, date, boolean or list.</param>

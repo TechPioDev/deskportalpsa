@@ -223,6 +223,8 @@ public sealed class AutotaskConnector(
         if (update.Priority is not null) body["priority"] = await IdForAsync("priority", update.Priority, ct);
         if (update.Category is not null) body["ticketCategory"] = await IdForAsync("ticketCategory", update.Category, ct);
         if (update.QueueOrBoard is not null) body["queueID"] = await IdForAsync("queueID", update.QueueOrBoard, ct);
+        // The ticket's due date, as the portal reads it back (resolvedDueDateTime wins on read where an SLA sets one).
+        if (update.DueDate is { } due) body["dueDateTime"] = due.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
         if (update.AssignedTechnicianExternalId is not null)
         {
             body["assignedResourceID"] = update.AssignedTechnicianExternalId;
