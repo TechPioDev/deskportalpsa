@@ -72,8 +72,8 @@ function Column({
 export function Compare() {
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      <Column tone="problem" title="Without Desk Portal" caption="Support lives in an inbox" items={WITHOUT} />
-      <Column tone="solution" title="With Desk Portal" caption="Support lives in one place" items={WITH} />
+      <Column tone="problem" title="Without PioManage" caption="Support lives in an inbox" items={WITHOUT} />
+      <Column tone="solution" title="With PioManage" caption="Support lives in one place" items={WITH} />
     </div>
   );
 }

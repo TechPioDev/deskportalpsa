@@ -45,7 +45,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <main className="flex-1 bg-[var(--bg)] p-4 sm:p-6">{children}</main>
 
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-xs text-[var(--muted)] sm:px-6">
-          <span>Desk Portal · v0.1.0</span>
+          <span>PioManage · v0.1.0</span>
           <a href="/user-guide.pdf" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 hover:text-[var(--fg)]">
             <FileText size={13} /> User Guide (PDF)
           </a>

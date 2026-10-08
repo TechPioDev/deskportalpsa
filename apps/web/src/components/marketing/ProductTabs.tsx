@@ -5,7 +5,7 @@ import { Ticket, MessageSquare, Paperclip, History, Settings2, Building2 } from 
 import { BrowserFrame, ProductScreen, type ProductView } from '@/components/marketing/ProductUI';
 
 const TABS: { id: ProductView; label: string; icon: typeof Ticket; url: string; note: string }[] = [
-  { id: 'requests', label: 'Client portal', icon: Building2, url: 'Desk Portal', note: 'What your client opens: their requests, their progress, one button to raise another.' },
+  { id: 'requests', label: 'Client portal', icon: Building2, url: 'PioManage', note: 'What your client opens: their requests, their progress, one button to raise another.' },
   { id: 'conversation', label: 'Conversation', icon: MessageSquare, url: 'Support request', note: 'One thread for client and support team. Internal notes never cross over.' },
   { id: 'files', label: 'Files', icon: Paperclip, url: 'Shared files', note: 'Screenshots and documents shared either way, attached to the request.' },
   { id: 'updates', label: 'Updates', icon: History, url: 'Recent updates', note: 'Every change, so nobody has to ask where a request stands.' },

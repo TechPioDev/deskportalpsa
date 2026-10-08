@@ -535,7 +535,7 @@ public class NoteImportTests
             IsPublic = true, NoteCreatedAt = clock.GetUtcNow(),
         });
         await db.SaveChangesAsync();
-        connector.Notes["7809"] = [Note("29683533", "Desk Portal", "Portal reply.", clock.GetUtcNow())];
+        connector.Notes["7809"] = [Note("29683533", "PioManage", "Portal reply.", clock.GetUtcNow())];
 
         var run = await Runner(db, connector, clock).RunAsync(Conn, full: true);
 

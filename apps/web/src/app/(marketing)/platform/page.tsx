@@ -9,9 +9,9 @@ import { BrowserFrame, ProductScreen } from '@/components/marketing/ProductUI';
 import { FEATURES, BENEFITS, USE_CASES, CLIENT_JOURNEY } from '@/lib/marketingContent';
 
 export const metadata: Metadata = {
-  title: 'Platform — Desk Portal',
+  title: 'Platform — PioManage',
   description:
-    'A tour of Desk Portal: the client experience, the technician experience, and the two-way sync that keeps your PSA the system of record.',
+    'A tour of PioManage: the client experience, the technician experience, and the two-way sync that keeps your PSA the system of record.',
   alternates: { canonical: '/platform' },
 };
 
@@ -21,7 +21,7 @@ export default function PlatformPage() {
       <PageHero
         eyebrow="Platform"
         title={<>Your PSA works for your technicians. <span className="text-[var(--muted)]">Does it work for your clients?</span></>}
-        lead="A PSA is built for the people who resolve work. Handing that interface to a client — or leaving them on email — is where visibility disappears. Desk Portal is the surface in between."
+        lead="A PSA is built for the people who resolve work. Handing that interface to a client — or leaving them on email — is where visibility disappears. PioManage is the surface in between."
       />
 
       <Band>
@@ -34,7 +34,7 @@ export default function PlatformPage() {
         <Shell>
           <SectionHead
             eyebrow="The product"
-            title="See Desk Portal in action"
+            title="See PioManage in action"
             lead="A look at the client experience: requests, conversation, shared files, progress, and the sync that keeps your PSA current."
           />
           <Reveal delay={80} className="mt-10"><ProductTabs /></Reveal>
@@ -117,7 +117,7 @@ export default function PlatformPage() {
 
       <Band>
         <Shell>
-          <SectionHead eyebrow="Who it is for" title="Where Desk Portal fits" align="center" />
+          <SectionHead eyebrow="Who it is for" title="Where PioManage fits" align="center" />
           <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {USE_CASES.map((u, i) => (
               <Reveal key={u.title} delay={(i % 3) * 70}>

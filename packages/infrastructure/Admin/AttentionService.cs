@@ -403,8 +403,8 @@ public sealed class AttentionService(
     {
         var critical = items.Count(i => i.Severity == "critical");
         var subject = items.Count == 0
-            ? $"Desk Portal: all clear — {orgName}"
-            : $"Desk Portal: {Plural(items.Count, "item")} need{(items.Count == 1 ? "s" : "")} attention — {orgName}"
+            ? $"PioManage: all clear — {orgName}"
+            : $"PioManage: {Plural(items.Count, "item")} need{(items.Count == 1 ? "s" : "")} attention — {orgName}"
               + (critical > 0 ? $" ({critical} critical)" : "");
 
         var text = new StringBuilder();

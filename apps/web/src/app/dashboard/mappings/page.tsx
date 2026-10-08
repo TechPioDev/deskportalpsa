@@ -220,7 +220,7 @@ export default function MappingsPage() {
 
       <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
         <Info size={16} className="mt-0.5 shrink-0" />
-        <p>Field mapping ensures data consistency between Desk Portal and your connected PSA. <strong>Changes are saved automatically.</strong></p>
+        <p>Field mapping ensures data consistency between PioManage and your connected PSA. <strong>Changes are saved automatically.</strong></p>
       </div>
 
       {/* Connection + tabs */}
