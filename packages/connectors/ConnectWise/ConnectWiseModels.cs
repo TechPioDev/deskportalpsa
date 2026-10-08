@@ -25,6 +25,12 @@ internal sealed class CwRef
     [JsonPropertyName("name")] public string? Name { get; set; }
 }
 
+/// <summary>The answer to <c>{resource}/count</c>.</summary>
+internal sealed class CwCount
+{
+    [JsonPropertyName("count")] public int Count { get; set; }
+}
+
 internal sealed class CwCompany
 {
     [JsonPropertyName("id")] public long Id { get; set; }

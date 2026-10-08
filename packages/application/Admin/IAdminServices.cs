@@ -56,6 +56,21 @@ public interface IConnectionAdminService
     /// <summary>Live-tests a saved connection against its PSA, updates its health status, and audits it.</summary>
     Task<ConnectionTestResultDto> TestAsync(Guid connectionId, CancellationToken ct = default);
 
+    /// <summary>
+    /// The test, line by line: authentication, the reads the sync needs, and what else the PSA
+    /// allows. Reads only - nothing is written to the PSA. Records the outcome and is audited.
+    /// </summary>
+    Task<ConnectionCheckReportDto> CheckAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Each status and priority the PSA lists, and what the connection's rules turn it into.</summary>
+    Task<MappingCoverageDto> MappingCoverageAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>How much an import would bring in under the connection's scope, asked of the PSA.</summary>
+    Task<ConnectionPreviewDto> PreviewAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>What stands between this connection and being switched on.</summary>
+    Task<PreflightDto> PreflightAsync(Guid connectionId, CancellationToken ct = default);
+
     /// <summary>Read-only pre-flight: can this connection log time with its current settings?</summary>
     Task<TimeEntryReadinessDto> CheckTimeEntryAsync(Guid connectionId, CancellationToken ct = default);
 

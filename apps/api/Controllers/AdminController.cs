@@ -130,6 +130,26 @@ public sealed class AdminConnectionsController(
     [RequirePermission(Permissions.ConnectionsManage)]
     public async Task<IActionResult> Capabilities(Guid id, CancellationToken ct) => Ok(await svc.CapabilitiesAsync(id, ct));
 
+    /// <summary>The test, line by line. Reads only: nothing is written to the PSA.</summary>
+    [HttpPost("{id:guid}/check")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Check(Guid id, CancellationToken ct) => Ok(await svc.CheckAsync(id, ct));
+
+    /// <summary>Each status and priority the PSA lists, and what this connection's rules make of it.</summary>
+    [HttpGet("{id:guid}/mapping-coverage")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingCoverage(Guid id, CancellationToken ct) => Ok(await svc.MappingCoverageAsync(id, ct));
+
+    /// <summary>How much an import would bring in, asked of the PSA before anything is imported.</summary>
+    [HttpGet("{id:guid}/preview")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Preview(Guid id, CancellationToken ct) => Ok(await svc.PreviewAsync(id, ct));
+
+    /// <summary>What stands between this connection and being switched on.</summary>
+    [HttpGet("{id:guid}/preflight")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Preflight(Guid id, CancellationToken ct) => Ok(await svc.PreflightAsync(id, ct));
+
     /// <summary>Switches a new connection on for the first time. Refused until a test has passed.</summary>
     [HttpPost("{id:guid}/activate")]
     [RequirePermission(Permissions.ConnectionsManage)]

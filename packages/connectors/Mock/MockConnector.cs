@@ -95,6 +95,17 @@ public sealed class MockConnector : IServiceManagementConnector
             page, hasMore ? (skip + page.Count).ToString() : null, hasMore));
     }
 
+    public Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    {
+        Guard();
+        var query = _tickets.Values.AsEnumerable();
+        if (filter.ModifiedSince is { } since)
+            query = query.Where(t => (t.ModifiedAt ?? t.CreatedAt) >= since);
+        if (!filter.IncludeClosed)
+            query = query.Where(t => t.ClosedAt is null && t.ResolvedAt is null);
+        return Task.FromResult<int?>(query.Count());
+    }
+
     public Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
     { Guard(); return Task.FromResult(_tickets.GetValueOrDefault(ticketId)); }
 

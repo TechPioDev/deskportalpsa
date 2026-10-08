@@ -346,6 +346,42 @@ export const SyncStateSchema = z.object({
 });
 export type SyncState = z.infer<typeof SyncStateSchema>;
 
+/**
+ * One line of a connection's test. `outcome` is Pass, Fail, Warn, NotTested (nothing to try it on,
+ * or a write, which a test never makes), Available or Unavailable.
+ */
+export const ConnectionCheckSchema = z.object({
+  key: z.string(), name: z.string(), outcome: z.string(), detail: z.string().nullable().default(null), required: z.boolean().default(false),
+});
+export const ConnectionCheckReportSchema = z.object({
+  passed: z.boolean(), checkedAt: z.string(), checks: z.array(ConnectionCheckSchema),
+});
+export type ConnectionCheckReport = z.infer<typeof ConnectionCheckReportSchema>;
+
+/** A value the PSA lists and what it becomes in the portal. `mapsTo` null = nothing maps it. */
+const MappedValueSchema = z.object({
+  value: z.string(), label: z.string(), mapsTo: z.string().nullable(), byFallbackRule: z.boolean().default(false),
+});
+export const ConnectionMappingCoverageSchema = z.object({
+  statuses: z.array(MappedValueSchema), priorities: z.array(MappedValueSchema), unmapped: z.number(),
+});
+export type ConnectionMappingCoverage = z.infer<typeof ConnectionMappingCoverageSchema>;
+
+/** How much an import would bring in. A null is "the PSA could not say", never zero. */
+export const ConnectionPreviewSchema = z.object({
+  clients: z.number().nullable(), technicians: z.number().nullable(),
+  openTickets: z.number().nullable(), allTickets: z.number().nullable(), ticketsToImport: z.number().nullable(),
+  unmapped: z.number(), notes: z.array(z.string()).default([]),
+});
+export type ConnectionPreview = z.infer<typeof ConnectionPreviewSchema>;
+
+/** What stands between a connection and being switched on. A Fail blocks; a Warn is only said. */
+export const PreflightSchema = z.object({
+  canEnable: z.boolean(),
+  items: z.array(z.object({ key: z.string(), name: z.string(), outcome: z.string(), detail: z.string() })),
+});
+export type Preflight = z.infer<typeof PreflightSchema>;
+
 /** A record the sync could not read or apply. Kept, and tried again until it goes through. */
 export const SyncFailureSchema = z.object({
   id: z.string(), entity: z.string(), externalId: z.string(), operation: z.string(), category: z.string(),

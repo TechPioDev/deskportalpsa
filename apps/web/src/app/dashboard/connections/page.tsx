@@ -7,6 +7,7 @@ import { api, ApiError } from '@/lib/api';
 import type { ConnectionSummary, ConnectionFields } from '@/lib/types';
 import { SyncSettings } from './SyncSettings';
 import { SyncActivity } from './SyncActivity';
+import { ConnectionWizard } from './ConnectionWizard';
 
 // ConnectionStatus enum: 0 Disabled, 1 Pending, 2 Healthy, 3 Degraded, 4 Failed
 const STATUS_LABEL: Record<number, string> = { 0: 'Disabled', 1: 'Pending', 2: 'Healthy', 3: 'Degraded', 4: 'Failed' };
@@ -72,14 +73,15 @@ export default function ConnectionsPage() {
   const credFields = providerDef?.credentials ?? [];
   const credKeys = credFields.map((f) => f.key);
 
+  // Adding a connection, or finishing one left in setup, goes through the wizard. The form below
+  // is for changing a connection that exists.
+  const [wizard, setWizard] = useState<{ resume: ConnectionSummary | null } | null>(null);
   function openAdd() {
-    setEditing(null);
-    setChosenProvider(null);
-    setForm({ name: '', apiEndpoint: '', tenantIdentifier: '', logoUrl: '' });
-    setStoredKeys(null);
-    setOpen(true);
+    setOpen(false);
+    setWizard({ resume: null });
   }
   function openEdit(c: ConnectionSummary) {
+    setWizard(null);
     setEditing(c);
     setChosenProvider(Number(c.provider));
     setForm({ name: c.name, apiEndpoint: c.apiEndpoint, tenantIdentifier: c.tenantIdentifier ?? '', logoUrl: c.logoUrl ?? '' });
@@ -89,10 +91,10 @@ export default function ConnectionsPage() {
 
   const save = useMutation({
     mutationFn: async () => {
-      if (!providerDef || provider === null) throw new Error('Choose a PSA to connect.');
+      if (!providerDef || !editing) throw new Error('Open a connection to change it.');
       const entered = Object.fromEntries(credKeys.map((k) => [k, form[k] ?? '']).filter(([, v]) => v !== ''));
       const credentialsChanged = Object.keys(entered).length > 0;
-      if (editing) {
+      {
         const updated = await api.updateConnection(editing.id, {
           name: form.name,
           apiEndpoint: form.apiEndpoint,
@@ -105,15 +107,6 @@ export default function ConnectionsPage() {
         });
         return { id: updated.id, inSetup: Number(updated.state) === SETUP, credentialsChanged };
       }
-      const created = await api.createConnection({
-        name: form.name,
-        provider,
-        apiEndpoint: form.apiEndpoint,
-        tenantIdentifier: form.tenantIdentifier || undefined,
-        logoUrl: form.logoUrl,
-        credentials: Object.fromEntries(credKeys.map((k) => [k, form[k] ?? ''])),
-      });
-      return { id: created.id, inSetup: true, credentialsChanged: true };
     },
     onSuccess: ({ id, inSetup, credentialsChanged }) => {
       setOpen(false);
@@ -364,7 +357,26 @@ export default function ConnectionsPage() {
         </form>
       )}
 
-      {(isError || (data && data.length === 0)) && !open && (
+      {wizard && (catalog.data ? (
+        <ConnectionWizard
+          key={wizard.resume?.id ?? 'new'}
+          providers={catalog.data}
+          resume={wizard.resume}
+          onClose={() => setWizard(null)}
+          onEnabled={(id) => {
+            setWizard(null);
+            setResults((m) => ({ ...m, [id]: { ok: true, msg: 'Switched on. The first sync runs on the next cycle, or press Sync now.' } }));
+          }}
+        />
+      ) : (
+        <p className={'rounded-xl border border-[var(--border)] bg-[var(--surface)] px-5 py-4 text-sm ' + (catalog.isError ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--muted)]')}>
+          {catalog.isError
+            ? `The list of PSAs could not be loaded${catalog.error instanceof Error ? ` (${catalog.error.message})` : ''}. Reload the page to try again.`
+            : 'Loading the PSAs that can be connected…'}
+        </p>
+      ))}
+
+      {(isError || (data && data.length === 0)) && !open && !wizard && (
         <div className="flex flex-col items-center rounded-xl border border-dashed border-[var(--border)] px-6 py-12 text-center">
           <Plug className="mb-3 text-[var(--faint)]" size={26} />
           <p className="text-sm text-[var(--muted)]">No connections yet. Add one to start syncing tickets.</p>
@@ -382,6 +394,7 @@ export default function ConnectionsPage() {
               fields={fieldsById[c.id]}
               onTest={() => test.mutate(c.id)}
               testing={test.isPending && test.variables === c.id}
+              onContinueSetup={() => { setOpen(false); setWizard({ resume: c }); }}
               onSwitchOn={() => switchOn.mutate(c.id)}
               switchingOn={switchOn.isPending && switchOn.variables === c.id}
               onSync={() => sync.mutate({ id: c.id, full: false })}
@@ -475,7 +488,7 @@ function Stat({ icon: Icon, label, value, tint }: { icon: LucideIcon; label: str
 function stateNote(c: ConnectionSummary, state: number | null): string | null {
   switch (state) {
     case SETUP:
-      return 'Not switched on yet. It is switched on as soon as a test passes.';
+      return 'Not switched on yet. Continue setup to test it, choose what it brings in and switch it on.';
     case 1:
       return 'The PSA accepted the credentials. Nothing has been synced yet.';
     case AUTH_REQUIRED:
@@ -499,7 +512,7 @@ function ManageRow({ text, action, onClick, disabled }: { text: string; action: 
 }
 
 function ConnectionCard({
-  c, result, expanded, fields, onTest, testing, onSwitchOn, switchingOn, onSync, onResyncAll, syncing,
+  c, result, expanded, fields, onTest, testing, onContinueSetup, onSwitchOn, switchingOn, onSync, onResyncAll, syncing,
   settingsOpen, onToggleSettings, activityOpen, onToggleActivity, manageOpen, onToggleManage, onLifecycle, lifecycleBusy,
   onRefreshFields, refreshingFields, onEdit, onToggleFields,
 }: {
@@ -509,6 +522,7 @@ function ConnectionCard({
   fields?: ConnectionFields | 'loading' | 'error';
   onTest: () => void;
   testing: boolean;
+  onContinueSetup: () => void;
   onSwitchOn: () => void;
   switchingOn: boolean;
   onSync: () => void;
@@ -588,11 +602,6 @@ function ConnectionCard({
               <Copy size={12} />
             </button>
           </p>
-          {note && (
-            <p className={'mt-1.5 max-w-2xl text-xs ' + (state === AUTH_REQUIRED ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--muted)]')}>
-              {note}
-            </p>
-          )}
         </div>
 
         <div className="text-right">
@@ -602,6 +611,13 @@ function ConnectionCard({
           </p>
           <p className="mt-0.5 text-[12px] text-[var(--muted)]">Last checked {ago(c.lastHealthCheckAt)}</p>
         </div>
+
+        {/* A row of its own. Beside the name it was squeezed, on a phone, into a column a word wide. */}
+        {note && (
+          <p className={'w-full max-w-3xl text-xs ' + (state === AUTH_REQUIRED ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--muted)]')}>
+            {note}
+          </p>
+        )}
       </div>
 
       {/* Counts are what has actually synced into the portal, not the PSA's own totals. */}
@@ -626,13 +642,19 @@ function ConnectionCard({
 
       <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--bg)] px-5 py-3">
         {inSetup ? (
-          <button
-            onClick={onSwitchOn}
-            disabled={switchingOn}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-50"
-          >
-            <Activity size={13} /> {switchingOn ? 'Testing…' : 'Test and switch on'}
-          </button>
+          <>
+            {/* The whole of it, a step at a time: test, what the PSA offers, mapping, scope, preview. */}
+            <button
+              onClick={onContinueSetup}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90"
+            >
+              Continue setup
+            </button>
+            {/* The short way, for someone who knows the defaults are what they want. */}
+            <ActionButton onClick={onSwitchOn} disabled={switchingOn}>
+              <Activity size={13} /> {switchingOn ? 'Testing…' : 'Test and switch on'}
+            </ActionButton>
+          </>
         ) : (
           <>
             <ActionButton onClick={onTest} disabled={testing}>

@@ -50,6 +50,12 @@ internal sealed class AtQueryResult<T>
     [JsonPropertyName("pageDetails")] public AtPageDetails? PageDetails { get; set; }
 }
 
+/// <summary>The answer to <c>{entity}/query/count</c>.</summary>
+internal sealed class AtQueryCount
+{
+    [JsonPropertyName("queryCount")] public int QueryCount { get; set; }
+}
+
 internal sealed class AtPageDetails
 {
     [JsonPropertyName("count")] public int Count { get; set; }
