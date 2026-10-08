@@ -14,7 +14,8 @@ import {
   type TechnicianResponse, type TeamResponse, type TrendPoint,
   type ConnectionSummary, type Health, type Job, type AuditEntry,
   TicketFollowerSchema, type TicketFollower,
-  SavedViewSchema, type SavedView, type SavedViewFilters,
+  SavedViewSchema, type SavedView, type SavedViewFilters, InvitationLookupSchema, InvitationSchema, InvitationSentSchema, type Invitation,
+  EmailTemplateSchema, RenderedEmailSchema, EmailLogSchema, type EmailTemplate, type EmailLogEntry,
 } from './types';
 
 // All API calls go through the same-origin BFF proxy, which attaches the bearer token from the
@@ -1386,6 +1387,34 @@ export const api = {
     method: 'POST', body: JSON.stringify(body),
   }) as Promise<ImportResult>,
 
+  // ---- sign-in invitations: the link a person sets their password through ----
+  /** The page at a link. 404 when the link is unknown or revoked, which read the same. */
+  invitationLookup: (token: string) => request(`/api/public/invitations/${encodeURIComponent(token)}`, InvitationLookupSchema),
+  invitationAccept: (token: string, password: string) =>
+    request(`/api/public/invitations/${encodeURIComponent(token)}/accept`, z.object({ email: z.string(), kind: z.string(), signInPath: z.string() }),
+      { method: 'POST', body: JSON.stringify({ password }) }),
+  /** Always accepted. A mail goes only where the address has a sign-in. */
+  passwordResetRequest: (email: string) =>
+    request('/api/public/password-reset', z.object({ message: z.string() }), { method: 'POST', body: JSON.stringify({ email }) }),
+  passwordResetLookup: (token: string) => request(`/api/public/password-reset/${encodeURIComponent(token)}`, InvitationLookupSchema),
+  passwordReset: (token: string, password: string) =>
+    request(`/api/public/password-reset/${encodeURIComponent(token)}`, z.object({ email: z.string(), kind: z.string(), signInPath: z.string() }),
+      { method: 'POST', body: JSON.stringify({ password }) }),
+  inviteStaffUser: (id: string) => request(`/api/admin/users/${id}/invite`, InvitationSentSchema, { method: 'POST' }),
+  inviteAllPendingStaff: () =>
+    request('/api/admin/users/invite-pending', z.object({ invited: z.number(), mailed: z.number(), failed: z.array(z.string()) }), { method: 'POST' }),
+  invitations: () => request('/api/admin/invitations', z.array(InvitationSchema)) as Promise<Invitation[]>,
+  revokeInvitation: (id: string) => request(`/api/admin/invitations/${id}`, z.void(), { method: 'DELETE' }),
+  inviteClientUser: (id: string) => request(`/api/admin/client-users/${id}/invite`, InvitationSentSchema, { method: 'POST' }),
+  // ---- the organization's e-mail wording ----
+  emailTemplates: () => request('/api/admin/email/templates', z.array(EmailTemplateSchema)) as Promise<EmailTemplate[]>,
+  emailTemplateSave: (key: string, body: { subject: string; body: string; buttonLabel: string | null }) =>
+    request(`/api/admin/email/templates/${key}`, EmailTemplateSchema, { method: 'PUT', body: JSON.stringify(body) }),
+  emailTemplateReset: (key: string) => request(`/api/admin/email/templates/${key}`, EmailTemplateSchema, { method: 'DELETE' }),
+  emailTemplatePreview: (key: string, unsaved: { subject: string; body: string; buttonLabel: string | null } | null) =>
+    request(`/api/admin/email/templates/${key}/preview`, RenderedEmailSchema, { method: 'POST', body: JSON.stringify(unsaved) }),
+  emailTemplateTest: (key: string) => request(`/api/admin/email/templates/${key}/test`, RenderedEmailSchema, { method: 'POST' }),
+  emailLog: () => request('/api/admin/email/templates/log?take=100', z.array(EmailLogSchema)) as Promise<EmailLogEntry[]>,
   createStaffUser: (body: { displayName: string; email: string; roleIds: string[] }) =>
     request('/api/admin/users', UserSummarySchema, { method: 'POST', body: JSON.stringify(body) }),
   updateStaffUser: (id: string, body: { displayName: string; email: string; phoneNumber?: string | null; location?: string | null; managerId?: string | null }) =>
@@ -1547,7 +1576,10 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ clientCompanyId, body }) }) as Promise<Instruction>,
   cpUsers: () => request('/api/control-panel/users', z.array(ClientUserSchema)) as Promise<ClientUser[]>,
   cpInviteUser: (body: { email: string; displayName: string; isCompanyAdministrator: boolean }) =>
-    request('/api/control-panel/users', ClientUserSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<ClientUser>,
+    request('/api/control-panel/users', z.object({ user: ClientUserSchema, invitation: InvitationSentSchema }), { method: 'POST', body: JSON.stringify(body) }),
+  /** A fresh invitation link for a user of this company; the old one stops working. */
+  cpReinviteUser: (id: string) =>
+    request(`/api/control-panel/users/${id}/invite`, InvitationSentSchema, { method: 'POST' }),
   cpSetUserActive: (id: string, active: boolean) =>
     request(`/api/control-panel/users/${id}/active`, z.unknown(), { method: 'POST', body: JSON.stringify({ active }) }),
   cpSetUserAccess: (id: string, body: { isCompanyAdministrator: boolean; grants: { section: string; clientCompanyId: string | null }[] }) =>
@@ -1806,6 +1838,8 @@ const ClientUserSchema = z.object({
   isCompanyAdministrator: z.boolean(),
   isActive: z.boolean(),
   grants: z.array(AccessGrantSchema),
+  // False until the person has set a password through their invitation (or signed in once).
+  signInLinked: z.boolean().default(false),
 });
 export type ClientUser = z.infer<typeof ClientUserSchema>;
 

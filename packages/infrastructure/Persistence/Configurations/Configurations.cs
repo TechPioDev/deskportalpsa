@@ -521,6 +521,55 @@ public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedRespon
     }
 }
 
+public sealed class SignInInvitationConfig : IEntityTypeConfiguration<Desk.Domain.Identity.SignInInvitation>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.SignInInvitation> b)
+    {
+        b.ToTable("sign_in_invitations");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Email).HasMaxLength(254).IsRequired();
+        b.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+        b.Property(x => x.CreatedByName).HasMaxLength(200);
+        // A link is looked up by its hash, before any organization is known.
+        b.HasIndex(x => x.TokenHash).IsUnique();
+        // The worker's turn: what is open, per organization.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Purpose, x.ConsumedAt, x.RevokedAt });
+        b.HasIndex(x => x.AppUserId);
+        b.HasIndex(x => x.ClientUserId);
+    }
+}
+
+public sealed class EmailTemplateConfig : IEntityTypeConfiguration<Desk.Domain.Identity.EmailTemplate>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.EmailTemplate> b)
+    {
+        b.ToTable("email_templates");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Key).HasMaxLength(60).IsRequired();
+        b.Property(x => x.Subject).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Body).HasMaxLength(5000).IsRequired();
+        b.Property(x => x.ButtonLabel).HasMaxLength(80);
+        b.Property(x => x.UpdatedByName).HasMaxLength(200);
+        // One wording per kind of e-mail per organization.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Key }).IsUnique();
+    }
+}
+
+public sealed class EmailLogEntryConfig : IEntityTypeConfiguration<Desk.Domain.Identity.EmailLogEntry>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.EmailLogEntry> b)
+    {
+        b.ToTable("email_log");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.TemplateKey).HasMaxLength(60).IsRequired();
+        b.Property(x => x.To).HasMaxLength(254).IsRequired();
+        b.Property(x => x.Subject).HasMaxLength(300).IsRequired();
+        b.Property(x => x.Error).HasMaxLength(500);
+        b.Property(x => x.SubjectType).HasMaxLength(40);
+        b.HasIndex(x => new { x.MspOrganizationId, x.SentAt });
+    }
+}
+
 public sealed class TicketSatisfactionConfig : IEntityTypeConfiguration<TicketSatisfaction>
 {
     public void Configure(EntityTypeBuilder<TicketSatisfaction> b)

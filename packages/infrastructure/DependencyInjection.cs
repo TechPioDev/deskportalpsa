@@ -180,6 +180,27 @@ public static class DependencyInjection
             BlockPrivateHosts = EgressGuard.IsEnabled(config),
         });
         services.AddScoped<Desk.Application.Common.IEmailSender, Desk.Infrastructure.Email.SmtpEmailSender>();
+        // Invitations and password resets: links the portal mails, a user the portal makes at the
+        // identity provider once the link is used. The admin client is a confidential client of
+        // the realm with manage-users; without its secret, links can be made but not accepted.
+        services.AddSingleton(new Desk.Infrastructure.Email.PortalOptions
+        {
+            PublicUrl = config["Portal:PublicUrl"] is { Length: > 0 } portalUrl ? portalUrl
+                : config["Attachments:PublicBaseUrl"] is { Length: > 0 } attachmentsUrl ? attachmentsUrl : "http://localhost:3000",
+        });
+        services.AddSingleton(new Desk.Infrastructure.Identity.KeycloakAdminOptions
+        {
+            Authority = config["Keycloak:Authority"],
+            ClientId = config["Keycloak:AdminClientId"] is { Length: > 0 } adminClient ? adminClient : "desk-admin",
+            ClientSecret = config["Keycloak:AdminClientSecret"],
+        });
+        services.AddHttpClient(Desk.Infrastructure.Identity.KeycloakAdminClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(20));
+        services.AddScoped<Desk.Application.Identity.IKeycloakAdmin, Desk.Infrastructure.Identity.KeycloakAdminClient>();
+        services.AddSingleton(Desk.Application.Identity.SignInInvitationPolicy.Default);
+        services.AddScoped<Desk.Infrastructure.Email.TemplateMailer>();
+        services.AddScoped<Desk.Application.Identity.IInvitationService, Desk.Infrastructure.Identity.InvitationService>();
+        services.AddScoped<Desk.Application.Identity.IEmailTemplateService, Desk.Infrastructure.Email.EmailTemplateService>();
+        services.AddSingleton<Desk.Infrastructure.Identity.InvitationReminderRunner>();
         services.AddScoped<Desk.Application.Common.IEmailSettingsService, Desk.Infrastructure.Email.EmailSettingsService>();
         services.AddScoped<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.Email.EmailReportDelivery>();
         services.AddScoped<Desk.Application.ControlPanel.IScheduledReportRunner, Desk.Infrastructure.ControlPanel.ScheduledReportRunner>();

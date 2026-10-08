@@ -43,6 +43,8 @@ var localMode = builder.Environment.IsDevelopment() && config.GetValue("LocalMod
 // ---- AuthN ----
 if (localMode)
 {
+    // No identity provider runs in local mode: invitations are accepted against an in-memory one.
+    builder.Services.AddSingleton<Desk.Application.Identity.IKeycloakAdmin, Desk.Infrastructure.Identity.InMemoryKeycloakAdmin>();
     // Dev auto-login as the seeded admin — never registered outside Development local mode.
     builder.Services.AddAuthentication(DevAuthHandler.SchemeName)
         .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, DevAuthHandler>(DevAuthHandler.SchemeName, null);

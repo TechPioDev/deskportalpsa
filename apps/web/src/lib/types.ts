@@ -494,3 +494,38 @@ export const ProfileSchema = z.object({
   signInManaged: z.boolean(),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
+
+/** What the page at an invitation or password-reset link shows before anything is typed. */
+export const InvitationLookupSchema = z.object({
+  purpose: z.string(), kind: z.string(), displayName: z.string(), email: z.string(), organizationName: z.string(),
+  expiresAt: z.string(), state: z.string(), canBeAccepted: z.boolean(),
+});
+export type InvitationLookup = z.infer<typeof InvitationLookupSchema>;
+
+/** One invitation as an administrator sees it. `state`: Sent, Accepted, Expired or Revoked. */
+export const InvitationSchema = z.object({
+  id: z.string(), kind: z.string(), purpose: z.string(), appUserId: z.string().nullable(), clientUserId: z.string().nullable(), email: z.string(),
+  createdAt: z.string(), expiresAt: z.string(), lastSentAt: z.string().nullable(), sentCount: z.number(), remindersSent: z.number(),
+  consumedAt: z.string().nullable(), revokedAt: z.string().nullable(), createdByName: z.string().nullable(), state: z.string(),
+});
+export type Invitation = z.infer<typeof InvitationSchema>;
+
+/** An invitation just made. The link is here once, for copying where mail does not reach. */
+export const InvitationSentSchema = z.object({
+  invitation: InvitationSchema, link: z.string(), mailed: z.boolean(), mailError: z.string().nullable(),
+});
+export type InvitationSent = z.infer<typeof InvitationSentSchema>;
+
+export const EmailTemplateSchema = z.object({
+  key: z.string(), name: z.string(), description: z.string(), subject: z.string(), body: z.string(), buttonLabel: z.string().nullable(),
+  hasLink: z.boolean(), placeholders: z.array(z.string()), isDefault: z.boolean(), updatedByName: z.string().nullable(), updatedAt: z.string().nullable(),
+});
+export type EmailTemplate = z.infer<typeof EmailTemplateSchema>;
+
+export const RenderedEmailSchema = z.object({ to: z.string(), subject: z.string(), textBody: z.string(), htmlBody: z.string() });
+export type RenderedEmail = z.infer<typeof RenderedEmailSchema>;
+
+export const EmailLogSchema = z.object({
+  id: z.string(), templateKey: z.string(), to: z.string(), subject: z.string(), sentAt: z.string(), succeeded: z.boolean(), error: z.string().nullable(),
+});
+export type EmailLogEntry = z.infer<typeof EmailLogSchema>;

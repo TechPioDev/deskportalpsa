@@ -61,6 +61,9 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
     public DbSet<DeskHoliday> DeskHolidays => Set<DeskHoliday>();
     public DbSet<TicketSatisfaction> TicketSatisfactions => Set<TicketSatisfaction>();
+    public DbSet<Desk.Domain.Identity.SignInInvitation> SignInInvitations => Set<Desk.Domain.Identity.SignInInvitation>();
+    public DbSet<Desk.Domain.Identity.EmailTemplate> EmailTemplates => Set<Desk.Domain.Identity.EmailTemplate>();
+    public DbSet<Desk.Domain.Identity.EmailLogEntry> EmailLog => Set<Desk.Domain.Identity.EmailLogEntry>();
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
     public DbSet<Desk.Domain.Knowledge.KbArticle> KbArticles => Set<Desk.Domain.Knowledge.KbArticle>();
     public DbSet<Desk.Domain.Knowledge.KbArticleClient> KbArticleClients => Set<Desk.Domain.Knowledge.KbArticleClient>();

@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImportStaffDrawer } from '@/components/ImportStaffDrawer';
 import { ViewAsPicker } from '@/components/ViewAs';
 import {
-  UserPlus, Search, X, MailQuestion, Power, MoreVertical,
+  UserPlus, Search, X, MailQuestion, Power, MoreVertical, Send, Link2,
   Users, UserCheck, Crown, Trash2, Copy, Pencil,
   FileSpreadsheet,
 } from 'lucide-react';
@@ -16,6 +16,20 @@ import {
   type UserSummary, type RoleOption, type DepartmentWithTeams, type BoardOption,
   type PermissionTemplateOption, type UserListParams, type BulkUserActionName,
 } from '@/lib/api';
+
+/** What the chip says for someone who has not signed in: where their invitation stands, or that there is none. */
+function invitationLabel(inv: { state: string; expiresAt: string } | undefined): string {
+  if (!inv) return 'Not invited yet';
+  if (inv.state === 'Sent') return `Invited · until ${new Date(inv.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+  if (inv.state === 'Expired') return 'Invitation expired';
+  return inv.state;
+}
+function invitationTitle(inv: { state: string } | undefined): string {
+  if (!inv) return 'Created here, but never invited. Send an invitation from the row menu: they choose a password and are in.';
+  if (inv.state === 'Sent') return 'An invitation is waiting to be used. Reminders go on the third and sixth day.';
+  if (inv.state === 'Expired') return 'The invitation ran out unused. Send a new one from the row menu.';
+  return 'Not signed in yet.';
+}
 
 /**
  * The MSP's own people: technicians, managers, administrators, auditors — plus the roles,
@@ -91,9 +105,9 @@ function DrawerShell({ title, onClose, children }: { title: string; onClose: () 
   );
 }
 
-function RowMenu({ open, onToggle, onClose, isActive, onManage, onToggleActive, onCopy, onDelete }: {
+function RowMenu({ open, onToggle, onClose, isActive, onManage, onToggleActive, onCopy, onDelete, onInvite }: {
   open: boolean; onToggle: () => void; onClose: () => void; isActive: boolean;
-  onManage: () => void; onToggleActive: () => void; onCopy: () => void; onDelete: () => void;
+  onManage: () => void; onToggleActive: () => void; onCopy: () => void; onDelete: () => void; onInvite?: () => void;
 }) {
   return (
     <div className="relative inline-block text-left"
@@ -103,6 +117,11 @@ function RowMenu({ open, onToggle, onClose, isActive, onManage, onToggleActive, 
       </button>
       {open && (
         <div className="absolute right-0 z-10 mt-1 w-56 rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 text-sm shadow-lg">
+          {onInvite && (
+            <button onClick={onInvite} className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg)]">
+              <Send size={13} /> Send invitation
+            </button>
+          )}
           <button onClick={onManage} className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg)]">
             <Pencil size={13} /> Manage
           </button>
@@ -442,6 +461,19 @@ export default function UsersPage() {
   });
   const toggleSelectAll = () => setSelected((p) => (p.size === users.length ? new Set() : new Set(users.map((u) => u.id))));
 
+  // Invitations: the link a person sets their password through. One open invitation per person;
+  // the newest row is the one that counts, and a revoked one is history.
+  const invitations = useQuery({ queryKey: ['invitations'], queryFn: api.invitations, staleTime: 30_000 });
+  const invitationOf = (userId: string) => (invitations.data ?? []).find((i) => i.appUserId === userId && i.state !== 'Revoked');
+  const [inviteResult, setInviteResult] = useState<{ email: string; link: string; mailed: boolean; error: string | null } | null>(null);
+  const invite = useMutation({
+    mutationFn: (id: string) => api.inviteStaffUser(id),
+    onSuccess: (r) => { setInviteResult({ email: r.invitation.email, link: r.link, mailed: r.mailed, error: r.mailError }); refresh(); qc.invalidateQueries({ queryKey: ['invitations'] }); },
+  });
+  const inviteAll = useMutation({
+    mutationFn: () => api.inviteAllPendingStaff(),
+    onSuccess: () => { refresh(); qc.invalidateQueries({ queryKey: ['invitations'] }); },
+  });
   const bulk = useMutation({
     mutationFn: (input: { action: BulkUserActionName; roleId?: string; departmentId?: string; teamId?: string }) =>
       api.bulkUsers({ ...input, userIds: [...selected] }),
@@ -492,6 +524,38 @@ export default function UsersPage() {
         <SummaryCard icon={MailQuestion} label="Pending" value={data?.summary.pending ?? 0} />
         <SummaryCard icon={Crown} label="Administrators" value={data?.summary.administrators ?? 0} />
       </div>
+
+      {(data?.summary.pending ?? 0) > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50/70 px-4 py-2.5 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+          <span>{data?.summary.pending} {data?.summary.pending === 1 ? 'person has' : 'people have'} never signed in. An invitation e-mail lets each of them set a password and come in.</span>
+          <button onClick={() => inviteAll.mutate()} disabled={inviteAll.isPending}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
+            <Send size={13} /> {inviteAll.isPending ? 'Inviting…' : 'Invite everyone who is pending'}
+          </button>
+          {inviteAll.isSuccess && (
+            <span className="text-xs text-[var(--muted)]">
+              {inviteAll.data.invited === 0 ? 'Nobody was waiting for an invitation.' : `${inviteAll.data.mailed} of ${inviteAll.data.invited} e-mailed.`}
+              {inviteAll.data.failed.length > 0 && ` Not sent: ${inviteAll.data.failed.join('; ')}`}
+            </span>
+          )}
+          {inviteAll.isError && <span className="text-xs text-red-600 dark:text-red-400">{(inviteAll.error as Error).message}</span>}
+        </div>
+      )}
+      {invite.isError && (
+        <p role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+          The invitation could not be made: {(invite.error as Error).message}
+        </p>
+      )}
+      {inviteResult && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-sm">
+          <span>{inviteResult.mailed ? `Invitation e-mailed to ${inviteResult.email}.` : `The invitation for ${inviteResult.email} could not be e-mailed: ${inviteResult.error ?? 'no mail account'}.`} The link, shown once:</span>
+          <input readOnly value={inviteResult.link} aria-label="Invitation link" onFocus={(e) => e.currentTarget.select()}
+            className="min-w-[280px] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-xs" />
+          <button onClick={() => { void navigator.clipboard?.writeText(inviteResult.link); }}
+            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg)]"><Link2 size={12} /> Copy</button>
+          <button onClick={() => setInviteResult(null)} aria-label="Dismiss" className="text-[var(--muted)] hover:text-[var(--fg)]"><X size={14} /></button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
         <div className="relative">
@@ -625,9 +689,9 @@ export default function UsersPage() {
                   </td>
                   <td className="px-4 py-3">
                     {!u.signInLinked ? (
-                      <span title="Created here, but they have not signed in yet. Their account links on first login by email."
+                      <span title={invitationTitle(invitationOf(u.id))}
                         className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                        <MailQuestion size={11} /> Pending
+                        <MailQuestion size={11} /> {invitationLabel(invitationOf(u.id))}
                       </span>
                     ) : u.isActive ? (
                       <span className="inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700 dark:bg-green-950 dark:text-green-300">
@@ -651,6 +715,7 @@ export default function UsersPage() {
                       onManage={() => { setOpenMenuId(null); router.push(`/dashboard/users/${u.id}`); }}
                       onToggleActive={() => { setActive.mutate({ id: u.id, active: !u.isActive }); setOpenMenuId(null); }}
                       onCopy={() => { copyInstructions(u); setOpenMenuId(null); }}
+                      onInvite={!u.signInLinked && u.isActive ? () => { setOpenMenuId(null); invite.mutate(u.id); } : undefined}
                       onDelete={() => {
                         setOpenMenuId(null);
                         if (window.confirm(`Delete ${u.displayName}? This removes their account and all role, department, and board assignments.`)) del.mutate(u.id);
