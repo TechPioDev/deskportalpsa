@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Users, UserPlus, ShieldCheck, User as UserIcon, CheckCircle2, AlertTriangle, Info,
-  SlidersHorizontal, Power, X,
+  SlidersHorizontal, Power, X, Send,
 } from 'lucide-react';
 import { api, type Capabilities, type ClientUser } from '@/lib/api';
 
@@ -123,7 +123,15 @@ function InviteCard({ onDone }: { onDone: () => void }) {
         </button>
       </div>
       {invite.isError && <p className="mt-2 inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400"><AlertTriangle size={12} /> {(invite.error as Error)?.message ?? 'Invite failed'}</p>}
-      {invite.isSuccess && <p className="mt-2 inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400"><CheckCircle2 size={12} /> User invited</p>}
+            {invite.isSuccess && (
+        <div className="mt-2 space-y-1 text-xs">
+          <p className="inline-flex items-center gap-1 text-green-600 dark:text-green-400"><CheckCircle2 size={12} />
+            {invite.data.invitation.mailed ? `Invitation e-mailed to ${invite.data.user.email}. They choose a password through it and are in.` : `User added. The invitation could not be e-mailed (${invite.data.invitation.mailError ?? 'no mail account'}); send them this link instead:`}
+          </p>
+          <input readOnly value={invite.data.invitation.link} aria-label="Invitation link" onFocus={(e) => e.currentTarget.select()}
+            className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-[11px]" />
+        </div>
+      )}
       <p className="mt-2 flex items-center gap-1.5 text-xs text-[var(--faint)]"><Info size={12} /> Administrators can manage everything for your account. Everyone else gets only the sections you grant.</p>
     </div>
   );
@@ -133,6 +141,7 @@ function UserRow({ user, caps, expanded, onToggleManage, onSetActive, busy }: {
   user: ClientUser; caps?: Capabilities; expanded: boolean;
   onToggleManage: () => void; onSetActive: (active: boolean) => void; busy: boolean;
 }) {
+  const reinvite = useMutation({ mutationFn: () => api.cpReinviteUser(user.id) });
   const accessSummary = user.isCompanyAdministrator
     ? 'All sections'
     : user.grants.length === 0 ? 'No access yet'
@@ -152,12 +161,20 @@ function UserRow({ user, caps, expanded, onToggleManage, onSetActive, busy }: {
         </td>
         <td className="px-5 py-3 text-[var(--muted)]">{accessSummary}</td>
         <td className="px-5 py-3">
-          {user.isActive
-            ? <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-600 dark:text-green-400"><CheckCircle2 size={13} /> Active</span>
-            : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--faint)]">Disabled</span>}
+          {!user.isActive
+            ? <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--faint)]">Disabled</span>
+            : !user.signInLinked
+              ? <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400" title="Has not set a password yet. Resend the invitation if it was lost.">Invited</span>
+              : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-600 dark:text-green-400"><CheckCircle2 size={13} /> Active</span>}
         </td>
         <td className="px-5 py-3">
           <div className="flex items-center justify-end gap-1">
+            {user.isActive && !user.signInLinked && (
+              <button onClick={() => reinvite.mutate()} disabled={busy || reinvite.isPending} title="A fresh invitation e-mail; the earlier link stops working."
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--fg)] hover:bg-[var(--bg)] disabled:opacity-40">
+                <Send size={13} /> {reinvite.isPending ? 'Sending…' : reinvite.isSuccess ? 'Sent' : 'Resend invitation'}
+              </button>
+            )}
             <button onClick={onToggleManage} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
               <SlidersHorizontal size={13} /> Access
             </button>

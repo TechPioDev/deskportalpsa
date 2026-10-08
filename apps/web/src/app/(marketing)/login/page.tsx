@@ -56,14 +56,19 @@ export default function LoginPage() {
               ? 'Demo mode signs you in automatically — no identity provider needed.'
               : 'Authentication is handled by your organisation’s identity provider.'}
           </p>
+          {!localMode && (
+            <p className="mt-3 text-center text-xs">
+              <Link href="/reset-password" className="text-brand underline underline-offset-2">Forgot your password?</Link>
+            </p>
+          )}
         </div>
 
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <p className="flex items-start gap-2 text-xs leading-relaxed text-[var(--muted)]">
             <HelpCircle size={14} className="mt-0.5 shrink-0 text-brand" aria-hidden="true" />
             <span>
-              Cannot get in? Your account is created by your provider and links to your sign-in the
-              first time you use it. Ask them to check the email address matches, or write to{' '}
+              Cannot get in? Your sign-in is set up from the invitation e-mail your provider sends you;
+              if you never got one, or its link has expired, ask them for a new invitation, or write to{' '}
               <a className="text-brand underline underline-offset-2" href={`mailto:${CONTACT_EMAIL}`}>
                 {CONTACT_EMAIL}
               </a>

@@ -47,6 +47,8 @@ if (localMode)
 {
     // No worker runs in local mode, so the API sends the changes waiting for a PSA itself.
     builder.Services.AddHostedService<Desk.Api.LocalOutboundQueueService>();
+    // No identity provider runs in local mode: invitations are accepted against an in-memory one.
+    builder.Services.AddSingleton<Desk.Application.Identity.IKeycloakAdmin, Desk.Infrastructure.Identity.InMemoryKeycloakAdmin>();
     // Dev auto-login as the seeded admin — never registered outside Development local mode.
     builder.Services.AddAuthentication(DevAuthHandler.SchemeName)
         .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, DevAuthHandler>(DevAuthHandler.SchemeName, null);
