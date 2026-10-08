@@ -99,6 +99,7 @@ public sealed partial class ConnectionAdminService(
         var endpoint = _endpoints.Validate(input.Provider, input.ApiEndpoint);
         var account = AccountHash(input.Provider, endpoint, input.Credentials);
         await EnsureNotAlreadyConnectedAsync(null, input.Provider, account, ct);
+        await EnsureNameIsFreeAsync(null, input.Name, ct);
 
         // Secret goes to the encrypted store; only the opaque reference is persisted on the row.
         var secretRef = await secrets.WriteAsync($"{input.Provider}/{input.Name}", input.Credentials, ct);
@@ -246,6 +247,8 @@ public sealed partial class ConnectionAdminService(
         {
             // Another connection may have been made to the same account in the meantime.
             await EnsureNotAlreadyConnectedAsync(connection.Id, connection.Provider, connection.AccountKeyHash, ct);
+            // Nor its name: another connection may have taken it while this one was put away.
+            await EnsureNameIsFreeAsync(connection.Id, connection.Name, ct);
             connection.ArchivedAt = null;
             // Back, and still off: whether it should be working again is a second decision.
             connection.Status = ConnectionStatus.Disabled;
@@ -294,6 +297,22 @@ public sealed partial class ConnectionAdminService(
     /// account import every ticket twice, under two sets of ids, and nothing afterwards can tell
     /// which is the real one. Nothing stopped it.
     /// </summary>
+    /// <summary>
+    /// Saved views and the ticket list's filters know a connection by its name, so two connections
+    /// with one name would be one connection to them. An archived connection does not hold its name.
+    /// </summary>
+    private async Task EnsureNameIsFreeAsync(Guid? self, string name, CancellationToken ct)
+    {
+        var wanted = name.Trim();
+        var names = await db.PsaConnections.AsNoTracking()
+            .Where(c => c.ArchivedAt == null && c.Id != self)
+            .Select(c => c.Name)
+            .ToListAsync(ct);
+        if (names.Any(n => string.Equals(n.Trim(), wanted, StringComparison.OrdinalIgnoreCase)))
+            throw new ValidationFailedException(
+                $"Another connection is already called \"{wanted}\". Saved views and filters go by a connection's name, so each one needs its own.");
+    }
+
     private async Task EnsureNotAlreadyConnectedAsync(Guid? self, ProviderType provider, string? account, CancellationToken ct)
     {
         if (account is null) return;
@@ -568,6 +587,10 @@ public sealed partial class ConnectionAdminService(
 
         var account = candidate is null ? connection.AccountKeyHash : AccountHash(connection.Provider, endpoint, candidate);
         await EnsureNotAlreadyConnectedAsync(connection.Id, connection.Provider, account, ct);
+        // Only when the name is being changed: two connections that already share one (from
+        // before this rule) can still have everything else about them edited.
+        if (!string.Equals(connection.Name.Trim(), input.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+            await EnsureNameIsFreeAsync(connection.Id, input.Name, ct);
 
         connection.Name = input.Name;
         connection.ApiEndpoint = endpoint;

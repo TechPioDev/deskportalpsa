@@ -93,7 +93,9 @@ function TechnicianProductivity() {
   const perTech = useMemo(() => {
     const map = new Map<string, PerTech>();
     for (const r of rows) {
-      const key = r.appUserId ?? r.technicianExternalId ?? r.name;
+      // A PSA login with its PSA account: the same id on two connections is two people, and keyed
+      // by the id alone their days were added into one row.
+      const key = r.appUserId ?? (r.technicianExternalId ? `${r.psaConnectionId ?? ''}:${r.technicianExternalId}` : r.name);
       const cur = map.get(key) ?? {
         key, name: r.name, hours: 0, billableHours: 0, resolved: 0, touched: 0, days: 0,
         internalHours: 0, resolvedInternal: 0, monitoringHours: 0, resolvedMonitoring: 0,

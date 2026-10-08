@@ -17,9 +17,11 @@ namespace Desk.Infrastructure.Analytics;
 public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadService
 {
     /// <summary>One person's share of one client's work, accumulated from both sources.</summary>
-    private sealed class Tally(Guid? appUserId, string? externalId)
+    private sealed class Tally(Guid? appUserId, Guid? connectionId, string? externalId)
     {
         public Guid? AppUserId { get; } = appUserId;
+        /// <summary>The PSA account a login belongs to. Null for a portal user, who is one person across all of them.</summary>
+        public Guid? ConnectionId { get; } = connectionId;
         public string? ExternalId { get; } = externalId;
         public int Assigned { get; set; }
         public decimal Hours { get; set; }
@@ -85,13 +87,14 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
         var psaNames = rows
             .Where(r => !string.IsNullOrEmpty(r.AssignedTechnicianExternalId) && r.AssignedTechnicianName is not null
                 && !account.IsAccount(r.PsaConnectionId, r.AssignedTechnicianExternalId))
-            .Select(r => (Id: r.AssignedTechnicianExternalId!, Name: r.AssignedTechnicianName!))
+            .Select(r => (Conn: r.PsaConnectionId, Id: r.AssignedTechnicianExternalId!, Name: r.AssignedTechnicianName!))
             .Concat(entries
                 .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && e.TechnicianName is not null
                     && !account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId))
-                .Select(e => (Id: e.TechnicianExternalId!, Name: e.TechnicianName!)))
-            .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
+                .Select(e => (Conn: e.PsaConnectionId, Id: e.TechnicianExternalId!, Name: e.TechnicianName!)))
+            // By connection as well as id: the same id on two PSA accounts is two people.
+            .GroupBy(p => (p.Conn, Id: p.Id.Trim().ToLowerInvariant()))
+            .ToDictionary(g => g.Key, g => g.First().Name);
 
         // A ticket with no client is the team's own work. It is grouped under one explicit heading
         // rather than an empty name, so nobody reads a blank row as a client called nothing.
@@ -115,11 +118,11 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
                 // so keyed on the provider's id every one of them collapsed into "the API user" and the
                 // people actually doing the work were never counted at all.
                 var people = new Dictionary<string, Tally>(StringComparer.OrdinalIgnoreCase);
-                Tally For(Guid? appUserId, string? externalId)
+                Tally For(Guid? appUserId, Guid? connectionId, string? externalId)
                 {
-                    var key = PersonKey.For(appUserId, externalId);
+                    var key = PersonKey.For(appUserId, connectionId, externalId);
                     if (!people.TryGetValue(key, out var tally))
-                        people[key] = tally = new Tally(appUserId, appUserId is null ? externalId : null);
+                        people[key] = tally = new Tally(appUserId, appUserId is null ? connectionId : null, appUserId is null ? externalId : null);
                     return tally;
                 }
 
@@ -127,17 +130,17 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
                 {
                     // A PSA login linked to a portal user is that person, not a second one.
                     if ((t.AssignedAppUserId ?? links.UserFor(t.PsaConnectionId, t.AssignedTechnicianExternalId)) is { } uid)
-                        For(uid, null).Assigned++;
+                        For(uid, null, null).Assigned++;
                     // Held by the account the portal writes as is held by nobody.
                     else if (!string.IsNullOrEmpty(t.AssignedTechnicianExternalId)
                              && !account.IsAccount(t.PsaConnectionId, t.AssignedTechnicianExternalId))
-                        For(null, t.AssignedTechnicianExternalId).Assigned++;
+                        For(null, t.PsaConnectionId, t.AssignedTechnicianExternalId).Assigned++;
                 }
                 foreach (var e in entriesByClient[g.Key])
                 {
                     if (e.AppUserId is null && account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId)) continue;
                     var who = e.AppUserId ?? links.UserFor(e.PsaConnectionId, e.TechnicianExternalId);
-                    For(who, who is null ? e.TechnicianExternalId : null).Hours += e.Hours;
+                    For(who, who is null ? e.PsaConnectionId : null, who is null ? e.TechnicianExternalId : null).Hours += e.Hours;
                 }
 
                 // The count IS the length of this list, so the figure and the list it opens cannot
@@ -148,9 +151,9 @@ public sealed class ClientWorkloadService(DeskDbContext db) : IClientWorkloadSer
                         p.ExternalId,
                         p.AppUserId is { } u
                             ? userNames.GetValueOrDefault(u, "Unknown user")
-                            : psaNames.GetValueOrDefault(p.ExternalId!, p.ExternalId!),
+                            : psaNames.GetValueOrDefault((p.ConnectionId, p.ExternalId!.Trim().ToLowerInvariant()), p.ExternalId!),
                         p.Assigned,
-                        p.Hours))
+                        p.Hours) { PsaConnectionId = p.ConnectionId })
                     .OrderByDescending(p => p.HoursLogged)
                     .ThenByDescending(p => p.AssignedTickets)
                     .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)

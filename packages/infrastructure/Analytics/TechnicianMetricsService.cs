@@ -1,4 +1,5 @@
 using Desk.Application.Analytics;
+using Desk.Application.Tickets;
 using Desk.Domain.Tickets;
 using Desk.Domain.Enums;
 using Desk.Infrastructure.Persistence;
@@ -105,7 +106,8 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
             // A ticket the PSA shows held by the account the portal writes as is held by nobody, and
             // goes where every unassigned ticket goes - out of a table of people.
             .Where(r => r.AppUserId is not null || (r.Tech is not null && !account.IsAccount(r.Conn, r.Tech)))
-            .GroupBy(r => r.AppUserId is { } uid ? "u:" + uid : "x:" + r.Tech)
+            // A PSA login is a person within its PSA account: the same id on another connection is someone else.
+            .GroupBy(r => PersonKey.For(r.AppUserId, r.Conn, r.Tech))
             .Select(g =>
             {
                 var first = g.First();
@@ -118,7 +120,7 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
                     // stable key still beats a blank cell that reads as missing data.
                     : first.TechName ?? first.Tech;
                 return new TeamComparisonRow(
-                    key, m.Resolved, m.SlaCompliancePct, m.Score?.Overall, name, first.AppUserId);
+                    key, m.Resolved, m.SlaCompliancePct, m.Score?.Overall, name, first.AppUserId, Key: g.Key);
             })
             .OrderByDescending(r => r.Score ?? -1)
             .ToList();
@@ -191,8 +193,8 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         // Provider display names for the PSA-side rows, taken from the tickets themselves.
         var psaNames = rows
             .Where(r => r.Tech is not null && r.TechName is not null)
-            .GroupBy(r => r.Tech!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().TechName!, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(r => (r.Conn, Tech: r.Tech!.Trim().ToLowerInvariant()))
+            .ToDictionary(g => g.Key, g => g.First().TechName!);
 
         var names = await NamesForAsync(
             loggedRaw.Where(e => e.AppUserId is not null).Select(e => e.AppUserId!.Value)
@@ -205,17 +207,23 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
 
         // A person's own view is one person, whichever identity each hour was logged under.
         var self = filter.EitherIdentity && filter.AppUserId is not null;
-        string KeyOf(Guid? appUserId, string? ext) => self ? "self" : appUserId is { } u ? "u:" + u : "x:" + ext;
+        // A PSA login is keyed with its connection: the same id on two PSA accounts is two people.
+        // Work nobody can be named for (ext null) is one bucket, whichever connection it came from.
+        string KeyOf(Guid? appUserId, Guid? conn, string? ext)
+            => self ? "self" : PersonKey.For(appUserId, ext is null ? null : conn, ext);
 
-        TechnicianDay Seed(DateOnly day, Guid? appUserId, string? ext)
+        TechnicianDay Seed(DateOnly day, Guid? appUserId, Guid? conn, string? ext)
         {
-            if (self) { appUserId = filter.AppUserId; ext = null; }
-            var key = KeyOf(appUserId, ext);
+            if (self) { appUserId = filter.AppUserId; conn = null; ext = null; }
+            var key = KeyOf(appUserId, conn, ext);
             if (buckets.TryGetValue((day, key), out var found)) return found;
             var name = appUserId is { } uid
                 ? names.GetValueOrDefault(uid, "Unknown user")
-                : psaNames.GetValueOrDefault(ext ?? "", ext ?? "Unattributed");
-            var seeded = new TechnicianDay(day, appUserId, ext, name, 0m, 0m, 0, 0, 0m, 0);
+                : ext is null ? "Unattributed" : psaNames.GetValueOrDefault((conn, ext.Trim().ToLowerInvariant()), ext);
+            var seeded = new TechnicianDay(day, appUserId, ext, name, 0m, 0m, 0, 0, 0m, 0)
+            {
+                PsaConnectionId = appUserId is null && ext is not null ? conn : null,
+            };
             buckets[(day, key)] = seeded;
             return seeded;
         }
@@ -225,10 +233,11 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
                      .GroupBy(e => (
                          Day: DateOnly.FromDateTime(e.EntryDate.UtcDateTime.Date),
                          e.AppUserId,
+                         Conn: e.AppUserId is null ? e.Conn : null,
                          Ext: e.AppUserId is null ? Person(e.Conn, e.TechnicianExternalId) : null)))
         {
-            var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
-            buckets[(g.Key.Day, KeyOf(g.Key.AppUserId, g.Key.Ext))] = current with
+            var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Conn, g.Key.Ext);
+            buckets[(g.Key.Day, KeyOf(g.Key.AppUserId, g.Key.Conn, g.Key.Ext))] = current with
             {
                 Hours = current.Hours + g.Sum(e => e.Hours),
                 BillableHours = current.BillableHours + g.Where(e => e.Billable).Sum(e => e.Hours),
@@ -241,10 +250,11 @@ public sealed class TechnicianMetricsService(DeskDbContext db, IProductivityScor
         foreach (var g in rows.GroupBy(r => (
                      Day: DateOnly.FromDateTime(r.ResolvedAt!.Value.UtcDateTime.Date),
                      r.AppUserId,
+                     Conn: r.AppUserId is null ? r.Conn : null,
                      Ext: r.AppUserId is null ? Person(r.Conn, r.Tech) : null)))
         {
-            var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Ext);
-            buckets[(g.Key.Day, KeyOf(g.Key.AppUserId, g.Key.Ext))] =
+            var current = Seed(g.Key.Day, g.Key.AppUserId, g.Key.Conn, g.Key.Ext);
+            buckets[(g.Key.Day, KeyOf(g.Key.AppUserId, g.Key.Conn, g.Key.Ext))] =
                 current with
                 {
                     Resolved = current.Resolved + g.Count(),

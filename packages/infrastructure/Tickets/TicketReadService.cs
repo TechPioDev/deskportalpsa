@@ -174,8 +174,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
             : await db.AppUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
         return all
             .Select(p => p.Item1 is { } u
-                ? new TicketPersonRef(PersonKey.For(u, null), names.GetValueOrDefault(u, "Unknown user"), false)
-                : new TicketPersonRef(PersonKey.For(null, p.Ext), p.Name ?? p.Ext!.Trim(), false))
+                ? new TicketPersonRef(PersonKey.For(u, null, null), names.GetValueOrDefault(u, "Unknown user"), false)
+                : new TicketPersonRef(PersonKey.For(null, p.PsaConnectionId, p.Ext), p.Name ?? p.Ext!.Trim(), false))
             .GroupBy(p => p.Key).Select(g => g.First())
             .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
@@ -265,8 +265,8 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         var names = ids.Count == 0 ? new Dictionary<Guid, string>()
             : await db.AppUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
 
-        string? KeyOf(Guid? app, string? ext, Guid? conn) => app is { } u ? PersonKey.For(u, null)
-            : string.IsNullOrWhiteSpace(ext) || account.IsAccount(conn, ext) ? null : PersonKey.For(null, ext);
+        string? KeyOf(Guid? app, string? ext, Guid? conn) => app is { } u ? PersonKey.For(u, null, null)
+            : string.IsNullOrWhiteSpace(ext) || account.IsAccount(conn, ext) ? null : PersonKey.For(null, conn, ext);
         var held = rows.Select(r => (Row: r,
             Key: KeyOf(Holder(r.AssignedAppUserId, r.AssignedTechnicianExternalId, r.PsaConnectionId), r.AssignedTechnicianExternalId, r.PsaConnectionId))).ToList();
         var people = held.Where(h => h.Key is not null).GroupBy(h => h.Key!)
@@ -372,14 +372,17 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                         && i.PsaConnectionId == t.PsaConnectionId && i.ExternalTechnicianId == t.AssignedTechnicianExternalId)
                         && !db.PsaConnections.Any(c => c.Id == t.PsaConnectionId && c.DefaultTimeEntryResourceId == t.AssignedTechnicianExternalId))
                     || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == person));
-            else if (key.StartsWith("x:", StringComparison.Ordinal))
+            else if (PersonKey.TryParseExternal(key, out var keyConnection, out var ext))
             {
-                var ext = key[2..];
+                // A PSA login belongs to one PSA account: the same id on another connection is
+                // someone else. A key that names no connection is from before keys did (an old
+                // saved view) and still means that login wherever it is found.
                 scope = scope.Where(t =>
-                    (t.AssignedAppUserId == null && t.ResolvedByAppUserId == null
-                        && t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId.Trim().ToLower() == ext)
-                    || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == null
-                        && e.TechnicianExternalId != null && e.TechnicianExternalId.Trim().ToLower() == ext));
+                    (keyConnection == null || t.PsaConnectionId == keyConnection)
+                    && ((t.AssignedAppUserId == null && t.ResolvedByAppUserId == null
+                            && t.AssignedTechnicianExternalId != null && t.AssignedTechnicianExternalId.Trim().ToLower() == ext)
+                        || db.TicketTimeEntries.Any(e => e.TicketId == t.Id && e.AppUserId == null
+                            && e.TechnicianExternalId != null && e.TechnicianExternalId.Trim().ToLower() == ext)));
             }
             else scope = scope.Where(_ => false);
         }
@@ -537,17 +540,18 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
         var psaNames = rows
             .Where(r => !string.IsNullOrEmpty(r.AssignedTechnicianExternalId) && r.AssignedTechnicianName is not null
                 && !account.IsAccount(r.PsaConnectionId, r.AssignedTechnicianExternalId))
-            .Select(r => (Id: r.AssignedTechnicianExternalId!, Name: r.AssignedTechnicianName!))
+            .Select(r => (Conn: r.PsaConnectionId, Id: r.AssignedTechnicianExternalId!, Name: r.AssignedTechnicianName!))
             .Concat(logged
                 .Where(e => !string.IsNullOrEmpty(e.TechnicianExternalId) && e.TechnicianName is not null
                     && !account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId))
-                .Select(e => (Id: e.TechnicianExternalId!, Name: e.TechnicianName!)))
-            .GroupBy(p => p.Id.Trim(), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
+                .Select(e => (Conn: e.PsaConnectionId, Id: e.TechnicianExternalId!, Name: e.TechnicianName!)))
+            // By connection as well as id: the same id on two PSA accounts is two people, with two names.
+            .GroupBy(p => (p.Conn, Id: p.Id.Trim().ToLowerInvariant()))
+            .ToDictionary(g => g.Key, g => g.First().Name);
 
-        string NameOf(Guid? appUserId, string? externalId) => appUserId is { } u
+        string NameOf(Guid? appUserId, Guid? connectionId, string? externalId) => appUserId is { } u
             ? userNames.GetValueOrDefault(u, "Unknown user")
-            : psaNames.GetValueOrDefault(externalId!.Trim(), externalId!);
+            : psaNames.GetValueOrDefault((connectionId, externalId!.Trim().ToLowerInvariant()), externalId!);
 
         return rows.Select(r =>
         {
@@ -560,14 +564,14 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                     && !account.IsAccount(r.PsaConnectionId, r.AssignedTechnicianExternalId)))
             {
                 var ext = r.AssignedAppUserId is null ? r.AssignedTechnicianExternalId : null;
-                people.Add(new TicketPersonRef(PersonKey.For(r.AssignedAppUserId, ext), NameOf(r.AssignedAppUserId, ext), Holds: true));
+                people.Add(new TicketPersonRef(PersonKey.For(r.AssignedAppUserId, r.PsaConnectionId, ext), NameOf(r.AssignedAppUserId, r.PsaConnectionId, ext), Holds: true));
             }
             foreach (var e in loggedByTicket[r.Item.Id])
             {
                 if (e.AppUserId is null && account.IsAccount(e.PsaConnectionId, e.TechnicianExternalId)) continue;
                 var ext = e.AppUserId is null ? e.TechnicianExternalId : null;
-                var key = PersonKey.For(e.AppUserId, ext);
-                if (people.All(p => p.Key != key)) people.Add(new TicketPersonRef(key, NameOf(e.AppUserId, ext), Holds: false));
+                var key = PersonKey.For(e.AppUserId, e.PsaConnectionId, ext);
+                if (people.All(p => p.Key != key)) people.Add(new TicketPersonRef(key, NameOf(e.AppUserId, e.PsaConnectionId, ext), Holds: false));
             }
             return r.Item with { People = people };
         }).ToList();

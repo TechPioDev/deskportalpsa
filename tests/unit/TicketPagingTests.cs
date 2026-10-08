@@ -97,9 +97,9 @@ public class TicketPagingTests
         w.H.Db.TicketTimeEntries.Add(new TicketTimeEntry { MspOrganizationId = Org, TicketId = logged.Id, AppUserId = w.Me.Id, Hours = 1 });
         await w.H.Db.SaveChangesAsync();
 
-        (await w.Reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(w.Me.Id, null)))).Items.Select(t => t.Title)
+        (await w.Reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(w.Me.Id, null, null)))).Items.Select(t => t.Title)
             .Should().BeEquivalentTo(["Anika holds", "Anika logged"]);
-        (await w.Reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(null, "123")))).Items.Select(t => t.Title)
+        (await w.Reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(null, w.Conn.Id, "123")))).Items.Select(t => t.Title)
             .Should().Equal("Resource 123 holds");
     }
 
@@ -220,6 +220,6 @@ public class TicketPagingTests
         page.Items.Should().ContainSingle().Which.Should().BeEquivalentTo(new { Title = "Printer offline", People = (object?)null });
         facets.People.Should().BeEmpty();
         // A person filter from a client is ignored rather than honoured.
-        (await w.Reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(w.Me.Id, null)), client)).Total.Should().Be(1);
+        (await w.Reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(w.Me.Id, null, null)), client)).Total.Should().Be(1);
     }
 }

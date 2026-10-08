@@ -275,6 +275,31 @@ public class ConnectionLifecycleTests
         (await w.H.Secrets.ReadAsync((await RowAsync(w, b)).CredentialSecretRef))["UserName"].Should().Be("b@techpio.test");
     }
 
+    // ---- one name per connection ---------------------------------------------------------------
+
+    [Fact]
+    public async Task Two_connections_cannot_share_a_name_because_views_and_filters_go_by_it()
+    {
+        var w = Build();
+        await using var _ = w.H.Db;
+        var first = await LiveAsync(w, "Main desk");
+
+        // Another PSA account, so only the name stands in the way.
+        var same = () => AddAsync(w, " main DESK ", user: "api@customer-b.test");
+        (await same.Should().ThrowAsync<ValidationFailedException>()).WithMessage("*already called \"main DESK\"*");
+
+        var second = await AddAsync(w, "Second desk", user: "api@customer-b.test");
+        var rename = () => w.Service.UpdateAsync(second.Id, new UpdateConnectionInput("Main desk", Zone, null, null, false, null));
+        await rename.Should().ThrowAsync<ValidationFailedException>();
+        (await w.Service.UpdateAsync(second.Id, new UpdateConnectionInput("Second desk", Zone, null, null, false, null))).Name
+            .Should().Be("Second desk", "keeping its own name is not taking one");
+
+        // Put away, a connection no longer holds its name; coming back, it needs it to be free.
+        await w.Service.ArchiveAsync(first);
+        (await w.Service.UpdateAsync(second.Id, new UpdateConnectionInput("Main desk", Zone, null, null, false, null))).Name.Should().Be("Main desk");
+        (await ((Func<Task>)(() => w.Service.RestoreAsync(first))).Should().ThrowAsync<ValidationFailedException>()).WithMessage("*already called*");
+    }
+
     // ---- pause -----------------------------------------------------------------------------------
 
     [Fact]

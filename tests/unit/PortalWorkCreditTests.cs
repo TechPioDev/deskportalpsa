@@ -132,8 +132,8 @@ public class PortalWorkCreditTests
         await f.Db.SaveChangesAsync();
         var reads = new TicketReadService(f.Db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: f.Ravi));
 
-        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(f.Ravi, null)))).Total.Should().Be(1);
-        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(f.Arjun, null)))).Total.Should().Be(1);
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(f.Ravi, null, null)))).Total.Should().Be(1);
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(f.Arjun, null, null)))).Total.Should().Be(1);
         (await reads.FacetsAsync()).People.Select(p => p.Name).Should().BeEquivalentTo(["Arjun", "Ravi"]);
     }
 

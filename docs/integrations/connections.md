@@ -190,10 +190,37 @@ One migration, `ConnectionLifecycle`, additive: five nullable-or-defaulted colum
 `AccountKeyHash`). Existing connections are untouched by it: none is in setup, paused or archived,
 and each one's account hash is filled the first time it is needed.
 
+## What belongs to a connection (slice 3c)
+
+Three things were known by less than the connection they belong to.
+
+**A PSA login.** Someone with no portal account was identified by the PSA's id alone. Two PSA
+accounts can each have a resource 42, and with two connections they were one person wherever
+people are counted: one row in the team table, one day of hours, one satisfaction score, one name
+in the ticket list, one line of portal coverage, and a filter that returned both people's tickets.
+The key for such a person is now `x:{connection}:{id}` (`PersonKey`, built in one place). A portal
+user is still `u:{user}`: one person across every PSA account. A key with no connection is one
+written before this (an old saved view) and still means that login wherever it is found.
+
+**A name.** Saved views and the ticket list's filters know a connection by its name, so a name
+belongs to one connection. Adding, renaming or restoring a connection is refused when another that
+is not archived has that name, whatever its case or spacing. Only a change of name is checked on an
+edit, so two connections that already share one can still be edited (the preflight goes on saying
+so).
+
+**A ticket's reference.** "Autotask 12345" says which ticket only while there is one Autotask
+account. Where an organization has two connections to the same PSA (archived ones count: their
+tickets are still here), a ticket from one of them is referred to by its connection's name
+("Customer A 12345") in work plans, My day, the planning queue and workforce analytics, and in the
+notifications and audit entries about planned work. Audit entries about the work clock keep the
+PSA's name beside the ticket's own id. With one account nothing changes. The connections are
+read once for a request and only where a reference depends on one; a page of the team's own
+tickets, which carry their own numbers, reads nothing extra.
+
 ## Not in these slices
 
 A manual sync still runs inside the request that asks for it. It is bounded (50 pages a run, and
 one run per connection), and moves to the job queue with the webhook slice, where the queue gets
-its atomic claim. Limits by client or technician are still typed as ids under Sync settings. Keys
-that still ignore the connection (people without a portal account, saved views and filters matched
-on names, references shown without their connection) are slice 3c.
+its atomic claim. Limits by client or technician are still typed as ids under Sync settings. A
+reference shown as a bare PSA id beside its client and title (satisfaction comments, the staff
+report's oldest-open list) is unchanged: it claims no PSA, and the row it sits in says whose it is.

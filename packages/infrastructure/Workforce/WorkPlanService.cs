@@ -90,14 +90,15 @@ public sealed class WorkPlanService(
             .Take(MaxUnscheduled)
             .Select(t => new
             {
-                t.Id, t.Number, t.Provider, t.ExternalTicketId, t.Title, t.PortalPriority, t.PortalStatus, t.Origin, t.SlaDueAt,
+                t.Id, t.Number, t.Provider, t.ExternalTicketId, t.PsaConnectionId, t.Title, t.PortalPriority, t.PortalStatus, t.Origin, t.SlaDueAt,
                 AssignedToMe = t.AssignedAppUserId == callerId,
                 ClientName = db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                 TeamName = db.Teams.Where(x => x.Id == t.AssignedTeamId).Select(x => x.Name).FirstOrDefault(),
                 PlannedSoFar = db.WorkAllocations.Where(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Planned).Sum(a => (int?)a.PlannedMinutes) ?? 0,
             })
             .ToListAsync(ct);
-        return rows.Select(t => new UnscheduledWorkDto(t.Id, Reference(t.Number, t.Provider, t.ExternalTicketId), t.Title, t.ClientName,
+        var labels = rows.Any(t => ReferenceLabels.Needed(t.Number, t.Provider)) ? await LabelsAsync(ct) : ReferenceLabels.None;
+        return rows.Select(t => new UnscheduledWorkDto(t.Id, Reference(t.Number, t.Provider, t.ExternalTicketId, labels.For(t.PsaConnectionId)), t.Title, t.ClientName,
             t.PortalPriority, t.PortalStatus, Source(t.Origin, t.Provider), t.SlaDueAt, t.AssignedToMe, t.TeamName, t.PlannedSoFar)).ToList();
     }
 
@@ -163,19 +164,20 @@ public sealed class WorkPlanService(
             .Take(MaxUnscheduled)
             .Select(t => new
             {
-                t.Id, t.Number, t.Provider, t.ExternalTicketId, t.Title, t.PortalPriority, t.PortalStatus, t.Origin, t.SlaDueAt, t.AssignedAppUserId, t.AssignedTeamId, Raised = t.PsaCreatedAt ?? t.CreatedAt,
+                t.Id, t.Number, t.Provider, t.ExternalTicketId, t.PsaConnectionId, t.Title, t.PortalPriority, t.PortalStatus, t.Origin, t.SlaDueAt, t.AssignedAppUserId, t.AssignedTeamId, Raised = t.PsaCreatedAt ?? t.CreatedAt,
                 ClientName = db.ClientCompanies.Where(c => c.Id == t.ClientCompanyId).Select(c => c.Name).FirstOrDefault(),
                 TeamName = db.Teams.Where(x => x.Id == t.AssignedTeamId).Select(x => x.Name).FirstOrDefault(),
                 PlannedSoFar = db.WorkAllocations.Where(a => a.TicketId == t.Id && a.Status == WorkAllocationStatus.Planned).Sum(a => (int?)a.PlannedMinutes) ?? 0,
             })
             .ToListAsync(ct);
         var names = people.ToDictionary(p => p.Id, p => p.DisplayName);
+        var labels = rows.Any(t => ReferenceLabels.Needed(t.Number, t.Provider)) ? await LabelsAsync(ct) : ReferenceLabels.None;
         // A holder outside the group (work routed to one of its teams but held by someone the caller
         // may not see) is only said to exist: no id, no name.
         return rows.Select(t =>
         {
             var inside = t.AssignedAppUserId is { } h && names.ContainsKey(h);
-            return new TeamUnscheduledWorkDto(t.Id, Reference(t.Number, t.Provider, t.ExternalTicketId), t.Title, t.ClientName,
+            return new TeamUnscheduledWorkDto(t.Id, Reference(t.Number, t.Provider, t.ExternalTicketId, labels.For(t.PsaConnectionId)), t.Title, t.ClientName,
                 t.PortalPriority, t.PortalStatus, Source(t.Origin, t.Provider), t.SlaDueAt,
                 inside ? t.AssignedAppUserId : null, inside ? names[t.AssignedAppUserId!.Value] : null, t.AssignedAppUserId is not null && !inside,
                 t.AssignedTeamId, t.TeamName, t.PlannedSoFar, t.Raised);
@@ -292,11 +294,11 @@ public sealed class WorkPlanService(
         var zone = await ZoneAsync(person.Id, start, ct);
         await audit.WriteAsync("workforce.allocation.created", "WorkAllocation", row.Id.ToString(), new
         {
-            person = person.DisplayName, ticketId = ticket.Id, reference = Reference(ticket), method = row.Method.ToString(), status = row.Status.ToString(),
+            person = person.DisplayName, ticketId = ticket.Id, reference = await ReferenceAsync(ticket, ct), method = row.Method.ToString(), status = row.Status.ToString(),
             when = Describe(row, zone), isFixed = row.IsFixed, overrideReason = row.OverrideReason, overridden = row.OverriddenConflicts,
             warnings = verdict.Warnings, holderSet = bridge,
         }, ct);
-        if (!self && notify) await NotifyAsync(person.Id, row, zone, $"{(tentative ? "Work pencilled in for you" : "Work planned for you")}: {Reference(ticket)}", $"{ticket.Title} · {Describe(row, zone)}", ct);
+        if (!self && notify) await NotifyAsync(person.Id, row, zone, $"{(tentative ? "Work pencilled in for you" : "Work planned for you")}: {await ReferenceAsync(ticket, ct)}", $"{ticket.Title} · {Describe(row, zone)}", ct);
         return row;
     }
 
@@ -341,10 +343,10 @@ public sealed class WorkPlanService(
         var action = !moved ? "workforce.allocation.changed" : start == beforeStart && end != beforeEnd ? "workforce.allocation.resized" : "workforce.allocation.moved";
         await audit.WriteAsync(action, "WorkAllocation", row.Id.ToString(), new
         {
-            person = person.DisplayName, reference = Reference(row.Ticket!), before, after = Describe(row, zone), isFixed = row.IsFixed,
+            person = person.DisplayName, reference = await ReferenceAsync(row.Ticket!, ct), before, after = Describe(row, zone), isFixed = row.IsFixed,
             overrideReason = moved ? row.OverrideReason : null, overridden = moved ? row.OverriddenConflicts : null, warnings = verdict.Warnings,
         }, ct);
-        if (!self && moved) await NotifyAsync(person.Id, row, zone, $"Planned work moved: {Reference(row.Ticket!)}", $"{row.Ticket!.Title} · now {Describe(row, zone)}", ct);
+        if (!self && moved) await NotifyAsync(person.Id, row, zone, $"Planned work moved: {await ReferenceAsync(row.Ticket!, ct)}", $"{row.Ticket!.Title} · now {Describe(row, zone)}", ct);
         await hold.CommitAsync(ct);
         return (await DtosAsync(callerId, [row], ct)).Single();
     }
@@ -385,11 +387,11 @@ public sealed class WorkPlanService(
         if (bridge) await AuditBridgeAsync(to, ticket, ct);
         await audit.WriteAsync("workforce.allocation.reassigned", "WorkAllocation", row.Id.ToString(), new
         {
-            reference = Reference(ticket), from = from.DisplayName, to = to.DisplayName, before, after = Describe(row, zone),
+            reference = await ReferenceAsync(ticket, ct), from = from.DisplayName, to = to.DisplayName, before, after = Describe(row, zone),
             overrideReason = row.OverrideReason, overridden = row.OverriddenConflicts, warnings = verdict.Warnings, holderSet = bridge,
         }, ct);
-        if (from.Id != callerId) await NotifyAsync(from.Id, row, zone, $"Work taken out of your plan: {Reference(ticket)}", $"{ticket.Title} is now planned for {to.DisplayName}.", ct);
-        if (to.Id != callerId) await NotifyAsync(to.Id, row, zone, $"Work planned for you: {Reference(ticket)}", $"{ticket.Title} · {Describe(row, zone)}", ct);
+        if (from.Id != callerId) await NotifyAsync(from.Id, row, zone, $"Work taken out of your plan: {await ReferenceAsync(ticket, ct)}", $"{ticket.Title} is now planned for {to.DisplayName}.", ct);
+        if (to.Id != callerId) await NotifyAsync(to.Id, row, zone, $"Work planned for you: {await ReferenceAsync(ticket, ct)}", $"{ticket.Title} · {Describe(row, zone)}", ct);
         await hold.CommitAsync(ct);
         return (await DtosAsync(callerId, [row], ct)).Single();
     }
@@ -422,8 +424,8 @@ public sealed class WorkPlanService(
         await SaveAsync(ct);
         // The ticket is untouched: taking work out of a plan is not closing it.
         await audit.WriteAsync("workforce.allocation.cancelled", "WorkAllocation", row.Id.ToString(),
-            new { person = person.DisplayName, reference = Reference(row.Ticket!), was = Describe(row, zone), status = was.ToString(), reason = row.CancelReason }, ct);
-        if (!self) await NotifyAsync(person.Id, row, zone, $"Planned work taken out: {Reference(row.Ticket!)}", $"{row.Ticket!.Title} · was {Describe(row, zone)}", ct);
+            new { person = person.DisplayName, reference = await ReferenceAsync(row.Ticket!, ct), was = Describe(row, zone), status = was.ToString(), reason = row.CancelReason }, ct);
+        if (!self) await NotifyAsync(person.Id, row, zone, $"Planned work taken out: {await ReferenceAsync(row.Ticket!, ct)}", $"{row.Ticket!.Title} · was {Describe(row, zone)}", ct);
         await hold.CommitAsync(ct);
         return (await DtosAsync(callerId, [row], ct)).Single();
     }
@@ -518,10 +520,10 @@ public sealed class WorkPlanService(
         await SaveAsync(ct);
         await audit.WriteAsync("workforce.allocation.confirmed", "WorkAllocation", row.Id.ToString(), new
         {
-            person = person.DisplayName, reference = Reference(row.Ticket!), when = Describe(row, zone), from = "Tentative", to = "Planned",
+            person = person.DisplayName, reference = await ReferenceAsync(row.Ticket!, ct), when = Describe(row, zone), from = "Tentative", to = "Planned",
             overrideReason = row.OverrideReason, overridden = row.OverriddenConflicts, warnings = verdict.Warnings,
         }, ct);
-        if (!self) await NotifyAsync(person.Id, row, zone, $"Planned work confirmed: {Reference(row.Ticket!)}", $"{row.Ticket!.Title} · {Describe(row, zone)}", ct);
+        if (!self) await NotifyAsync(person.Id, row, zone, $"Planned work confirmed: {await ReferenceAsync(row.Ticket!, ct)}", $"{row.Ticket!.Title} · {Describe(row, zone)}", ct);
         await hold.CommitAsync(ct);
         return (await DtosAsync(callerId, [row], ct)).Single();
     }
@@ -544,8 +546,8 @@ public sealed class WorkPlanService(
         row.Version++;
         await SaveAsync(ct);
         await audit.WriteAsync("workforce.allocation.made_tentative", "WorkAllocation", row.Id.ToString(),
-            new { person = person.DisplayName, reference = Reference(row.Ticket!), when = Describe(row, zone), from = "Planned", to = "Tentative" }, ct);
-        if (person.Id != callerId) await NotifyAsync(person.Id, row, zone, $"Planned work is now tentative: {Reference(row.Ticket!)}", $"{row.Ticket!.Title} · {Describe(row, zone)}", ct);
+            new { person = person.DisplayName, reference = await ReferenceAsync(row.Ticket!, ct), when = Describe(row, zone), from = "Planned", to = "Tentative" }, ct);
+        if (person.Id != callerId) await NotifyAsync(person.Id, row, zone, $"Planned work is now tentative: {await ReferenceAsync(row.Ticket!, ct)}", $"{row.Ticket!.Title} · {Describe(row, zone)}", ct);
         await hold.CommitAsync(ct);
         return (await DtosAsync(callerId, [row], ct)).Single();
     }
@@ -600,7 +602,7 @@ public sealed class WorkPlanService(
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("workforce.planning.requirement_set", "Ticket", ticket.Id.ToString(), new
         {
-            reference = Reference(ticket), before, after = new { row.RequiredMinutes, row.EarliestStart, row.LatestEnd, row.Splittable, row.RequiredSkillId },
+            reference = await ReferenceAsync(ticket, ct), before, after = new { row.RequiredMinutes, row.EarliestStart, row.LatestEnd, row.Splittable, row.RequiredSkillId },
         }, ct);
         return await RequirementDtoAsync(ticket.Id, row, ct);
     }
@@ -715,11 +717,11 @@ public sealed class WorkPlanService(
         }
         var zone = await ZoneAsync(person.Id, pieces[0].Start, ct);
         // One notification for the whole plan, not one per piece.
-        if (!self) await NotifyAsync(person.Id, rows[0], zone, $"{(request.Tentative ? "Work pencilled in for you" : "Work planned for you")}: {Reference(ticket)}",
+        if (!self) await NotifyAsync(person.Id, rows[0], zone, $"{(request.Tentative ? "Work pencilled in for you" : "Work planned for you")}: {await ReferenceAsync(ticket, ct)}",
             rows.Count == 1 ? $"{ticket.Title} · {Describe(rows[0], zone)}" : $"{ticket.Title} · {rows.Count} pieces, from {Describe(rows[0], zone)}", ct);
         await audit.WriteAsync("workforce.allocation.plan_confirmed", "Ticket", ticket.Id.ToString(), new
         {
-            person = person.DisplayName, reference = Reference(ticket), tentative = request.Tentative, required = request.RequiredMinutes, splittable = request.Splittable,
+            person = person.DisplayName, reference = await ReferenceAsync(ticket, ct), tentative = request.Tentative, required = request.RequiredMinutes, splittable = request.Splittable,
             pieces = rows.Select(r => new { r.Id, when = Describe(r, zone) }).ToList(), allocated = rows.Sum(r => r.PlannedMinutes), token = input.PlanToken,
         }, ct);
         await hold.CommitAsync(ct);
@@ -982,6 +984,7 @@ public sealed class WorkPlanService(
         var scheduled = await access.ScheduledByAsync(callerId, rows.Select(r => r.AppUserId).Distinct().ToList(), ct);
         var mayOwn = await access.MayPlanOwnAsync(callerId, ct);
         var result = new List<WorkAllocationDto>(rows.Count);
+        var labels = rows.Any(r => r.Ticket is { } t && ReferenceLabels.Needed(t.Number, t.Provider)) ? await LabelsAsync(ct) : ReferenceLabels.None;
         foreach (var r in rows)
         {
             var others = scheduled.Contains(r.AppUserId);
@@ -994,7 +997,7 @@ public sealed class WorkPlanService(
             var zoneId = WorkforceCalendar.InForce(versions.GetValueOrDefault(r.AppUserId), WorkforceCalendar.LocalDate(r.StartsAt, TimeZoneInfo.Utc))?.TimeZone ?? orgZone;
             result.Add(new WorkAllocationDto(r.Id, r.AppUserId, names.GetValueOrDefault(r.AppUserId) ?? "",
                 r.TicketId, sees,
-                sees && t is not null ? Reference(t) : null, sees ? t?.Title : null,
+                sees && t is not null ? Reference(t, labels) : null, sees ? t?.Title : null,
                 sees && t?.ClientCompanyId is { } c ? clients.GetValueOrDefault(c) : null,
                 sees ? t?.PortalStatus : null, t is not null && TicketStatusRules.Finished(t.PortalStatus),
                 r.StartsAt, r.EndsAt, r.PlannedMinutes, zoneId,
@@ -1009,11 +1012,24 @@ public sealed class WorkPlanService(
         return result;
     }
 
-    /// <summary>"INT-000123" for the team's own work; "Autotask 12345" for a provider's.</summary>
-    public static string Reference(Ticket t) => Reference(t.Number, t.Provider, t.ExternalTicketId);
+    /// <summary>
+    /// "INT-000123" for the team's own work; "Autotask 12345" for a provider's - or, where the
+    /// organization has two accounts of that PSA, "{connection name} 12345" (see <see cref="ReferenceLabels"/>).
+    /// </summary>
+    public static string Reference(Ticket t, ReferenceLabels? labels = null)
+        => Reference(t.Number, t.Provider, t.ExternalTicketId, labels?.For(t.PsaConnectionId));
 
-    internal static string Reference(string? number, Desk.Domain.Enums.ProviderType? provider, string? externalId)
-        => number ?? (provider is { } p ? $"{ProviderName(p)} {externalId}" : externalId ?? "Ticket");
+    internal static string Reference(string? number, Desk.Domain.Enums.ProviderType? provider, string? externalId, string? connectionName = null)
+        => number ?? (provider is { } p ? $"{connectionName ?? ProviderName(p)} {externalId}" : externalId ?? "Ticket");
+
+    private ReferenceLabels? _labels;
+
+    /// <summary>Read once for the request: which connections a reference has to name.</summary>
+    private async Task<ReferenceLabels> LabelsAsync(CancellationToken ct) => _labels ??= await ReferenceLabels.LoadAsync(db, ct);
+
+    /// <summary>One ticket's reference. The connections are read only where the reference depends on one.</summary>
+    private async Task<string> ReferenceAsync(Ticket t, CancellationToken ct)
+        => ReferenceLabels.Needed(t.Number, t.Provider) ? Reference(t, await LabelsAsync(ct)) : Reference(t);
 
     private static string ProviderName(Desk.Domain.Enums.ProviderType p) => p switch
     {
