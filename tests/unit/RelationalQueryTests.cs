@@ -658,6 +658,51 @@ public sealed class RelationalQueryTests : IDisposable
             .OrderBy(n => n.CreatedAt).CountAsync()).Should().Be(2);
     }
 
+    [Fact]
+    public async Task The_connection_lists_the_sync_schedule_and_their_alerts_translate_in_every_state()
+    {
+        PsaConnection Of(string name, Action<PsaConnection>? set = null)
+        {
+            var c = new PsaConnection
+            {
+                MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+                ApiEndpoint = "https://webservices31.autotask.net/ATServicesRest/", CredentialSecretRef = "ref-" + name,
+                Status = ConnectionStatus.Healthy, LastSuccessfulSyncAt = _clock.GetUtcNow(),
+            };
+            set?.Invoke(c);
+            return c;
+        }
+        _db.PsaConnections.AddRange(
+            Of("Live"),
+            Of("Setup", c => (c.InSetup, c.IsEnabled, c.Status) = (true, false, ConnectionStatus.Failed)),
+            Of("Paused", c => c.SyncPausedAt = _clock.GetUtcNow().AddHours(-3)),
+            Of("Locked", c => (c.Status, c.LastErrorKind) = (ConnectionStatus.Degraded, ConnectionStates.Authentication)),
+            Of("Away", c => (c.ArchivedAt, c.IsEnabled, c.Status) = (_clock.GetUtcNow(), false, ConnectionStatus.Disabled)));
+        await _db.SaveChangesAsync();
+
+        var audit = new AuditWriter(_db, User, _tenant, _clock);
+        var service = new ConnectionAdminService(_db, new Desk.Infrastructure.Secrets.InMemorySecretStore(), audit,
+            new OneConnector(new StubConnector()), new ConnectionFieldCache(),
+            new Desk.Infrastructure.Attachments.InMemoryObjectStorage(new Desk.Infrastructure.Attachments.AttachmentStorageOptions(), _clock), _clock);
+
+        (await service.ListAsync()).Select(c => (c.Name, c.State)).Should().BeEquivalentTo(new (string, ConnectionState?)[]
+        {
+            ("Live", ConnectionState.Healthy), ("Locked", ConnectionState.AuthRequired),
+            ("Paused", ConnectionState.Paused), ("Setup", ConnectionState.Setup),
+        });
+        (await service.ArchivedAsync()).Select(c => (c.Name, c.State)).Should().Equal(("Away", ConnectionState.Archived));
+
+        // What the worker reads: not the one in setup, the paused one, the locked-out one or the one put away.
+        (await Desk.Infrastructure.Sync.SyncSchedule.Due(_db.PsaConnections).Select(c => c.Name).ToListAsync()).Should().Equal("Live");
+
+        var attention = new AttentionService(_db, _tenant, new NoResync(), new NoMail(), audit, _clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AttentionService>.Instance);
+        (await attention.ListAsync()).Items.Where(i => i.Kind.StartsWith("connection-") || i.Kind.StartsWith("sync-")).Select(i => i.Kind)
+            .Should().BeEquivalentTo(["connection-setup", "sync-paused", "connection-credentials"]);
+
+        (await new IntegrationHealthService(_db).SnapshotAsync()).Select(c => c.Name).Should().NotContain("Away");
+    }
+
     private sealed class OneConnector(Desk.PsaCore.Contracts.IServiceManagementConnector c) : Desk.Application.Connectors.IConnectorResolver
     {
         public Task<Desk.PsaCore.Contracts.IServiceManagementConnector> ResolveAsync(Guid connectionId, CancellationToken ct = default) => Task.FromResult(c);

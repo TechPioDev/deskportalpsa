@@ -31,6 +31,32 @@ public enum ConnectionStatus
     Failed = 4,
 }
 
+/// <summary>
+/// Where a connection stands, as one word a person can act on. Worked out from the connection's
+/// own fields and whether a sync is running (<c>ConnectionStates</c>); it is not stored, so it can
+/// never disagree with them.
+/// </summary>
+public enum ConnectionState
+{
+    /// <summary>Created, not yet switched on. Its credentials have not been accepted by the PSA.</summary>
+    Setup = 0,
+    /// <summary>The PSA has accepted the credentials; nothing has been synced yet.</summary>
+    Connected = 1,
+    /// <summary>A sync is running now.</summary>
+    Syncing = 2,
+    Healthy = 3,
+    /// <summary>The last sync failed; the next one may not.</summary>
+    Degraded = 4,
+    /// <summary>The PSA rejected the credentials. Nothing will work until they are entered again.</summary>
+    AuthRequired = 5,
+    /// <summary>Inbound sync is paused by an administrator.</summary>
+    Paused = 6,
+    /// <summary>A test of the connection failed.</summary>
+    Error = 7,
+    Disabled = 8,
+    Archived = 9,
+}
+
 /// <summary>Provider readiness for the final supported-provider matrix.</summary>
 public enum ProviderReadiness
 {

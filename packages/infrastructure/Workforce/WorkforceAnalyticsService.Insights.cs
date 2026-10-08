@@ -807,7 +807,7 @@ public sealed partial class WorkforceAnalyticsService
         if (!await HoldsAsync(callerId, Permissions.IntegrationHealthView, ct))
             throw new ForbiddenException("Mapping and integration health needs the integration.health.view permission.");
         var now = clock.GetUtcNow();
-        var connections = await db.PsaConnections.AsNoTracking().OrderBy(c => c.Name).ThenBy(c => c.Id)
+        var connections = await db.PsaConnections.AsNoTracking().Where(c => c.ArchivedAt == null).OrderBy(c => c.Name).ThenBy(c => c.Id)
             .Select(c => new { c.Id, c.Name, c.Provider, c.Status, c.IsEnabled, c.LastSuccessfulSyncAt, c.LastHealthCheckAt, HasError = c.LastError != null && c.LastError != "" }).ToListAsync(ct);
         var psa = db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId != null);
         var statuses = await psa.GroupBy(t => new { t.PsaConnectionId, t.PortalStatus }).Select(g => new { g.Key.PsaConnectionId, Value = g.Key.PortalStatus, N = g.Count() }).ToListAsync(ct);

@@ -23,14 +23,22 @@ public sealed class ConnectionAdminService(
 {
     private readonly Security.ConnectorEndpointPolicy _endpoints = endpointPolicy ?? Security.ConnectorEndpointPolicy.Strict;
 
-    public async Task<IReadOnlyList<ConnectionSummary>> ListAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<ConnectionSummary>> ListAsync(CancellationToken ct = default) => ListAsync(archived: false, ct);
+
+    public Task<IReadOnlyList<ConnectionSummary>> ArchivedAsync(CancellationToken ct = default) => ListAsync(archived: true, ct);
+
+    private async Task<IReadOnlyList<ConnectionSummary>> ListAsync(bool archived, CancellationToken ct)
     {
         var rows = await db.PsaConnections.AsNoTracking()
+            // Put away, not gone: an archived connection keeps everything it imported and is simply
+            // not listed with the others. It has a list of its own, or it could never be restored.
+            .Where(c => (c.ArchivedAt != null) == archived)
             .OrderBy(c => c.Name)
             .Select(c => new
             {
                 c.Id, c.Name, c.Provider, c.ApiEndpoint, c.TenantIdentifier,
                 c.Status, c.IsEnabled, c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt,
+                c.InSetup, c.SyncPausedAt, c.ArchivedAt, c.LastErrorKind,
                 // Correlated counts: one query for the page rather than three per connection.
                 TicketCount = db.Tickets.Count(t => t.PsaConnectionId == c.Id),
                 CustomerCount = db.ClientCompanies.Count(o => o.PsaConnectionId == c.Id),
@@ -42,6 +50,7 @@ public sealed class ConnectionAdminService(
             })
             .ToListAsync(ct);
 
+        var running = await RunningAsync(ct);
         var result = new List<ConnectionSummary>(rows.Count);
         foreach (var c in rows)
         {
@@ -49,7 +58,10 @@ public sealed class ConnectionAdminService(
                 c.Id, c.Name, c.Provider, c.ApiEndpoint, c.TenantIdentifier,
                 c.Status, c.IsEnabled, c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt,
                 c.TicketCount, c.CustomerCount, c.ContactCount, c.LogoUrl,
-                StoredCredentialKeys: await StoredCredentialKeysAsync(c.CredentialSecretRef, ct)));
+                StoredCredentialKeys: await StoredCredentialKeysAsync(c.CredentialSecretRef, ct),
+                State: ConnectionStates.Of(c.InSetup, c.IsEnabled, c.ArchivedAt, c.SyncPausedAt, c.LastErrorKind,
+                    c.Status, c.LastSuccessfulSyncAt, running.Contains(c.Id)),
+                SyncPausedAt: c.SyncPausedAt));
         }
         return result;
     }
@@ -84,6 +96,8 @@ public sealed class ConnectionAdminService(
         if (!connectors.Supports(input.Provider))
             throw new ValidationFailedException($"{input.Provider} cannot be connected yet.");
         var endpoint = _endpoints.Validate(input.Provider, input.ApiEndpoint);
+        var account = AccountHash(input.Provider, endpoint, input.Credentials);
+        await EnsureNotAlreadyConnectedAsync(null, input.Provider, account, ct);
 
         // Secret goes to the encrypted store; only the opaque reference is persisted on the row.
         var secretRef = await secrets.WriteAsync($"{input.Provider}/{input.Name}", input.Credentials, ct);
@@ -101,7 +115,12 @@ public sealed class ConnectionAdminService(
             TimeZone = input.TimeZone ?? "UTC",
             LogoUrl = NormaliseLogoUrl(input.LogoUrl),
             Status = ConnectionStatus.Pending,
-            IsEnabled = true,
+            // Not live yet. It used to be enabled the moment it was saved, so the scheduled sync
+            // was already calling a PSA with credentials nobody had tried. It is switched on by
+            // ActivateAsync, which needs a passed test.
+            IsEnabled = false,
+            InSetup = true,
+            AccountKeyHash = account,
         };
         db.PsaConnections.Add(connection);
         await db.SaveChangesAsync(ct);
@@ -110,20 +129,197 @@ public sealed class ConnectionAdminService(
         await audit.WriteAsync("connection.created", "PsaConnection", connection.Id.ToString(),
             new { connection.Name, connection.Provider, connection.ApiEndpoint }, ct);
 
-        // Fetch field options once at configure time (best-effort — creds may not be valid yet).
-        await TryCacheFieldsAsync(connection.Id, ct);
+        return Summarise(connection);
+    }
 
-        return new ConnectionSummary(connection.Id, connection.Name, connection.Provider, connection.ApiEndpoint,
-            connection.TenantIdentifier, connection.Status, connection.IsEnabled, null, null,
-            LogoUrl: connection.LogoUrl);
+    public IReadOnlyList<ProviderCatalogEntry> Providers()
+    {
+        var available = connectors.Providers
+            .Select(d => new ProviderCatalogEntry(d.Provider, d.Name, true, d.EndpointExample, d.EndpointHint, d.TenantIdentifierLabel,
+                d.Credentials.Select(c => new CredentialFieldDto(c.Key, c.Label, c.Secret, c.Hint)).ToList()))
+            .ToList();
+        // Named so that people can see what is planned. There is nothing behind one of these - no
+        // connector, no form, no way to save a connection to it - and Create refuses it.
+        var planned = Planned
+            .Where(p => available.All(a => a.Provider != p.Provider))
+            .Select(p => new ProviderCatalogEntry(p.Provider, p.Name, false, null, null, null, []));
+        return [.. available, .. planned];
+    }
+
+    private static readonly (ProviderType Provider, string Name)[] Planned =
+    [
+        (ProviderType.HaloPsa, "HaloPSA"),
+        (ProviderType.Syncro, "Syncro"),
+        (ProviderType.SuperOps, "SuperOps"),
+        (ProviderType.Atera, "Atera"),
+        (ProviderType.KaseyaBms, "Kaseya BMS"),
+        (ProviderType.NableMspManager, "N-able MSP Manager"),
+        (ProviderType.ServiceNow, "ServiceNow"),
+        (ProviderType.Freshservice, "Freshservice"),
+        (ProviderType.JiraServiceManagement, "Jira Service Management"),
+        (ProviderType.ManageEngineServiceDeskPlus, "ManageEngine ServiceDesk Plus"),
+        (ProviderType.Zendesk, "Zendesk"),
+        (ProviderType.ZohoDesk, "Zoho Desk"),
+        (ProviderType.DeskDay, "DeskDay"),
+    ];
+
+    public async Task<ProviderCapabilities> CapabilitiesAsync(Guid connectionId, CancellationToken ct = default)
+    {
+        var connection = await FindAsync(connectionId, ct);
+        // What a connector can do does not depend on its credentials or on being switched on, so
+        // it is asked as it stands - with nothing stored if nothing is.
+        var connector = await connectors.ResolveForTrialAsync(connection, await StoredCredentialsAsync(connection, ct) ?? Empty, ct);
+        return await connector.GetCapabilitiesAsync(ct);
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> Empty = new Dictionary<string, string>();
+
+    public async Task<ConnectionSummary> ActivateAsync(Guid connectionId, CancellationToken ct = default)
+    {
+        var connection = await FindAsync(connectionId, ct);
+        if (connection.ArchivedAt is not null)
+            throw new ValidationFailedException("This connection is archived. Restore it before switching it on.");
+        if (connection.Status != ConnectionStatus.Healthy)
+            throw new ValidationFailedException(
+                "Test the connection first. It is switched on once the PSA has accepted its credentials.");
+
+        connection.InSetup = false;
+        connection.IsEnabled = true;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("connection.activated", "PsaConnection", connectionId.ToString(), new { connection.Name }, ct);
+
+        // Now that it may be called: fetch its field options once (best effort).
+        await TryCacheFieldsAsync(connectionId, ct);
+        return await SummariseAsync(connection, ct);
+    }
+
+    public async Task<ConnectionSummary> PauseSyncAsync(Guid connectionId, CancellationToken ct = default)
+    {
+        var connection = await FindAsync(connectionId, ct);
+        if (connection.SyncPausedAt is null)
+        {
+            connection.SyncPausedAt = clock.GetUtcNow();
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("connection.sync.paused", "PsaConnection", connectionId.ToString(), new { connection.Name }, ct);
+        }
+        return await SummariseAsync(connection, ct);
+    }
+
+    public async Task<ConnectionSummary> ResumeSyncAsync(Guid connectionId, CancellationToken ct = default)
+    {
+        var connection = await FindAsync(connectionId, ct);
+        if (connection.SyncPausedAt is not null)
+        {
+            connection.SyncPausedAt = null;
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("connection.sync.resumed", "PsaConnection", connectionId.ToString(), new { connection.Name }, ct);
+        }
+        return await SummariseAsync(connection, ct);
+    }
+
+    public async Task ArchiveAsync(Guid connectionId, CancellationToken ct = default)
+    {
+        var connection = await FindAsync(connectionId, ct);
+        if (connection.ArchivedAt is not null) return;
+        // Disabled and put out of sight, and that is all. Tickets, clients, mappings, links and
+        // history stay exactly where they are; the stored credentials stay too, so that restoring
+        // it is not the same as setting it up again.
+        connection.ArchivedAt = clock.GetUtcNow();
+        connection.IsEnabled = false;
+        // As with any connection switched off: whatever its health was, it is not that any more.
+        connection.Status = ConnectionStatus.Disabled;
+        await db.SaveChangesAsync(ct);
+        fieldCache.Remove(connectionId);
+        await audit.WriteAsync("connection.archived", "PsaConnection", connectionId.ToString(), new { connection.Name }, ct);
+    }
+
+    public async Task<ConnectionSummary> RestoreAsync(Guid connectionId, CancellationToken ct = default)
+    {
+        var connection = await FindAsync(connectionId, ct);
+        if (connection.ArchivedAt is not null)
+        {
+            // Another connection may have been made to the same account in the meantime.
+            await EnsureNotAlreadyConnectedAsync(connection.Id, connection.Provider, connection.AccountKeyHash, ct);
+            connection.ArchivedAt = null;
+            // Back, and still off: whether it should be working again is a second decision.
+            connection.Status = ConnectionStatus.Disabled;
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("connection.restored", "PsaConnection", connectionId.ToString(), new { connection.Name }, ct);
+        }
+        return await SummariseAsync(connection, ct);
+    }
+
+    private async Task<PsaConnection> FindAsync(Guid connectionId, CancellationToken ct)
+        => await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == connectionId, ct)
+           ?? throw new NotFoundException("PSA connection");
+
+    /// <summary>Connections with a sync in progress right now: a run recorded as running whose lease has not lapsed.</summary>
+    private async Task<HashSet<Guid>> RunningAsync(CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        return (await db.SyncRuns.AsNoTracking()
+                .Where(r => r.Status == Desk.Domain.Sync.SyncRunStatus.Running && r.LeaseExpiresAt > now)
+                .Select(r => r.PsaConnectionId)
+                .ToListAsync(ct))
+            .ToHashSet();
+    }
+
+    private async Task<ConnectionSummary> SummariseAsync(PsaConnection c, CancellationToken ct)
+        => Summarise(c, (await RunningAsync(ct)).Contains(c.Id));
+
+    private async Task<IReadOnlyDictionary<string, string>?> StoredCredentialsAsync(PsaConnection connection, CancellationToken ct)
+    {
+        try { return await secrets.ReadAsync(connection.CredentialSecretRef, ct); }
+        catch (KeyNotFoundException) { return null; }
+    }
+
+    /// <summary>
+    /// A one-way hash of the account a connection reaches, or null when the provider cannot name
+    /// one. Hashed because what names an account is a credential field, if not a secret one, and
+    /// the row is not where credentials are kept.
+    /// </summary>
+    private string? AccountHash(ProviderType provider, string endpoint, IReadOnlyDictionary<string, string> credentials)
+        => connectors.AccountKey(provider, endpoint, credentials) is { Length: > 0 } key
+            ? Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{provider}|{key}")))
+            : null;
+
+    /// <summary>
+    /// Refuses a second connection to a PSA account that already has one. Two connections to one
+    /// account import every ticket twice, under two sets of ids, and nothing afterwards can tell
+    /// which is the real one. Nothing stopped it.
+    /// </summary>
+    private async Task EnsureNotAlreadyConnectedAsync(Guid? self, ProviderType provider, string? account, CancellationToken ct)
+    {
+        if (account is null) return;
+        var others = await db.PsaConnections
+            .Where(c => c.Provider == provider && c.ArchivedAt == null && c.Id != self)
+            .ToListAsync(ct);
+        foreach (var other in others)
+        {
+            // A connection from before this was recorded: work its account out once, and keep it.
+            if (other.AccountKeyHash is null && await StoredCredentialsAsync(other, ct) is { } stored)
+                other.AccountKeyHash = AccountHash(provider, other.ApiEndpoint, stored);
+            if (other.AccountKeyHash == account)
+                throw new ValidationFailedException(
+                    $"\"{other.Name}\" is already connected to this {provider} account. Edit that connection instead of adding a second one.");
+        }
     }
 
     public async Task SetEnabledAsync(Guid connectionId, bool enabled, CancellationToken ct = default)
     {
         var connection = await db.PsaConnections.FirstOrDefaultAsync(c => c.Id == connectionId, ct)
             ?? throw new NotFoundException("PSA connection");
+        if (enabled && connection.ArchivedAt is not null)
+            throw new ValidationFailedException("This connection is archived. Restore it before switching it on.");
+        // A connection that has never been live is switched on by Activate, which needs a passed
+        // test. Enabling it here would be the way round that.
+        if (enabled && connection.InSetup)
+            throw new ValidationFailedException("Finish setting this connection up: test it, then switch it on.");
         connection.IsEnabled = enabled;
         if (!enabled) connection.Status = ConnectionStatus.Disabled;
+        // Switched back on, it is no longer disabled - and not yet known to be well either. Left
+        // as it was, it went on reading "Disabled" until the next sync happened to say otherwise.
+        else if (connection.Status == ConnectionStatus.Disabled) connection.Status = ConnectionStatus.Pending;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(enabled ? "connection.enabled" : "connection.disabled",
             "PsaConnection", connectionId.ToString(), null, ct);
@@ -153,16 +349,25 @@ public sealed class ConnectionAdminService(
         ConnectionTestResultDto dto;
         try
         {
-            var connector = await connectors.ResolveAsync(connectionId, ct);
+            // A connection that is not switched on - one still being set up, above all - has to be
+            // testable: a passed test is what lets it be switched on. Tested as it stands, with
+            // what is stored.
+            var connector = connection.IsEnabled
+                ? await connectors.ResolveAsync(connectionId, ct)
+                : await connectors.ResolveForTrialAsync(connection,
+                    await StoredCredentialsAsync(connection, ct)
+                    ?? throw new ValidationFailedException($"'{connection.Name}' has no valid stored credentials — edit the connection and re-enter them."), ct);
             var result = await connector.TestConnectionAsync(ct);
             connection.Status = result.Success ? ConnectionStatus.Healthy : ConnectionStatus.Failed;
             connection.LastError = result.Success ? null : result.Message;
+            connection.LastErrorKind = null;
             dto = new ConnectionTestResultDto(result.Success, result.Message, result.Latency.TotalMilliseconds);
         }
         catch (ConnectorException ex)
         {
             connection.Status = ConnectionStatus.Failed;
             connection.LastError = ex.Message;
+            connection.LastErrorKind = ex.Kind.ToString();
             dto = new ConnectionTestResultDto(false, $"{ex.Kind}: {ex.Message}", 0);
         }
         catch (DeskException ex)
@@ -173,6 +378,7 @@ public sealed class ConnectionAdminService(
             // on, exactly like a ConnectorException — not a 500, and not silence.
             connection.Status = ConnectionStatus.Failed;
             connection.LastError = ex.Message;
+            connection.LastErrorKind = null;
             dto = new ConnectionTestResultDto(false, ex.Message, 0);
         }
 
@@ -276,9 +482,10 @@ public sealed class ConnectionAdminService(
         return new StoredLogo(bytes, contentType);
     }
 
-    private static ConnectionSummary Summarise(PsaConnection c) => new(
+    private static ConnectionSummary Summarise(PsaConnection c, bool running = false) => new(
         c.Id, c.Name, c.Provider, c.ApiEndpoint, c.TenantIdentifier, c.Status, c.IsEnabled,
-        c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt, LogoUrl: c.LogoUrl);
+        c.LastSuccessfulSyncAt, c.LastError, c.LastHealthCheckAt, LogoUrl: c.LogoUrl,
+        State: ConnectionStates.Of(c, running), SyncPausedAt: c.SyncPausedAt);
 
     public static string? NormaliseLogoUrl(string? value)
     {
@@ -311,13 +518,63 @@ public sealed class ConnectionAdminService(
         // credentials stored for it, exactly as they were.
         var endpoint = _endpoints.Validate(connection.Provider, input.ApiEndpoint);
 
+        if (connection.ArchivedAt is not null)
+            throw new ValidationFailedException("This connection is archived. Restore it before changing it.");
+
+        // What the connection would hold after this edit: the stored credentials with the typed
+        // fields over them (a blank field means "keep what is stored").
+        var typed = input.Credentials is { Count: > 0 } ? input.Credentials : null;
+        var stored = await StoredCredentialsAsync(connection, ct);
+        var candidate = stored is null ? null : new Dictionary<string, string>(stored);
+        if (typed is not null)
+        {
+            candidate ??= [];
+            foreach (var (key, value) in typed) candidate[key] = value;
+        }
+
+        // A new address or new credentials are TRIED before they are kept. They used to be saved
+        // first: a mistyped key replaced a working one, and a changed address had the stored
+        // credentials sent to it before anything had checked it was the PSA. A connection still
+        // being set up is the exception - it has nothing working to protect, and is tested before
+        // it can be switched on in any case.
+        var addressChanged = !string.Equals(connection.ApiEndpoint, endpoint, StringComparison.OrdinalIgnoreCase);
+        var verified = false;
+        if (!connection.InSetup && candidate is not null && (typed is not null || addressChanged))
+        {
+            var before = connection.ApiEndpoint;
+            connection.ApiEndpoint = endpoint;
+            try
+            {
+                var trial = await connectors.ResolveForTrialAsync(connection, candidate, ct);
+                var outcome = await trial.TestConnectionAsync(ct);
+                if (!outcome.Success)
+                    throw new ConnectorException(ConnectorFailureKind.ProviderError, outcome.Message ?? "The test did not pass.");
+                verified = true;
+            }
+            catch (ConnectorException ex)
+            {
+                connection.ApiEndpoint = before;
+                throw new ValidationFailedException(
+                    $"Not saved: {connection.Provider} did not accept {(typed is not null ? "the new credentials" : "the new address")} ({ex.Kind}: {ex.Message}). "
+                    + "The connection is unchanged and still uses what it had.");
+            }
+        }
+
+        var account = candidate is null ? connection.AccountKeyHash : AccountHash(connection.Provider, endpoint, candidate);
+        await EnsureNotAlreadyConnectedAsync(connection.Id, connection.Provider, account, ct);
+
         connection.Name = input.Name;
         connection.ApiEndpoint = endpoint;
+        connection.AccountKeyHash = account;
         connection.TenantIdentifier = TenantIdentifierFor(connection.Provider, input.TenantIdentifier, input.Credentials) ?? connection.TenantIdentifier;
         connection.TimeZone = input.TimeZone ?? connection.TimeZone;
         connection.LogoUrl = NormaliseLogoUrl(input.LogoUrl);
-        connection.IsEnabled = input.IsEnabled;
-        if (!input.IsEnabled) connection.Status = ConnectionStatus.Disabled;
+        // A connection still in setup is switched on by Activate and by nothing else.
+        if (!connection.InSetup)
+        {
+            connection.IsEnabled = input.IsEnabled;
+            if (!input.IsEnabled) connection.Status = ConnectionStatus.Disabled;
+        }
 
         // Rotate credentials only if new ones were supplied. The store returns the reference the
         // secret now lives at — usually the same one, but a freshly minted one when the old
@@ -348,11 +605,20 @@ public sealed class ConnectionAdminService(
                 await secrets.RotateAsync(connection.CredentialSecretRef, credentials, ct);
 
             // The recorded failure describes the credentials that were just replaced. Leaving it in
-            // place keeps a solved problem on screen until something else happens to run. Status
-            // goes back to Pending rather than Healthy — only a real successful call may claim that.
+            // place keeps a solved problem on screen until something else happens to run.
             connection.LastError = null;
+            connection.LastErrorKind = null;
             if (connection.IsEnabled && connection.Status is ConnectionStatus.Degraded or ConnectionStatus.Failed)
                 connection.Status = ConnectionStatus.Pending;
+        }
+
+        // The PSA has just accepted exactly what is being saved: that is a passed test.
+        if (verified && connection.IsEnabled)
+        {
+            connection.Status = ConnectionStatus.Healthy;
+            connection.LastError = null;
+            connection.LastErrorKind = null;
+            connection.LastHealthCheckAt = clock.GetUtcNow();
         }
 
         await db.SaveChangesAsync(ct);
@@ -362,8 +628,7 @@ public sealed class ConnectionAdminService(
         // Endpoint/creds may have changed — drop the cache so the next read re-discovers.
         fieldCache.Remove(connectionId);
 
-        return new ConnectionSummary(connection.Id, connection.Name, connection.Provider, connection.ApiEndpoint,
-            connection.TenantIdentifier, connection.Status, connection.IsEnabled, connection.LastSuccessfulSyncAt, connection.LastError);
+        return await SummariseAsync(connection, ct);
     }
 
     /// <summary>Returns cached field options if present (populated at configure time), else discovers

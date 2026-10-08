@@ -498,7 +498,8 @@ which affects people today, and the security finding, and can be deployed on its
 | 1. Isolation and safety | **Built**, awaiting review and deploy | 116 new tests; 1,389 pass in both time-zone modes, and the 16 PostgreSQL 17 tests pass. T1, T2, T3, T4, S2 and D9 each have tests that were run against the code as audited and fail there; S1, S5 and D3 are covered by tests of the new behaviour. The ticket-visibility predicate, built by hand as one clause per PSA connection, is also run through a SQL translator (`RelationalQueryTests`) and on PostgreSQL 17 (`CapacityPerformanceTests`); before this it had only ever run in memory |
 | 2a. Sync engine | **Built**, stacked on slice 1 (its pull request opens when slice 1 is merged) | 32 more tests; 1,421 pass in both time-zone modes. D1, D2, D5 and D6 were reproduced against the code as audited by a throwaway probe (four tests asserting the defect, all passing there). The run, its lock and its failure store also run through a SQL translator, including a save the database genuinely refuses; on PostgreSQL 17 eight runs started at the same instant end with one, and the migration applies. See [sync-engine.md](sync-engine.md) |
 | 2b. Provider calls | **Built**, stacked on 2a | 35 more tests; 1,456 pass in both time-zone modes. See [provider-calls.md](provider-calls.md). D8 and D4 were confirmed by reading and are covered by tests of the new behaviour; the two fake PSA servers were corrected where they hid the defects (the ConnectWise fake returned every note whatever page was asked for and had no time entries at all; the Autotask fake kept a created time entry without the id it answered with) |
-| 3 to 7 | Not started. An atomic claim for background jobs (R11) moves to slice 6, where the job queue gets its first real work | |
+| 3a. Connection lifecycle | **Built**, stacked on 2b | 37 more tests; 1,493 pass in both time-zone modes, and 2 more browser tests (72 pass in Chromium). The new connection queries also run through a SQL translator in every state, and the migration was applied to a PostgreSQL 17 database from the generated script. See [connections.md](connections.md). S4 and S5 are closed, and the first half of T5 (the same PSA account connected twice). Driven in a browser against a stand-in PSA: a connection whose keys are rejected stays in setup with the reason, corrected keys switch it on, and pause, resume, disable, enable, archive and restore each do what the screen says. One migration, additive (five columns on `psa_connections`) |
+| 3b, 3c, 4 to 7 | Not started. 3b is the add-connection wizard (test matrix, discovery, scope from lists, preview, preflight) and a manual sync that runs in the background; 3c is the keys that still ignore the connection (T3, the rest of T5, T6). An atomic claim for background jobs (R11) moves to slice 6, where the job queue gets its first real work | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -529,6 +530,25 @@ What slice 2b changes for people:
   the PSA is asked first.
 - Lists longer than one page (more than 500 companies or technicians in Autotask, more than 1,000
   in ConnectWise) are read in full.
+
+What slice 3a changes for people:
+
+- A new connection is saved switched off, tested at once, and switched on only if the PSA accepts
+  it. One the PSA rejects stays in setup with the PSA's answer on its card, and syncs nothing.
+- New credentials or a new address on a working connection are tried before they are kept. A
+  mistyped key no longer replaces a working one: it is refused, and the connection carries on.
+- The same PSA account cannot be connected twice.
+- A connection can be paused (reading stops, replies and time still go out), disabled, and archived
+  (put away with everything it imported, and restorable).
+- When a PSA rejects a connection's credentials, the portal stops asking every five minutes and
+  says the connection needs new credentials, instead of risking the API account being locked.
+- The connection's card shows one state, its recent sync runs and who started them, and any record
+  the sync could not read, with a way to try it again or stop trying.
+- The needs-attention list no longer calls a half-set-up connection "failed", reports a paused sync
+  as paused, and is silent about archived connections.
+- Editing a disabled connection no longer switches it on.
+- The PSAs that can be connected, and the fields each asks for, come from the connectors. Planned
+  PSAs are shown as coming soon and cannot be chosen.
 
 Two decisions taken while building it, recorded because they differ from the first plan:
 

@@ -40,6 +40,41 @@ public class PsaConnection : TenantEntity
     public DateTimeOffset? LastHealthCheckAt { get; set; }
     public string? LastError { get; set; }
 
+    /// <summary>
+    /// The kind of the last failure - a connector failure kind such as "Authentication" - kept
+    /// beside its message. The message is for reading; this is what lets the portal say "sign in
+    /// again" rather than "something is wrong".
+    /// </summary>
+    public string? LastErrorKind { get; set; }
+
+    // ---- Lifecycle -----------------------------------------------------------------------------
+
+    /// <summary>
+    /// True from the moment a connection is created until it is first switched on. A connection in
+    /// setup is not enabled, is not synced and takes no writes: it used to be enabled the instant
+    /// it was saved, before its credentials had been tried once.
+    /// </summary>
+    public bool InSetup { get; set; }
+
+    /// <summary>
+    /// Set while inbound sync is paused. The connection still works - a reply, a status change or
+    /// logged time still reach the PSA - but nothing is read from it until it is resumed.
+    /// </summary>
+    public DateTimeOffset? SyncPausedAt { get; set; }
+
+    /// <summary>
+    /// Set when the connection was put away. Nothing it imported is removed - tickets, clients,
+    /// mappings and history stay - but it is disabled and no longer listed. There is no delete.
+    /// </summary>
+    public DateTimeOffset? ArchivedAt { get; set; }
+
+    /// <summary>
+    /// A one-way hash of the PSA account this connection reaches (its address and the credential
+    /// that names the account). It is here so the same account cannot be connected twice without
+    /// reading every other connection's credentials to find out.
+    /// </summary>
+    public string? AccountKeyHash { get; set; }
+
     // ---- Sync behaviour: what flows automatically between the portal and this PSA ----
 
     /// <summary>Pull provider-side changes back into the portal. Off = portal→PSA writes only.</summary>

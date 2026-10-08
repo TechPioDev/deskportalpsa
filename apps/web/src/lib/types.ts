@@ -304,8 +304,55 @@ export const ConnectionSummarySchema = z.object({
   // stay write-only). null = the endpoint didn't say (older responses), which is different from
   // [] = it said "nothing is stored".
   storedCredentialKeys: z.array(z.string()).nullable().default(null),
+  // What the connection is doing now, worked out by the server from everything it knows (set up
+  // or not, switched on, paused, rejected by the PSA, syncing). null = an older response.
+  state: z.union([z.string(), z.number()]).nullable().default(null),
+  syncPausedAt: z.string().nullable().default(null),
 });
 export type ConnectionSummary = z.infer<typeof ConnectionSummarySchema>;
+
+/** A PSA the portal names. `available` false = named, with no connector in this build. */
+export const ProviderCatalogEntrySchema = z.object({
+  provider: z.union([z.string(), z.number()]),
+  name: z.string(),
+  available: z.boolean(),
+  endpointExample: z.string().nullable().default(null),
+  endpointHint: z.string().nullable().default(null),
+  tenantIdentifierLabel: z.string().nullable().default(null),
+  credentials: z.array(z.object({
+    key: z.string(), label: z.string(), secret: z.boolean(), hint: z.string().nullable().default(null),
+  })).default([]),
+});
+export type ProviderCatalogEntry = z.infer<typeof ProviderCatalogEntrySchema>;
+
+export const SyncRunSchema = z.object({
+  id: z.string(), trigger: z.string(), status: z.string(), startedAt: z.string(), finishedAt: z.string().nullable(),
+  fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number(),
+  notes: z.number().default(0), attachments: z.number().default(0),
+  failedRecords: z.number().default(0), retried: z.number().default(0), recovered: z.number().default(0),
+  error: z.string().nullable().default(null), notice: z.string().nullable().default(null),
+  requestedBy: z.string().nullable().default(null),
+});
+export type SyncRun = z.infer<typeof SyncRunSchema>;
+
+export const SyncStateSchema = z.object({
+  connectionId: z.string(),
+  // Everything changed in the PSA before this moment has been read.
+  watermark: z.string().nullable(),
+  // A read that ran out of pages and is being carried on run by run.
+  readInProgress: z.boolean(), pagesReadSoFar: z.number(),
+  running: z.boolean(), openFailures: z.number(), needsReview: z.number(),
+  runs: z.array(SyncRunSchema),
+});
+export type SyncState = z.infer<typeof SyncStateSchema>;
+
+/** A record the sync could not read or apply. Kept, and tried again until it goes through. */
+export const SyncFailureSchema = z.object({
+  id: z.string(), entity: z.string(), externalId: z.string(), operation: z.string(), category: z.string(),
+  message: z.string(), attempts: z.number(), firstFailedAt: z.string(), lastFailedAt: z.string(),
+  nextAttemptAt: z.string().nullable(), status: z.string(),
+});
+export type SyncFailure = z.infer<typeof SyncFailureSchema>;
 
 export const MappingRuleSchema = z.object({
   id: z.string(),
