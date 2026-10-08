@@ -5,7 +5,7 @@ import { Hero } from '@/components/marketing/Hero';
 import { EnquiryForm } from '@/components/marketing/EnquiryForm';
 
 export const metadata: Metadata = {
-  title: 'Book a meeting — Desk Portal',
+  title: 'Book a meeting — PioManage',
   description: 'Half an hour against your own PSA, with the people who built it.',
 };
 

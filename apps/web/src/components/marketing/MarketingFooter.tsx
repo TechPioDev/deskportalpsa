@@ -96,7 +96,7 @@ export function MarketingFooter() {
           <div>
             <div className="flex items-center gap-3">
               <BrandMark size={52} variant="inverse" className="rounded-xl" />
-              <span className="text-xl font-semibold tracking-tight">Desk Portal</span>
+              <span className="text-xl font-semibold tracking-tight">PioManage</span>
             </div>
 
             <p className="mt-4 max-w-sm text-sm leading-relaxed text-brand-fg/70">
@@ -180,7 +180,7 @@ export function MarketingFooter() {
         {/* /75, not /60: composited against the forest, 60% opacity lands at 4.1:1 and misses AA. */}
         <div className="mx-auto flex max-w-shell flex-wrap items-center justify-between gap-3 px-5 py-5 text-xs text-brand-fg/75 sm:px-8">
           <span>© {year} TechPIO Services LLP. All rights reserved.</span>
-          <span>Desk Portal — built for managed service providers.</span>
+          <span>PioManage — built for managed service providers.</span>
         </div>
       </div>
     </footer>

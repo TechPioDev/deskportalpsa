@@ -22,7 +22,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const platform = findPlatform((await params).platform);
   if (!platform) return {};
   return {
-    title: `Desk Portal for ${platform.name}`,
+    title: `PioManage for ${platform.name}`,
     description: platform.hasConnector
       ? `Give your clients a modern support portal while your technicians keep working in ${platform.name}. Two-way sync, multi-tenant, self-hosted.`
       : `A modern client support portal, built for MSPs whose technicians work in ${platform.name}. Multi-tenant and self-hosted.`,
@@ -54,10 +54,10 @@ export default async function PlatformIntegrationPage({ params }: Params) {
     <>
       <PageHero
         eyebrow="Integration"
-        title={<>Desk Portal for <span className="text-brand dark:text-brand-soft">{platform.name}</span></>}
+        title={<>PioManage for <span className="text-brand dark:text-brand-soft">{platform.name}</span></>}
         lead={live
           ? `Give your clients a modern way to raise requests, follow progress and share files — while your technicians carry on in ${platform.name}. Your service desk stays the system of record.`
-          : `Desk Portal is built to give your clients a modern way to raise requests, follow progress and share files — while your technicians carry on in ${platform.name}, and it stays the system of record.`}
+          : `PioManage is built to give your clients a modern way to raise requests, follow progress and share files — while your technicians carry on in ${platform.name}, and it stays the system of record.`}
       >
         <div className="flex flex-wrap items-center gap-3">
           <Link
@@ -158,7 +158,7 @@ export default async function PlatformIntegrationPage({ params }: Params) {
             {HOW_IT_WORKS.map((s, i) => (
               <Reveal key={s.n} delay={i * 70}>
                 <Step n={s.n} title={s.title}>
-                  {s.n === '01' ? `Connect Desk Portal to your ${platform.name} environment.` : s.body}
+                  {s.n === '01' ? `Connect PioManage to your ${platform.name} environment.` : s.body}
                 </Step>
               </Reveal>
             ))}
@@ -170,7 +170,7 @@ export default async function PlatformIntegrationPage({ params }: Params) {
           <Shell>
             <SectionHead
               eyebrow="Getting started"
-              title={`Bringing Desk Portal to ${platform.name}`}
+              title={`Bringing PioManage to ${platform.name}`}
               lead={`Tell us how your team runs ${platform.name} — boards, statuses and the clients you support. That is what shapes the connection, so we start with a conversation rather than a setup wizard.`}
               align="center"
             />

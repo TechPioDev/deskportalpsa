@@ -33,7 +33,7 @@ export const FEATURE_DOCS: FeatureDoc[] = [
     icon: Ticket,
     tagline: 'One ticket, two systems, always in step.',
     summary:
-      'Tickets flow both ways between Desk Portal and your PSA. A client raises a request in the portal and it becomes a real ticket in ConnectWise or Autotask; a technician updates the ticket in the PSA and the portal reflects it. Neither side is a copy — the PSA remains the system of record, and the portal is the client-friendly window onto it.',
+      'Tickets flow both ways between PioManage and your PSA. A client raises a request in the portal and it becomes a real ticket in ConnectWise or Autotask; a technician updates the ticket in the PSA and the portal reflects it. Neither side is a copy — the PSA remains the system of record, and the portal is the client-friendly window onto it.',
     sections: [
       {
         heading: 'How the sync works',
@@ -312,7 +312,7 @@ export const FEATURE_DOCS: FeatureDoc[] = [
     icon: ShieldCheck,
     tagline: 'Multi-tenant isolation, real RBAC, and a log that does not forget.',
     summary:
-      'Desk Portal is self-hosted and multi-tenant by construction: tenant isolation is enforced in the data layer on every query, authentication is delegated to your own identity provider, permissions are enforced server-side, and every administrative and access-relevant action lands in an append-only audit log.',
+      'PioManage is self-hosted and multi-tenant by construction: tenant isolation is enforced in the data layer on every query, authentication is delegated to your own identity provider, permissions are enforced server-side, and every administrative and access-relevant action lands in an append-only audit log.',
     sections: [
       {
         heading: 'Isolation in depth',

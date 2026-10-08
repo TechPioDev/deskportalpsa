@@ -30,16 +30,16 @@ test.describe('public site', () => {
   test('a platform without a connector invites a conversation instead of promising a setup', async ({ page }) => {
     await page.goto('/integrations/halo');
 
-    await expect(page.getByRole('heading', { name: /Desk Portal for HaloPSA/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /PioManage for HaloPSA/ })).toBeVisible();
     await expect(page.getByRole('link', { name: /Talk to us about HaloPSA/ }).first()).toBeVisible();
     // The step-by-step "connect your environment" wizard belongs only to platforms that have one.
-    await expect(page.locator('main')).not.toContainText('Connect Desk Portal to your HaloPSA environment');
+    await expect(page.locator('main')).not.toContainText('Connect PioManage to your HaloPSA environment');
   });
 
   test('a platform with a connector still offers the demo and the steps', async ({ page }) => {
     await page.goto('/integrations/autotask');
 
     await expect(page.getByRole('link', { name: /Book a demo/ }).first()).toBeVisible();
-    await expect(page.locator('main')).toContainText('Connect Desk Portal to your Autotask PSA environment');
+    await expect(page.locator('main')).toContainText('Connect PioManage to your Autotask PSA environment');
   });
 });

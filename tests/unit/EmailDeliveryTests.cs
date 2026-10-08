@@ -103,7 +103,7 @@ public class EmailDeliveryTests
     [Fact]
     public void Several_recipients_are_blind_copied_so_no_one_receives_the_others_addresses()
     {
-        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com", "b@acme.com"], "s", "body"), "reports@techpio.test", "Desk Portal");
+        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com", "b@acme.com"], "s", "body"), "reports@techpio.test", "PioManage");
 
         mime.To.Mailboxes.Select(m => m.Address).Should().Equal("reports@techpio.test");
         mime.Bcc.Mailboxes.Select(m => m.Address).Should().Equal("a@acme.com", "b@acme.com");
@@ -112,7 +112,7 @@ public class EmailDeliveryTests
     [Fact]
     public void A_single_recipient_is_addressed_directly()
     {
-        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com"], "s", "body"), "reports@techpio.test", "Desk Portal");
+        var mime = SmtpEmailSender.Build(new EmailMessage(["a@acme.com"], "s", "body"), "reports@techpio.test", "PioManage");
 
         mime.To.Mailboxes.Select(m => m.Address).Should().Equal("a@acme.com");
         mime.Bcc.Count.Should().Be(0);
