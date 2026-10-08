@@ -144,6 +144,27 @@ public abstract class ConnectorCertificationSuite
     }
 
     [Fact]
+    public async Task A_due_date_set_from_the_portal_is_what_is_read_back()
+    {
+        // The portal moves a ticket's due date later (Autotask dueDateTime, ConnectWise requiredDate,
+        // the mock's own). What the connector reads back as the ticket's due date must be that date,
+        // or the next sync would quietly put the old one back.
+        var c = CreateConnector();
+        var created = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "Needs more time", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "due-1", Priority = "High",
+        });
+        created.Success.Should().BeTrue();
+        var later = new DateTimeOffset(2026, 11, 3, 15, 0, 0, TimeSpan.Zero);
+
+        (await c.UpdateTicketAsync(created.ExternalId!, new UnifiedTicketUpdate { DueDate = later, IdempotencyKey = "due-2" })).Success.Should().BeTrue();
+
+        var read = await c.GetTicketAsync(created.ExternalId!);
+        read!.SlaDueAt.Should().NotBeNull();
+        read.SlaDueAt!.Value.ToUniversalTime().Should().Be(later);
+    }
+
+    [Fact]
     public async Task Update_of_missing_ticket_is_not_found()
     {
         var act = async () => await CreateConnector().UpdateTicketAsync("999999", new UnifiedTicketUpdate { IdempotencyKey = "x" });

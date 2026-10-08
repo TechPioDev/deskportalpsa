@@ -147,6 +147,19 @@ public class Ticket : TenantEntity
     // SLA & time
     public DateTimeOffset? SlaDueAt { get; set; }
 
+    /// <summary>
+    /// The due date before the first time somebody moved it, kept so an extended ticket can be told
+    /// from one that was simply on time. Null until the first extension; never changed after.
+    /// </summary>
+    public DateTimeOffset? OriginalSlaDueAt { get; set; }
+    /// <summary>How many times the due date was moved later from the portal.</summary>
+    public int DueDateExtensions { get; set; }
+    public DateTimeOffset? DueDateExtendedAt { get; set; }
+    public Guid? DueDateExtendedByUserId { get; set; }
+    public string? DueDateExtendedByName { get; set; }
+    /// <summary>Why the last extension was given. Staff only; a client is never sent it.</summary>
+    public string? DueDateExtensionReason { get; set; }
+
     /// <summary>The plan a board ticket's due dates came from, kept so the ticket can say why it is due when it is.</summary>
     public Guid? SlaPlanId { get; set; }
 

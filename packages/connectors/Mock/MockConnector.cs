@@ -142,6 +142,7 @@ public sealed class MockConnector : IServiceManagementConnector
             Category = update.Category ?? t.Category,
             QueueOrBoard = update.QueueOrBoard ?? t.QueueOrBoard,
             AssignedTechnicianExternalId = update.AssignedTechnicianExternalId ?? t.AssignedTechnicianExternalId,
+            SlaDueAt = update.DueDate ?? t.SlaDueAt,
             ModifiedAt = _clock.GetUtcNow(),
         };
         return Task.FromResult(new UpdateTicketResult(true, null));

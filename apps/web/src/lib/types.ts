@@ -158,6 +158,11 @@ export const TicketDetailSchema = z.object({
   // The SLA plan the due dates came from, and its reply promise. Staff only; null otherwise.
   slaPlanName: z.string().nullable().default(null),
   slaDueAt: z.string().nullable().default(null),
+  // How the due date was moved, where it was. Null when never moved, and always for a client.
+  dueDate: z.object({
+    dueAt: z.string().nullable(), originalDueAt: z.string().nullable(), extensions: z.number(),
+    lastExtendedAt: z.string().nullable(), lastExtendedByName: z.string().nullable(), lastReason: z.string().nullable(),
+  }).nullable().default(null),
   firstResponseDueAt: z.string().nullable().default(null),
   firstRespondedAt: z.string().nullable().default(null),
   slaPausedAt: z.string().nullable().default(null),

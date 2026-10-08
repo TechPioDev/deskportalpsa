@@ -202,7 +202,25 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
         CreateRequests.Add(ticket);
         return Task.FromResult(NextCreateResult);
     }
-    public Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default) => No<UpdateTicketResult>();
+    /// <summary>The PSA could not be reached, or refused in a way the caller must handle: thrown by every write.</summary>
+    public ConnectorException? WriteFailure { get; set; }
+    /// <summary>With <see cref="WriteFailure"/>: the write lands and only the answer is lost.</summary>
+    public bool WritesLandButAnswerIsLost { get; set; }
+    /// <summary>Every status the stub was asked to set, in order. On by setting <see cref="AcceptsWrites"/>.</summary>
+    public List<(string TicketId, UnifiedTicketUpdate Update)> Updates { get; } = [];
+    /// <summary>Off, a write is refused as a capability the stub does not claim; on, it is recorded and accepted.</summary>
+    public bool AcceptsWrites { get; set; }
+    /// <summary>The PSA's own words when it says no to a write.</summary>
+    public string? WriteRefusal { get; set; }
+
+    public Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default)
+    {
+        if (!AcceptsWrites) return No<UpdateTicketResult>();
+        if (WriteFailure is { } away && !WritesLandButAnswerIsLost) throw away;
+        Updates.Add((ticketId, update));
+        if (WriteFailure is { } lost) throw lost;
+        return Task.FromResult(WriteRefusal is { } no ? new UpdateTicketResult(false, no) : new UpdateTicketResult(true, null));
+    }
     public Task<CreateNoteResult> AddPublicNoteAsync(string ticketId, UnifiedTicketNoteCreateRequest note, CancellationToken ct = default) => No<CreateNoteResult>();
     /// <summary>Time entries per external ticket id.</summary>
     public Dictionary<string, List<UnifiedTimeEntry>> TimeEntries { get; } = [];

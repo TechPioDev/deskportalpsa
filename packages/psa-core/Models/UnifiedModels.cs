@@ -127,6 +127,8 @@ public record UnifiedTicketUpdate
     /// resource and its role are a pair there — so this is not decoration.
     /// </summary>
     public string? AssignedTechnicianRoleId { get; init; }
+    /// <summary>A new due date (Autotask dueDateTime, ConnectWise requiredDate). Null leaves it as it is.</summary>
+    public DateTimeOffset? DueDate { get; init; }
     public required string IdempotencyKey { get; init; }
 }
 
