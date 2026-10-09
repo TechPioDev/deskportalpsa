@@ -326,6 +326,9 @@ export const ProviderCatalogEntrySchema = z.object({
   credentials: z.array(z.object({
     key: z.string(), label: z.string(), secret: z.boolean(), hint: z.string().nullable().default(null),
   })).default([]),
+  // Two letters for a connection's tile where no logo has been uploaded. From the server, so a new
+  // connector needs no entry here.
+  mark: z.string().default(''),
 });
 export type ProviderCatalogEntry = z.infer<typeof ProviderCatalogEntrySchema>;
 
