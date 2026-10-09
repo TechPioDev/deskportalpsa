@@ -137,6 +137,15 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy("public-forms", ctx => RateLimitPartition.GetFixedWindowLimiter(
         partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(10) }));
+    // The pages behind an invitation or password-reset link. A person opens the link, the page asks
+    // what it is, they type a password, maybe reload, maybe ask for a reset twice: a handful of
+    // requests, which the enquiry form's five-in-ten-minutes would refuse. The token is the credential;
+    // this limit is against guessing it, which thirty a minute makes hopeless. Local mode may raise it,
+    // because the browser suite drives these pages from one address, in several browsers, in a row.
+    var publicLinksLimit = localMode ? config.GetValue("RateLimiting:PublicLinksPermitLimit", 30) : 30;
+    o.AddPolicy("public-links", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = publicLinksLimit, Window = TimeSpan.FromMinutes(1) }));
 });
 
 // ---- CORS (allowlist from config) ----

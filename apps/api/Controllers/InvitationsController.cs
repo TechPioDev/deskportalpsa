@@ -12,12 +12,13 @@ namespace Desk.Api.Controllers;
 /// <summary>
 /// The public side of an invitation or a password reset: what the page at a link shows, and
 /// using the link. Anonymous by design (the person has no sign-in yet, or has lost it), and
-/// rate-limited like the other public forms. Nothing here says whether an address exists.
+/// rate-limited per address (thirty a minute: enough for a person, hopeless for guessing a
+/// token). Nothing here says whether an address exists.
 /// </summary>
 [ApiController]
 [AllowAnonymous]
 [Route("api/public")]
-[EnableRateLimiting("public-forms")]
+[EnableRateLimiting("public-links")]
 public sealed class InvitationsController(IInvitationService invitations) : ControllerBase
 {
     public sealed record AcceptRequest(string Password);
