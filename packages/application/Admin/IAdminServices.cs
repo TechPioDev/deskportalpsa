@@ -118,6 +118,14 @@ public interface IMappingAdminService
     Task<MappingRuleDto> UpsertAsync(UpsertMappingInput input, string? changeNote, CancellationToken ct = default);
     Task<IReadOnlyList<MappingVersionDto>> VersionsAsync(ProviderType provider, Guid? connectionId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Says what values a connection's PSA sends should become in the portal: any number of PSA
+    /// values to one portal value. Every change is checked before any is made; the set is saved,
+    /// snapshotted and audited together, with what each value was mapped to before.
+    /// </summary>
+    Task<InboundMappingResultDto> SetInboundAsync(
+        Guid connectionId, IReadOnlyList<SetInboundMappingInput> changes, string? changeNote, CancellationToken ct = default);
+
     /// <summary>Removes a mapping rule entirely (snapshotted + audited, like any other change).</summary>
     Task DeleteAsync(Guid ruleId, CancellationToken ct = default);
     Task RollbackAsync(Guid versionId, CancellationToken ct = default);

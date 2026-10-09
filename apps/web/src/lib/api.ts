@@ -1169,6 +1169,17 @@ export const api = {
     note?: string,
   ) => request(`/api/admin/mappings${note ? `?note=${encodeURIComponent(note)}` : ''}`,
     MappingRuleSchema, { method: 'POST', body: JSON.stringify(body) }),
+  /** The portal's own statuses and priorities: what a PSA's values are mapped to. */
+  mappingVocabulary: () =>
+    request('/api/admin/mappings/vocabulary', z.object({ statuses: z.array(z.string()), priorities: z.array(z.string()) })),
+  /**
+   * What values a connection's PSA sends should become in the portal. Any number, checked and
+   * saved together; a null portal value takes the mapping away.
+   */
+  setInboundMappings: (connectionId: string, changes: { field: string; value: string; portalValue: string | null }[], note?: string) =>
+    request(`/api/admin/mappings/inbound/${connectionId}${note ? `?note=${encodeURIComponent(note)}` : ''}`,
+      z.object({ changed: z.number(), changes: z.array(z.string()).default([]) }),
+      { method: 'PUT', body: JSON.stringify(changes) }),
   deleteMapping: (ruleId: string) =>
     request(`/api/admin/mappings/${ruleId}`, z.unknown(), { method: 'DELETE' }),
   mappingSnapshotStatus: (provider: number, connectionId: string) =>

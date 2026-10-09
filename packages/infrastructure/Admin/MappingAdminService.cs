@@ -97,6 +97,107 @@ public sealed class MappingAdminService(
         return Dto(rule);
     }
 
+    /// <summary>The portal's values a PSA's values of this field are mapped to. Null: not a field mapped that way.</summary>
+    private static IReadOnlyList<string>? Vocabulary(string? field) => field?.Trim().ToLowerInvariant() switch
+    {
+        "status" => Desk.Domain.Tickets.PortalVocabulary.Statuses,
+        "priority" => Desk.Domain.Tickets.PortalVocabulary.Priorities,
+        _ => null,
+    };
+
+    private static bool Same(string? a, string? b) => string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    public async Task<InboundMappingResultDto> SetInboundAsync(
+        Guid connectionId, IReadOnlyList<SetInboundMappingInput> changes, string? changeNote, CancellationToken ct = default)
+    {
+        var connection = await db.PsaConnections.AsNoTracking()
+            .Where(c => c.Id == connectionId)
+            .Select(c => new { c.Id, c.Provider, c.Name })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException("PSA connection");
+        if (changes.Count == 0) return new InboundMappingResultDto(0, []);
+
+        // Everything is checked before anything is changed, and every problem is said at once.
+        var problems = new List<string>();
+        if (changes.Count > 500) problems.Add("At most 500 values can be changed at once.");
+        foreach (var change in changes)
+        {
+            var allowed = Vocabulary(change.Field);
+            if (allowed is null)
+                problems.Add($"\"{change.Field}\" is not a field whose values are mapped to the portal's own.");
+            else if (string.IsNullOrWhiteSpace(change.Value))
+                problems.Add($"A {change.Field.Trim().ToLowerInvariant()} from the PSA is missing its value.");
+            else if (change.Value.Trim().Length > 200)
+                problems.Add($"\"{change.Value.Trim()[..40]}…\" is too long to be a value from the PSA.");
+            else if (change.PortalValue is not null && !allowed.Contains(change.PortalValue))
+                problems.Add($"\"{change.PortalValue}\" is not one of the portal's {change.Field.Trim().ToLowerInvariant()} values ({string.Join(", ", allowed)}).");
+        }
+        problems.AddRange(changes
+            .Where(c => Vocabulary(c.Field) is not null && !string.IsNullOrWhiteSpace(c.Value))
+            .GroupBy(c => (Field: c.Field.Trim().ToLowerInvariant(), Value: c.Value.Trim().ToLowerInvariant()))
+            .Where(g => g.Count() > 1)
+            .Select(g => $"\"{g.First().Value.Trim()}\" is given two answers."));
+        if (problems.Count > 0) throw new ValidationFailedException(string.Join(" ", problems.Distinct()));
+
+        // This connection's own rules. A provider-wide rule is not this connection's to change, and a
+        // rule for one connection outranks it in any case.
+        var rules = await db.FieldMappings
+            .Where(m => m.Provider == connection.Provider && m.PsaConnectionId == connectionId && m.Scope == MappingScope.ConnectionOverride)
+            .ToListAsync(ct);
+        var done = new List<string>();
+
+        foreach (var change in changes)
+        {
+            var field = change.Field.Trim().ToLowerInvariant();
+            var value = change.Value.Trim();
+            // The rules that decide what this value ARRIVES as. There should be one; rules written
+            // before this could be two, and which of them won was not something anyone chose.
+            var arriving = rules
+                .Where(r => r.IsActive && Same(r.ExternalField, field) && Same(r.ExternalValue, value)
+                            && r.Direction is MappingDirection.Bidirectional or MappingDirection.ProviderToPortal)
+                .ToList();
+            var before = arriving.Select(r => r.PortalValue).FirstOrDefault(v => v is not null);
+            if (arriving.Count <= 1 && before == change.PortalValue) continue;
+
+            foreach (var rule in arriving)
+            {
+                if (rule.Direction == MappingDirection.Bidirectional)
+                {
+                    // It is also what the portal SENDS for its own value, and that half is not being
+                    // changed: only what arrives is.
+                    rule.Direction = MappingDirection.PortalToProvider;
+                    rule.Version++;
+                }
+                else
+                {
+                    db.FieldMappings.Remove(rule);
+                    rules.Remove(rule);
+                }
+            }
+            if (change.PortalValue is { } target)
+            {
+                var rule = new FieldMapping
+                {
+                    Provider = connection.Provider, Scope = MappingScope.ConnectionOverride, PsaConnectionId = connectionId,
+                    PortalField = field, PortalValue = target, ExternalField = field, ExternalValue = value,
+                    Direction = MappingDirection.ProviderToPortal,
+                };
+                db.FieldMappings.Add(rule);
+                rules.Add(rule);
+            }
+            done.Add($"{field}: {value} → {change.PortalValue ?? "not mapped"} (was {before ?? "not mapped"})");
+        }
+
+        if (done.Count == 0) return new InboundMappingResultDto(0, []);
+        await db.SaveChangesAsync(ct);
+        await SnapshotAsync(connection.Provider, connectionId,
+            string.IsNullOrWhiteSpace(changeNote) ? $"{done.Count} {(done.Count == 1 ? "value" : "values")} from the PSA mapped" : changeNote, ct);
+        // Who, when, which connection, and each value's old and new answer.
+        await audit.WriteAsync("mapping.inbound.changed", "PsaConnection", connectionId.ToString(),
+            new { connection.Name, changes = done }, ct);
+        return new InboundMappingResultDto(done.Count, done);
+    }
+
     public async Task DeleteAsync(Guid ruleId, CancellationToken ct = default)
     {
         var rule = await db.FieldMappings.FirstOrDefaultAsync(m => m.Id == ruleId, ct)

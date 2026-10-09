@@ -502,7 +502,8 @@ which affects people today, and the security finding, and can be deployed on its
 | 3b. Add-connection wizard | **Built**, stacked on 3a | 13 more tests; 1,506 pass in both time-zone modes, and 73 browser tests pass in Chromium. Three of them drive the wizard: one checks the catalog and each PSA's own fields, one runs against a closed port (the connection stays in setup and the API refuses to switch it on), one from the first step to the last against a stand-in ConnectWise started inside the test, with the real connector making real HTTP calls. In that run the count carries the board that was ticked and not one request other than a GET reaches the PSA. S6 is closed. No migration |
 | 3c. What belongs to a connection | **Built**, stacked on 3b | 10 more tests; 1,516 pass in both time-zone modes, and the 73 browser tests pass in Chromium. T3, the rest of T5 and T6 are closed. For T3 each place a person is counted (team table, daily hours, satisfaction, ticket list and its filter, client workload, portal coverage) has a test asserted from what the service returns, and five of the six that the old code can compile fail against it. The pinned query budgets are unchanged. No migration |
 | 4a. Mapping health | **Built**, stacked on 3c | 8 more tests; 1,524 pass in both time-zone modes, and the 73 browser tests pass in Chromium (the wizard's test now also reads the report and the sample). See [mapping-health.md](mapping-health.md). R4 is closed: what a PSA sends that nothing maps is reported with the tickets that hold it and what the portal is doing with them meanwhile, and a new rule can be applied to tickets already imported. Nothing is stored for it; no migration |
-| 4b, 4c, 5 to 7 | Not started. 4b is the Field Mapping page's rework (search, filter to unmapped, counts, suggestions, bulk changes with a preview, history); 4c is technician states and suggestions, client mapping (R5), work types (R6) and custom fields. A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
+| 4b. Mapping what a PSA sends | **Built**, stacked on 4a | 7 more tests; 1,531 pass in both time-zone modes, and the 73 browser tests pass in Chromium (the wizard's test now maps two statuses on the Field Mapping page, from a suggestion, and checks nothing is saved until the list of changes is). The Field Mapping page could save one rule per portal status, and the API overwrote a second PSA status mapped to the same one: production's inbound rules for its other PSA statuses were not made on that page, which could not make them. Any number of PSA values can now be mapped to one portal value through the product, staged and reviewed before saving, saved as one version and audited with what each value was mapped to before. No migration |
+| 4c, 5 to 7 | Not started. 4c is technician states and suggestions, client mapping (R5), work types (R6) and custom fields. A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -591,6 +592,17 @@ What slice 4a changes for people:
   that still show the PSA's own word. It does not touch a status someone set in the portal, and
   sends nothing to the PSA.
 - The add-connection wizard shows a sample of real tickets with what the rules would make of them.
+
+What slice 4b changes for people:
+
+- The Field Mapping page has a new section, **What the PSA sends**, for statuses and priorities.
+  It lists every value the PSA sends with the tickets that hold it, and each can be given the
+  portal value it becomes. Several PSA statuses can become the same portal status.
+- It can be searched, filtered to what is unmapped, and it suggests the values that are the same
+  words as a portal value. Several values can be ticked and mapped at once.
+- Nothing is saved as it is chosen. Changes are listed, with what each value was mapped to before,
+  and saved together.
+- The history records who changed what, on which connection, from what to what.
 
 Two decisions taken while building it, recorded because they differ from the first plan:
 

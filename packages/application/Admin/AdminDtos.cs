@@ -416,3 +416,14 @@ public sealed record MappingPreviewRowDto(
     string Reference, string Title, string? SourceStatus, string? MappedStatus, string? SourcePriority, string? MappedPriority, bool ReadFromPsa);
 
 public sealed record MappingApplyResultDto(int StatusesChanged, int PrioritiesChanged, IReadOnlyList<string> Changes);
+
+/// <summary>
+/// What one value a PSA sends should become in the portal. A null <paramref name="PortalValue"/>
+/// takes the mapping away: the value then arrives as the PSA wrote it.
+/// </summary>
+public sealed record SetInboundMappingInput(string Field, string Value, string? PortalValue);
+
+public sealed record InboundMappingResultDto(int Changed, IReadOnlyList<string> Changes);
+
+/// <summary>The portal's own words: what a PSA's statuses and priorities are mapped to.</summary>
+public sealed record PortalVocabularyDto(IReadOnlyList<string> Statuses, IReadOnlyList<string> Priorities);
