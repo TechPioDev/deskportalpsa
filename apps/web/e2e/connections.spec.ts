@@ -242,10 +242,16 @@ test('a connection is added a step at a time against a PSA and is switched on on
   await sends.getByRole('button', { name: 'Suggest exact matches (2)' }).click();
   await expect(sends.getByText('2 changes not saved yet')).toBeVisible();
   await expect(sends.getByText('(was not mapped)')).toHaveCount(2);
-  expect((await (await page.request.get('/api/bff/api/admin/mappings?provider=1')).json() as unknown[]).length, 'a suggestion is not a saved rule').toBe(0);
+  // Counted on THIS connection: the cross-browser job runs the browsers one after another against
+  // one database, and the earlier browser's run has saved its own two rules by now.
+  const rulesOfThisConnection = async () =>
+    ((await (await page.request.get('/api/bff/api/admin/mappings?provider=1')).json()) as { psaConnectionId?: string | null }[])
+      .filter((r) => r.psaConnectionId === saved.id).length;
+  expect(await rulesOfThisConnection(), 'a suggestion is not a saved rule').toBe(0);
   await sends.getByRole('button', { name: 'Save these 2 changes' }).click();
   await expect(sends.getByText('Saved 2 changes.')).toBeVisible();
   await expect(sends.getByText('2 of 2 mapped')).toBeVisible();
+  expect(await rulesOfThisConnection(), 'the two suggestions are now two rules of this connection').toBe(2);
   await page.reload();
   await expect(page.getByRole('region', { name: 'What the PSA sends' }).getByLabel('What New becomes in the portal')).toHaveValue('NEW');
   await expect(page.getByRole('region', { name: 'What the PSA sends' }).getByLabel('What Closed becomes in the portal')).toHaveValue('CLOSED');
