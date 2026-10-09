@@ -31,6 +31,14 @@ export function SetPasswordCard({ token, purpose }: { token: string; purpose: 'i
   const localMode = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
 
   if (lookup.isLoading) return <Card><p className="text-sm text-[var(--muted)]">Checking your link…</p></Card>;
+  if (lookup.isError && message(lookup.error, '').includes('429')) {
+    return (
+      <Card>
+        <h2 className="text-xl font-semibold tracking-tight">Too many attempts</h2>
+        <p className="mt-2 text-sm text-[var(--muted)]">This address has asked too often in the last minute. Wait a minute and open the link again.</p>
+      </Card>
+    );
+  }
   if (lookup.isError || !lookup.data) {
     return (
       <Card>
