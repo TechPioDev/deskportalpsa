@@ -501,7 +501,8 @@ which affects people today, and the security finding, and can be deployed on its
 | 3a. Connection lifecycle | **Built**, stacked on 2b | 37 more tests; 1,493 pass in both time-zone modes, and 2 more browser tests (72 pass in Chromium). The new connection queries also run through a SQL translator in every state, and the migration was applied to a PostgreSQL 17 database from the generated script. See [connections.md](connections.md). S4 and S5 are closed, and the first half of T5 (the same PSA account connected twice). Driven in a browser against a stand-in PSA: a connection whose keys are rejected stays in setup with the reason, corrected keys switch it on, and pause, resume, disable, enable, archive and restore each do what the screen says. One migration, additive (five columns on `psa_connections`) |
 | 3b. Add-connection wizard | **Built**, stacked on 3a | 13 more tests; 1,506 pass in both time-zone modes, and 73 browser tests pass in Chromium. Three of them drive the wizard: one checks the catalog and each PSA's own fields, one runs against a closed port (the connection stays in setup and the API refuses to switch it on), one from the first step to the last against a stand-in ConnectWise started inside the test, with the real connector making real HTTP calls. In that run the count carries the board that was ticked and not one request other than a GET reaches the PSA. S6 is closed. No migration |
 | 3c. What belongs to a connection | **Built**, stacked on 3b | 10 more tests; 1,516 pass in both time-zone modes, and the 73 browser tests pass in Chromium. T3, the rest of T5 and T6 are closed. For T3 each place a person is counted (team table, daily hours, satisfaction, ticket list and its filter, client workload, portal coverage) has a test asserted from what the service returns, and five of the six that the old code can compile fail against it. The pinned query budgets are unchanged. No migration |
-| 4 to 7 | Not started. A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
+| 4a. Mapping health | **Built**, stacked on 3c | 8 more tests; 1,524 pass in both time-zone modes, and the 73 browser tests pass in Chromium (the wizard's test now also reads the report and the sample). See [mapping-health.md](mapping-health.md). R4 is closed: what a PSA sends that nothing maps is reported with the tickets that hold it and what the portal is doing with them meanwhile, and a new rule can be applied to tickets already imported. Nothing is stored for it; no migration |
+| 4b, 4c, 5 to 7 | Not started. 4b is the Field Mapping page's rework (search, filter to unmapped, counts, suggestions, bulk changes with a preview, history); 4c is technician states and suggestions, client mapping (R5), work types (R6) and custom fields. A manual sync that runs in the background moves to slice 6 with the job queue's atomic claim (R11): until then it runs in the request, bounded to 50 pages and one run per connection | |
 
 What slice 1 changes for people, stated here because two of them are visible:
 
@@ -576,12 +577,31 @@ What slice 3c changes for people (nothing today; it matters from the second acco
 - With two accounts of the same PSA, a ticket is referred to by its connection ("Customer A
   12345"). With one, it reads "Autotask 12345" as before.
 
+What slice 4a changes for people:
+
+- Each live connection's card has a **Mapping** panel. It lists every status and priority the PSA
+  sends, what each becomes in the portal, how many tickets hold it, and - for a status nothing maps
+  - that those tickets are being counted as open work (or finished, where the PSA's own word says
+  so). In production on 6 Oct 2026 every status and priority that tickets hold is mapped, on both
+  connections (137 Autotask tickets, 13 ConnectWise; read from the database, not assumed), so the
+  panel will report no unmapped ticket there today. It is there for the next value a PSA adds.
+- It says which statuses the portal can be set to that the PSA has no counterpart for, before
+  someone tries to set one and is refused.
+- After mapping a value, **Apply the mapping to tickets already here** re-maps the imported tickets
+  that still show the PSA's own word. It does not touch a status someone set in the portal, and
+  sends nothing to the PSA.
+- The add-connection wizard shows a sample of real tickets with what the rules would make of them.
+
 Two decisions taken while building it, recorded because they differ from the first plan:
 
 - **No unique index on notes or attachments by the PSA's id.** A reply written in the portal and a
   sync reading the same ticket can legitimately race; an index would turn a rare duplicate note into
   a failed reply that the PSA had already accepted, and the person would send it again. The lock
   closes the case that mattered: two syncs.
+- **No register of unmapped values is stored.** The first plan had a table of them. A ticket
+  already keeps the status and priority it arrived with beside the portal's, so what is unmapped is
+  worked out from the tickets and the rules each time it is asked. A table would have had to be
+  kept in step with every rule change, rollback and re-sync, and could be wrong; this cannot.
 - **`app_users.ExternalTechnicianId` is not dropped yet.** Nothing reads it any more, but the
   previous version of the code selects it, and a zero-downtime deploy runs both versions for a
   moment. It goes in a later release.

@@ -8,6 +8,7 @@ import type { ConnectionSummary, ConnectionFields } from '@/lib/types';
 import { SyncSettings } from './SyncSettings';
 import { SyncActivity } from './SyncActivity';
 import { ConnectionWizard } from './ConnectionWizard';
+import { MappingHealth } from './MappingHealth';
 
 // ConnectionStatus enum: 0 Disabled, 1 Pending, 2 Healthy, 3 Degraded, 4 Failed
 const STATUS_LABEL: Record<number, string> = { 0: 'Disabled', 1: 'Pending', 2: 'Healthy', 3: 'Degraded', 4: 'Failed' };
@@ -214,6 +215,7 @@ export default function ConnectionsPage() {
 
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [activityId, setActivityId] = useState<string | null>(null);
+  const [mappingId, setMappingId] = useState<string | null>(null);
   const [manageId, setManageId] = useState<string | null>(null);
 
   // Live field discovery (boards/queues, statuses, priorities, categories)
@@ -402,6 +404,8 @@ export default function ConnectionsPage() {
               syncing={sync.isPending && sync.variables?.id === c.id}
               settingsOpen={settingsId === c.id}
               onToggleSettings={() => setSettingsId(settingsId === c.id ? null : c.id)}
+              mappingOpen={mappingId === c.id}
+              onToggleMapping={() => setMappingId(mappingId === c.id ? null : c.id)}
               activityOpen={activityId === c.id}
               onToggleActivity={() => setActivityId(activityId === c.id ? null : c.id)}
               manageOpen={manageId === c.id}
@@ -513,7 +517,7 @@ function ManageRow({ text, action, onClick, disabled }: { text: string; action: 
 
 function ConnectionCard({
   c, result, expanded, fields, onTest, testing, onContinueSetup, onSwitchOn, switchingOn, onSync, onResyncAll, syncing,
-  settingsOpen, onToggleSettings, activityOpen, onToggleActivity, manageOpen, onToggleManage, onLifecycle, lifecycleBusy,
+  settingsOpen, onToggleSettings, mappingOpen, onToggleMapping, activityOpen, onToggleActivity, manageOpen, onToggleManage, onLifecycle, lifecycleBusy,
   onRefreshFields, refreshingFields, onEdit, onToggleFields,
 }: {
   c: ConnectionSummary;
@@ -530,6 +534,8 @@ function ConnectionCard({
   syncing: boolean;
   settingsOpen: boolean;
   onToggleSettings: () => void;
+  mappingOpen: boolean;
+  onToggleMapping: () => void;
   activityOpen: boolean;
   onToggleActivity: () => void;
   manageOpen: boolean;
@@ -686,6 +692,11 @@ function ConnectionCard({
         <ActionButton onClick={onToggleSettings}>
           <ChevronDown size={13} className={settingsOpen ? 'rotate-180 transition-transform' : 'transition-transform'} /> Sync settings
         </ActionButton>
+        {!inSetup && (
+          <ActionButton onClick={onToggleMapping}>
+            <ChevronDown size={13} className={mappingOpen ? 'rotate-180 transition-transform' : 'transition-transform'} /> Mapping
+          </ActionButton>
+        )}
         <ActionButton onClick={onToggleActivity}>
           <ChevronDown size={13} className={activityOpen ? 'rotate-180 transition-transform' : 'transition-transform'} /> Sync activity
         </ActionButton>
@@ -697,6 +708,12 @@ function ConnectionCard({
       {settingsOpen && (
         <div className="border-t border-[var(--border)] px-5 py-4">
           <SyncSettings connectionId={c.id} provider={Number(c.provider)} />
+        </div>
+      )}
+
+      {mappingOpen && !inSetup && (
+        <div className="border-t border-[var(--border)] px-5 py-4">
+          <MappingHealth connectionId={c.id} />
         </div>
       )}
 

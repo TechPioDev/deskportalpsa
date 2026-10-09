@@ -86,8 +86,10 @@ time (a timeout, a rate limit): the report says what happened, and the sync carr
 
 ### Mapping, scope and preview
 
-- **Mapping.** Values are looked up the way the sync looks them up, with this connection's rules
-  only. A value no rule maps is shown as not mapped and counted. Nothing is guessed: it arrives as
+- **Mapping.** A sample of tickets is read from the PSA and shown with what the rules would make
+  of each; it is not kept. Once the connection is live its card has a **Mapping** panel with the
+  full report ([mapping-health.md](mapping-health.md)). Values are looked up the way the sync looks
+  them up, with this connection's rules only. A value no rule maps is shown as not mapped and counted. Nothing is guessed: it arrives as
   the PSA sends it until someone maps it. Unmapped values do not block; they are a warning the last
   step asks the administrator to acknowledge.
 - **Scope.** Queues or boards are ticked from the list the PSA gave, not typed as ids. None ticked
