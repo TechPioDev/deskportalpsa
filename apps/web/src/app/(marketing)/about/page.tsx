@@ -4,9 +4,9 @@ import { Section, Card, CtaBand, Container } from '@/components/marketing/ui';
 import { Hero } from '@/components/marketing/Hero';
 
 export const metadata: Metadata = {
-  title: 'About us — Desk Portal',
+  title: 'About us — PioManage',
   description:
-    'Desk Portal is built by TechPIO Services LLP for managed service providers, on top of the PSA they already run.',
+    'PioManage is built by TechPIO Services LLP for managed service providers, on top of the PSA they already run.',
 };
 
 export default function AboutPage() {
@@ -15,7 +15,7 @@ export default function AboutPage() {
       <Hero
         eyebrow="About us"
         title={<>Built by people who <span className="text-brand">work in a PSA</span> every day.</>}
-        lead="Desk Portal is made by TechPio. It exists because the gap between a managed service provider and its clients is usually filled with email, and email loses things."
+        lead="PioManage is made by TechPio. It exists because the gap between a managed service provider and its clients is usually filled with email, and email loses things."
         actions={
           <>
             <Link href="/book" className="rounded-lg bg-brand px-5 py-3 text-sm font-medium text-brand-fg transition-transform hover:-translate-y-0.5 hover:opacity-90">
@@ -42,7 +42,7 @@ export default function AboutPage() {
             and you have thrown away years of history and process.
           </p>
           <p>
-            So Desk Portal takes the opposite position: your PSA stays exactly as it is and remains
+            So PioManage takes the opposite position: your PSA stays exactly as it is and remains
             the source of truth. The portal is a clear, fast surface on top of it for the people who
             are not technicians — and it keeps itself honest by syncing continuously in both
             directions.
@@ -84,7 +84,7 @@ export default function AboutPage() {
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
           <h2 className="text-[15px] font-semibold">A note on where the product is</h2>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--muted)]">
-            Desk Portal is built around the PSA ecosystem MSPs actually run, with two-way sync of
+            PioManage is built around the PSA ecosystem MSPs actually run, with two-way sync of
             conversation, attachments and time. Every platform reuses the same connector layer, so
             the client experience is the same whichever PSA sits behind it. If you have a specific
             requirement, ask us on a call and we will walk you through exactly how it works for

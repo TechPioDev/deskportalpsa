@@ -21,7 +21,7 @@ public sealed class SmtpOptions
     public string? Username { get; init; }
     public string? Password { get; init; }
     public string? From { get; init; }
-    public string FromName { get; init; } = "Desk Portal";
+    public string FromName { get; init; } = "PioManage";
 
     /// <summary>"StartTls" (587, the default), "SslOnConnect" (465) or "None" (a local relay only).</summary>
     public string Security { get; init; } = "StartTls";

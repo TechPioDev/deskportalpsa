@@ -29,7 +29,7 @@ public class OrganizationEmailSettings : TenantEntity
     public string? PasswordSecretRef { get; set; }
 
     public required string FromAddress { get; set; }
-    public string FromName { get; set; } = "Desk Portal";
+    public string FromName { get; set; } = "PioManage";
 
     public Guid? UpdatedByUserId { get; set; }
 }

@@ -5,9 +5,9 @@ import { Container, CtaBand } from '@/components/marketing/ui';
 import { Hero } from '@/components/marketing/Hero';
 
 export const metadata: Metadata = {
-  title: 'FAQ — Desk Portal',
+  title: 'FAQ — PioManage',
   description:
-    'Common questions about how Desk Portal works with your PSA — sync, supported platforms, hosting, security and access.',
+    'Common questions about how PioManage works with your PSA — sync, supported platforms, hosting, security and access.',
 };
 
 const GROUPS: { heading: string; items: { q: string; a: string }[] }[] = [
@@ -15,12 +15,12 @@ const GROUPS: { heading: string; items: { q: string; a: string }[] }[] = [
     heading: 'How it works',
     items: [
       {
-        q: 'Does Desk Portal replace my PSA?',
-        a: 'No. Your PSA stays the system of record and your technicians keep working in it. Desk Portal is a client-facing surface on top, kept current by two-way sync. Nothing is migrated out of your PSA.',
+        q: 'Does PioManage replace my PSA?',
+        a: 'No. Your PSA stays the system of record and your technicians keep working in it. PioManage is a client-facing surface on top, kept current by two-way sync. Nothing is migrated out of your PSA.',
       },
       {
         q: 'Which PSA platforms are supported?',
-        a: 'Desk Portal is built around the PSA ecosystem MSPs actually run: ConnectWise PSA, Autotask PSA, HaloPSA, Kaseya BMS, Syncro, SuperOps, N-able MSP Manager and Atera. The connector layer is shared, so every platform reuses the same sync, mapping and client experience. Tell us which PSA you run and we will walk you through it on a call.',
+        a: 'PioManage is built around the PSA ecosystem MSPs actually run: ConnectWise PSA, Autotask PSA, HaloPSA, Kaseya BMS, Syncro, SuperOps, N-able MSP Manager and Atera. The connector layer is shared, so every platform reuses the same sync, mapping and client experience. Tell us which PSA you run and we will walk you through it on a call.',
       },
       {
         q: 'What syncs, and in which direction?',

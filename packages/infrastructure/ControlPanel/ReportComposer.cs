@@ -51,7 +51,7 @@ internal static class ReportComposer
         var sb = new StringBuilder();
         void Line(params string[] cells) => sb.Append(string.Join(',', cells.Select(Csv))).Append("\r\n");
 
-        Line("Desk Portal — Account Report");
+        Line("PioManage — Account Report");
         Line("Account", companyName);
         Line("Generated", generatedAt.ToString("u", CultureInfo.InvariantCulture));
         Line("");

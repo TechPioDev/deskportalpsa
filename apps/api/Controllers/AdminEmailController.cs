@@ -55,8 +55,8 @@ public sealed class AdminEmailController(
         try
         {
             await email.SendAsync(Org, new EmailMessage(valid,
-                "Desk Portal test email",
-                "This is a test from Desk Portal. If you can read it, scheduled reports will be delivered by email.\n"), ct);
+                "PioManage test email",
+                "This is a test from PioManage. If you can read it, scheduled reports will be delivered by email.\n"), ct);
             await audit.WriteAsync("email.test.sent", "Email", null, new { To = valid[0] }, ct);
             return Ok(new TestEmailResult(true, $"Test email sent to {valid[0]}."));
         }

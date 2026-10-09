@@ -5,8 +5,8 @@ import { LegalDoc, LegalList, type LegalSection } from '@/components/marketing/L
 import { CONTACT_EMAIL } from '@/components/marketing/MarketingFooter';
 
 export const metadata: Metadata = {
-  title: 'Terms of service — Desk Portal',
-  description: 'The terms on which Desk Portal is provided: what we do, what you agree to, and who owns what.',
+  title: 'Terms of service — PioManage',
+  description: 'The terms on which PioManage is provided: what we do, what you agree to, and who owns what.',
 };
 
 const SECTIONS: LegalSection[] = [
@@ -16,7 +16,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <>
         <p>
-          These terms govern your use of the piomanage.com website and the Desk Portal software
+          These terms govern your use of the piomanage.com website and the PioManage software
           provided by TechPio (&ldquo;we&rdquo;, &ldquo;us&rdquo;). By using either, you accept them.
         </p>
         <p>
@@ -32,7 +32,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <>
         <p>
-          Desk Portal is a client-facing ticket portal that synchronises with a professional services
+          PioManage is a client-facing ticket portal that synchronises with a professional services
           automation system you already operate.
         </p>
         <p>
@@ -98,7 +98,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <>
         <p>
-          Where you host Desk Portal yourself, availability is in your hands — we do not control your
+          Where you host PioManage yourself, availability is in your hands — we do not control your
           infrastructure and make no commitment about it.
         </p>
         <p>
@@ -129,7 +129,7 @@ const SECTIONS: LegalSection[] = [
     heading: 'Ownership',
     body: (
       <p>
-        We own the Desk Portal software, its design and its documentation, together with all
+        We own the PioManage software, its design and its documentation, together with all
         intellectual property in them. You are granted a non-exclusive, non-transferable right to use
         it for the term of your agreement. You own your data. Any feedback you give us we may use
         freely to improve the product, without obligation to you.
@@ -240,7 +240,7 @@ export default function TermsPage() {
         intro={
           <>
             <p>
-              These are the terms on which Desk Portal is provided. If you have a signed agreement
+              These are the terms on which PioManage is provided. If you have a signed agreement
               with us, that document wins wherever it differs from this page.
             </p>
             <p>

@@ -175,7 +175,7 @@ public static class DependencyInjection
         {
             Host = config["Email:Smtp:Host"], Port = config.GetValue("Email:Smtp:Port", 587),
             Username = config["Email:Smtp:Username"], Password = config["Email:Smtp:Password"],
-            From = config["Email:Smtp:From"], FromName = config["Email:Smtp:FromName"] is { Length: > 0 } n ? n : "Desk Portal",
+            From = config["Email:Smtp:From"], FromName = config["Email:Smtp:FromName"] is { Length: > 0 } n ? n : "PioManage",
             Security = config["Email:Smtp:Security"] is { Length: > 0 } sec ? sec : "StartTls",
             BlockPrivateHosts = EgressGuard.IsEnabled(config),
         });

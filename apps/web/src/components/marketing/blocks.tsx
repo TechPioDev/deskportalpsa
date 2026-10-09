@@ -103,7 +103,7 @@ export function PageHero({
  */
 export function CtaBand({
   title = 'Keep your PSA. Upgrade your client experience.',
-  lead = 'Desk Portal gives your clients a modern support experience while your team continues working in the PSA they already know.',
+  lead = 'PioManage gives your clients a modern support experience while your team continues working in the PSA they already know.',
   secondary = { href: '/integrations', label: 'Explore integrations' },
 }: {
   title?: string;

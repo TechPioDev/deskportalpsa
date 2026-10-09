@@ -7,7 +7,7 @@ import './globals.css';
 const sans = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-sans-ui' });
 
 export const metadata: Metadata = {
-  title: 'Desk Portal',
+  title: 'PioManage',
   description: 'Multi-tenant PSA ticket portal',
   // Installable on a phone: the manifest is app/manifest.ts; iPhone reads its own icon and title.
   icons: { apple: '/icons/apple-touch-icon.png' },

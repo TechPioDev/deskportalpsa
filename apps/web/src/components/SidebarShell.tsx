@@ -81,12 +81,12 @@ export function SidebarShell() {
         className={`mb-6 flex items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] ${
           collapsed ? 'justify-center p-1.5' : 'gap-2.5 p-2.5'
         }`}
-        title={collapsed ? 'Desk Portal' : undefined}
+        title={collapsed ? 'PioManage' : undefined}
       >
         <BrandMark size={collapsed ? 32 : 36} className="shrink-0 rounded-lg" />
         {!collapsed && (
           <div className="min-w-0">
-            <div className="truncate text-[15px] font-semibold leading-tight tracking-tight">Desk Portal</div>
+            <div className="truncate text-[15px] font-semibold leading-tight tracking-tight">PioManage</div>
             <div className="truncate text-[10px] text-[var(--muted)]">Multi-tenant PSA Portal</div>
           </div>
         )}

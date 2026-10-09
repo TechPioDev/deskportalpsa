@@ -23,13 +23,13 @@ export function PsaEcosystem() {
         viewBox="0 0 1000 300"
         className="hidden h-auto w-full lg:block"
         role="img"
-        aria-label={`Desk Portal is built for ${PSA_PLATFORMS.length} PSA platforms: ${PSA_PLATFORMS.map((p) => p.name).join(', ')}.`}
+        aria-label={`PioManage is built for ${PSA_PLATFORMS.length} PSA platforms: ${PSA_PLATFORMS.map((p) => p.name).join(', ')}.`}
       >
         {/* Two lines, not one. SVG text does not wrap, and as a single line this subtitle measured
             ~250 units inside a 260-unit box — touching both edges. The break is therefore explicit. */}
         <rect x={hubX - 140} y="12" width="280" height="86" rx="18" fill="var(--brand-line)" />
         <text x={hubX} y="42" textAnchor="middle" fontSize="16" fontWeight="600" fill="var(--surface)">
-          Desk Portal
+          PioManage
         </text>
         <text x={hubX} textAnchor="middle" fontSize="11" fill="var(--surface)" fillOpacity="0.8">
           <tspan x={hubX} y="63">One client experience</tspan>
@@ -63,7 +63,7 @@ export function PsaEcosystem() {
 
       <div className="lg:hidden">
         <div className="mx-auto mb-6 max-w-xs rounded-2xl bg-brand px-5 py-4 text-center text-brand-fg">
-          <p className="text-sm font-semibold">Desk Portal</p>
+          <p className="text-sm font-semibold">PioManage</p>
           <p className="mt-0.5 text-[11.5px] leading-snug text-brand-fg/80">
             One client experience across your PSA ecosystem
           </p>

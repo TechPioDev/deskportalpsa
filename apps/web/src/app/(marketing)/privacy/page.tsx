@@ -5,9 +5,9 @@ import { LegalDoc, LegalList, type LegalSection } from '@/components/marketing/L
 import { CONTACT_EMAIL } from '@/components/marketing/MarketingFooter';
 
 export const metadata: Metadata = {
-  title: 'Privacy policy — Desk Portal',
+  title: 'Privacy policy — PioManage',
   description:
-    'What Desk Portal collects, why, where it is held, and how to have it corrected or removed.',
+    'What PioManage collects, why, where it is held, and how to have it corrected or removed.',
 };
 
 const SECTIONS: LegalSection[] = [
@@ -17,7 +17,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <>
         <p>
-          Desk Portal is operated by TechPio (&ldquo;we&rdquo;, &ldquo;us&rdquo;), registered at{' '}
+          PioManage is operated by TechPio (&ldquo;we&rdquo;, &ldquo;us&rdquo;), registered at{' '}
           F-88, Phase 8B, Industrial Area, Mohali, Punjab 160055, India. For anything in this
           policy, write to{' '}
           <a className="text-brand underline underline-offset-2" href={`mailto:${CONTACT_EMAIL}`}>
@@ -26,8 +26,8 @@ const SECTIONS: LegalSection[] = [
           .
         </p>
         <p>
-          This policy covers the piomanage.com website and the Desk Portal service. Where a customer
-          hosts Desk Portal on their own infrastructure, they are the controller of the data inside
+          This policy covers the piomanage.com website and the PioManage service. Where a customer
+          hosts PioManage on their own infrastructure, they are the controller of the data inside
           it and their own privacy notice governs it; this policy then covers only our website and
           any support we provide.
         </p>
@@ -132,7 +132,7 @@ const SECTIONS: LegalSection[] = [
     body: (
       <p>
         Our website and its data are hosted in the United States. Customers who run
-        Desk Portal themselves choose where their own instance lives; the product is designed to be
+        PioManage themselves choose where their own instance lives; the product is designed to be
         self-hosted precisely so that client data need not sit with a vendor.
       </p>
     ),
@@ -227,7 +227,7 @@ export default function PrivacyPage() {
           <>
             <p>
               This policy explains how we handle personal data on the piomanage.com website and in
-              the Desk Portal service. It is written to be read, not to be survived — if anything
+              the PioManage service. It is written to be read, not to be survived — if anything
               here is unclear, ask us and we will explain it plainly.
             </p>
             <p>

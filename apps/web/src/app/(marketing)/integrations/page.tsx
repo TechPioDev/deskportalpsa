@@ -7,7 +7,7 @@ import { PSA_PLATFORMS } from '@/lib/psaPlatforms';
 import { PLATFORM_PILLARS } from '@/lib/marketingContent';
 
 export const metadata: Metadata = {
-  title: 'Integrations — Desk Portal',
+  title: 'Integrations — PioManage',
   description: `One client portal across ${PSA_PLATFORMS.length} PSA platforms. Connect the service management platform your MSP already runs and give every client the same experience.`,
   alternates: { canonical: '/integrations' },
 };
@@ -18,7 +18,7 @@ export default function IntegrationsPage() {
       <PageHero
         eyebrow="Integrations"
         title="One portal. Multiple PSA platforms."
-        lead="Connect your PSA environment to Desk Portal and give clients a consistent experience across your service desk ecosystem — without changing how your technicians work."
+        lead="Connect your PSA environment to PioManage and give clients a consistent experience across your service desk ecosystem — without changing how your technicians work."
       />
 
       <Band>
