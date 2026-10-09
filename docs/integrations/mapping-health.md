@@ -132,7 +132,38 @@ The statuses and priorities a PSA's values are mapped *to* are listed once on th
 rows on the Field Mapping page (what the portal sends) still carry their own copy of the same two
 lists.
 
+## Technicians: linked, not linked, left alone
+
+A PSA login is one of three things on a connection.
+
+| State | What it means | Where it is set |
+|---|---|---|
+| **Linked** | This login is this portal user. Its tickets and time in the PSA count as theirs | A user's page, under PSA identity; or Users, Import from PSA |
+| **Not linked** | Shown under the PSA's own name. Still to do, or never needed | |
+| **Left alone** | An administrator has said it is nobody the portal needs to know as one of its people: an API or service account, someone who left | Import from PSA, or the Mapping panel's technician list |
+
+Before this there were two, and "not linked" read as something still to do: an API account sat in
+the list for good, and the count of technicians to link stopped meaning anything.
+
+- A suggestion is made only where the PSA's e-mail for the login is **exactly** a portal user's
+  (Import from PSA shows it as *Link*, and nothing is linked until that is pressed). Names are
+  never matched.
+- No portal user is ever created without an administrator choosing *Add* for that one technician,
+  and a login with no e-mail in the PSA cannot be added at all.
+- Leaving a login alone changes nothing about its tickets or time: they are shown under the PSA's
+  own name, as for any login that is not linked.
+- A login that is linked cannot be left alone, and linking a login that was left alone takes that
+  decision back. It is one or the other.
+- A login belongs to one connection: left alone on one PSA account is not left alone on another.
+- Each decision is audited (`psa.technician.ignored`, `psa.technician.unignored`) with the
+  connection and the login.
+
+`PUT /api/admin/psa-technicians/{connectionId}/{login}/ignored` (`users.manage`), body
+`{ "ignored": true, "name": "…" }`. One table, `psa_technician_ignores`, one row per login left
+alone (migration `PsaTechnicianIgnores`, additive).
+
 ## Not in these slices
 
-Queues, categories and work types keep the PSA's names by design and are not scored. Technician
-states and suggestions, client mapping, work types' lower levels and custom fields are slice 4c.
+Queues, categories and work types keep the PSA's names by design and are not scored. Client
+mapping waits on a decision (may one client login reach two companies?); work types' lower levels
+and custom fields are still to build.

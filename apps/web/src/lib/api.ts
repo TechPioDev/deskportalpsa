@@ -1499,11 +1499,15 @@ export const api = {
       name: z.string(),
       email: z.string(),
       isActive: z.boolean(),
-      link: z.number(),            // 0 not in portal, 1 matched by email, 2 linked
+      link: z.number(),            // 0 not in portal, 1 matched by email, 2 linked, 3 ignored (left alone on purpose)
       portalUserId: z.string().nullable(),
       canProvision: z.boolean(),
       blocker: z.string().nullable(),
     }))),
+  /** Says a PSA login is to be left alone (an API account, someone who left), or takes that back. */
+  setPsaTechnicianIgnored: (psaConnectionId: string, externalTechnicianId: string, ignored: boolean, name?: string | null) =>
+    request(`/api/admin/psa-technicians/${psaConnectionId}/${encodeURIComponent(externalTechnicianId)}/ignored`, z.void(),
+      { method: 'PUT', body: JSON.stringify({ ignored, name: name ?? null }) }),
   provisionTechnician: (psaConnectionId: string, externalTechnicianId: string) =>
     request(`/api/admin/psa-technicians/${psaConnectionId}/${encodeURIComponent(externalTechnicianId)}`,
       z.object({ id: z.string(), email: z.string(), displayName: z.string() }).passthrough(),

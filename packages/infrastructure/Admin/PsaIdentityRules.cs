@@ -25,4 +25,17 @@ public static class PsaIdentityRules
             throw new ValidationFailedException(
                 $"That PSA login is already linked to {holder}. Remove that link first, or choose another login.");
     }
+
+    /// <summary>
+    /// Removes the "leave this login alone" decision for a login that is being linked to a person.
+    /// Linked says the login IS someone; ignored says it is nobody; a login is not both. Not saved:
+    /// the caller saves it with the link.
+    /// </summary>
+    public static async Task StopIgnoringAsync(DeskDbContext db, Guid psaConnectionId, string externalTechnicianId, CancellationToken ct = default)
+    {
+        var id = externalTechnicianId.Trim();
+        var rows = (await db.PsaTechnicianIgnores.Where(i => i.PsaConnectionId == psaConnectionId).ToListAsync(ct))
+            .Where(i => string.Equals(i.ExternalTechnicianId.Trim(), id, StringComparison.OrdinalIgnoreCase));
+        db.PsaTechnicianIgnores.RemoveRange(rows);
+    }
 }

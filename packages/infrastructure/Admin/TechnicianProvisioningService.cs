@@ -36,6 +36,11 @@ public sealed class TechnicianProvisioningService(
         var linked = await db.UserPsaIdentities.AsNoTracking()
             .Where(i => i.PsaConnectionId == psaConnectionId)
             .ToDictionaryAsync(i => i.ExternalTechnicianId, i => i.AppUserId, ct);
+        var ignored = (await db.PsaTechnicianIgnores.AsNoTracking()
+                .Where(i => i.PsaConnectionId == psaConnectionId)
+                .Select(i => i.ExternalTechnicianId)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var byEmail = await db.AppUsers.AsNoTracking()
             .Where(u => u.MspOrganizationId == tenant.OrganizationId)
             .Select(u => new { u.Id, u.Email })
@@ -52,6 +57,12 @@ public sealed class TechnicianProvisioningService(
                     return new PsaTechnicianDto(t.ExternalId, t.DisplayName, t.Email, t.IsActive,
                         PsaTechnicianLink.Linked, linkedUser, false, null);
 
+                // Left alone on purpose. It can still be added or linked: doing so takes the
+                // decision back, so it is not offered as a dead end.
+                if (ignored.Contains(t.ExternalId.Trim()))
+                    return new PsaTechnicianDto(t.ExternalId, t.DisplayName, t.Email, t.IsActive,
+                        PsaTechnicianLink.Ignored, null, hasEmail, null);
+
                 if (hasEmail && emailIndex.TryGetValue(t.Email.Trim(), out var existing))
                     return new PsaTechnicianDto(t.ExternalId, t.DisplayName, t.Email, t.IsActive,
                         PsaTechnicianLink.MatchedByEmail, existing, true, null);
@@ -64,11 +75,49 @@ public sealed class TechnicianProvisioningService(
                     PsaTechnicianLink.NotInPortal, null, hasEmail,
                     hasEmail ? null : "No email in the PSA — this is usually an API or service account.");
             })
-            // Linked first is the wrong order for a screen whose job is what still needs doing.
-            .OrderBy(t => t.Link == PsaTechnicianLink.Linked ? 1 : 0)
+            // Linked first is the wrong order for a screen whose job is what still needs doing;
+            // and what someone has said to leave alone comes after everything else.
+            .OrderBy(t => t.Link == PsaTechnicianLink.Ignored ? 2 : t.Link == PsaTechnicianLink.Linked ? 1 : 0)
             .ThenByDescending(t => t.IsActive)
             .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    public async Task SetIgnoredAsync(Guid psaConnectionId, string externalTechnicianId, bool ignored, string? name, CancellationToken ct = default)
+    {
+        var connection = await db.PsaConnections.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == psaConnectionId, ct)
+            ?? throw new NotFoundException("PSA connection");
+        var id = externalTechnicianId.Trim();
+        if (id.Length is 0 or > 100) throw new ValidationFailedException("That is not a login from the PSA.");
+
+        var row = (await db.PsaTechnicianIgnores.Where(i => i.PsaConnectionId == psaConnectionId).ToListAsync(ct))
+            .FirstOrDefault(i => string.Equals(i.ExternalTechnicianId.Trim(), id, StringComparison.OrdinalIgnoreCase));
+        if (ignored == (row is not null)) return;
+
+        if (ignored)
+        {
+            // Linked says "this login IS this person". Ignored says "it is nobody". Not both.
+            var holder = (await db.UserPsaIdentities.AsNoTracking()
+                    .Where(i => i.PsaConnectionId == psaConnectionId)
+                    .Select(i => new { i.ExternalTechnicianId, i.AppUser!.DisplayName })
+                    .ToListAsync(ct))
+                .FirstOrDefault(i => string.Equals(i.ExternalTechnicianId.Trim(), id, StringComparison.OrdinalIgnoreCase));
+            if (holder is not null)
+                throw new ValidationFailedException(
+                    $"That login is linked to {holder.DisplayName} on {connection.Name}. Remove the link on their page first, if it is wrong.");
+
+            db.PsaTechnicianIgnores.Add(new Desk.Domain.Identity.PsaTechnicianIgnore
+            {
+                MspOrganizationId = connection.MspOrganizationId, PsaConnectionId = psaConnectionId,
+                ExternalTechnicianId = id, ExternalTechnicianName = string.IsNullOrWhiteSpace(name) ? null : name.Trim(),
+            });
+        }
+        else db.PsaTechnicianIgnores.Remove(row!);
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(ignored ? "psa.technician.ignored" : "psa.technician.unignored", "PsaConnection", psaConnectionId.ToString(),
+            new { connection = connection.Name, login = id, name = ignored ? name : row!.ExternalTechnicianName }, ct);
     }
 
     public async Task<UserSummary> ProvisionAsync(Guid psaConnectionId, string externalTechnicianId, CancellationToken ct = default)
@@ -138,6 +187,8 @@ public sealed class TechnicianProvisioningService(
             identity.ExternalTechnicianId = tech.ExternalId;
             identity.ExternalTechnicianName = tech.DisplayName;
         }
+        // Linked now, so no longer "nobody": the earlier decision to leave it alone is taken back.
+        await PsaIdentityRules.StopIgnoringAsync(db, psaConnectionId, tech.ExternalId, ct);
         await db.SaveChangesAsync(ct);
 
         await audit.WriteAsync("user.provisioned-from-psa", "AppUser", userId.ToString(),

@@ -36,6 +36,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<Desk.Domain.Identity.UserPsaIdentity> UserPsaIdentities => Set<Desk.Domain.Identity.UserPsaIdentity>();
+    public DbSet<Desk.Domain.Identity.PsaTechnicianIgnore> PsaTechnicianIgnores => Set<Desk.Domain.Identity.PsaTechnicianIgnore>();
     public DbSet<Desk.Domain.Analytics.ActivityEvent> ActivityEvents => Set<Desk.Domain.Analytics.ActivityEvent>();
     public DbSet<Desk.Domain.Analytics.ActivityDailyFact> ActivityDailyFacts => Set<Desk.Domain.Analytics.ActivityDailyFact>();
     public DbSet<Ticket> Tickets => Set<Ticket>();

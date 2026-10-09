@@ -408,6 +408,8 @@ export const ConnectionMappingHealthSchema = z.object({
   technicians: z.object({
     technicians: z.number(), linked: z.number(), linkedPct: z.number().nullable(),
     unlinked: z.array(z.object({ externalId: z.string(), name: z.string().nullable(), tickets: z.number() })),
+    // Logins an administrator has said to leave alone. Not counted in the figures above.
+    ignored: z.number().default(0),
   }),
   tickets: z.number(), unmappedTickets: z.number(), ticketsWithoutClient: z.number(), notes: z.array(z.string()).default([]),
 });

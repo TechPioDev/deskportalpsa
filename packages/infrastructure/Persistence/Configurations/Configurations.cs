@@ -141,6 +141,20 @@ public sealed class UserRoleConfig : IEntityTypeConfiguration<UserRole>
     }
 }
 
+public sealed class PsaTechnicianIgnoreConfig : IEntityTypeConfiguration<Desk.Domain.Identity.PsaTechnicianIgnore>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.PsaTechnicianIgnore> b)
+    {
+        b.ToTable("psa_technician_ignores");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.ExternalTechnicianId).HasMaxLength(100).IsRequired();
+        b.Property(x => x.ExternalTechnicianName).HasMaxLength(200);
+        // A login is ignored or it is not: one row says so.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalTechnicianId }).IsUnique();
+        b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class UserPsaIdentityConfig : IEntityTypeConfiguration<Desk.Domain.Identity.UserPsaIdentity>
 {
     public void Configure(EntityTypeBuilder<Desk.Domain.Identity.UserPsaIdentity> b)
