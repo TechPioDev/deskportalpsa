@@ -44,7 +44,7 @@ the provider's own id, stored when the provider accepted them.
 | Client company | PSA → PIO | PSA | Found or created by connection + external company id | PSA → PIO; creation becomes an explicit mapping decision (see Clients) |
 | Created date (`PsaCreatedAt`) | PSA → PIO | PSA | Never defaulted to "now" | Unchanged |
 | Resolved / closed dates | PSA → PIO | PSA | Overwritten from the provider | Unchanged |
-| Due date / SLA due (`SlaDueAt`) | PSA → PIO | PSA | From the provider's own target | **PSA authoritative.** PIO never writes an SLA to a PSA |
+| Due date / SLA due (`SlaDueAt`) | PSA ↔ PIO | **PSA**, write-through | In: from the provider's own target. Out: **only an extension asked for by a person with a reason** (`TicketDueDateService`), provider first; the PSA's refusal changes nothing here. See [due-date-extension.md](../due-date-extension.md) | PSA authoritative. PIO never computes or writes an SLA to a PSA; it may move a ticket's due date later on request, and the next sync reads back what the PSA holds. The original date, the count and the reason stay PIO-only |
 | First-response promise, SLA pause | PIO only | PIO | Board and monitoring tickets only | PIO only |
 | Device | PSA ↔ PIO | **PSA**, write-through | In: kept when the provider does not carry it. Out: a technician sets or changes it (`TicketDeviceService`, provider first); in ConnectWise the previous configuration is unlinked from the ticket, the configuration itself untouched | Unchanged |
 | Time totals (worked, billable, non-billable) | PSA → PIO | PSA | Recomputed from the provider's entries on each sync of the ticket | Unchanged |

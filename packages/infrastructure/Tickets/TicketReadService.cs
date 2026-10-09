@@ -771,6 +771,7 @@ public sealed class TicketReadService(DeskDbContext db, ITicketScopeQuery scopeQ
                 ? await db.SlaPlans.AsNoTracking().Where(p => p.Id == planId).Select(p => p.Name).FirstOrDefaultAsync(ct)
                 : null,
             SlaDueAt: includeInternal ? ticket.SlaDueAt : null,
+            DueDate: includeInternal ? TicketDueDateService.Describe(ticket) : null,
             FirstResponseDueAt: includeInternal ? ticket.FirstResponseDueAt : null,
             FirstRespondedAt: includeInternal ? ticket.FirstRespondedAt : null,
             SlaPausedAt: includeInternal ? ticket.SlaPausedAt : null,

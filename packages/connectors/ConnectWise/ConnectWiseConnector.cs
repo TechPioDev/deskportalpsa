@@ -354,6 +354,8 @@ public sealed class ConnectWiseConnector(
         if (update.QueueOrBoard is not null) ops.Add(new { op = "replace", path = "board", value = Ref(update.QueueOrBoard) });
         if (update.AssignedTechnicianExternalId is not null)
             ops.Add(new { op = "replace", path = "owner", value = Ref(update.AssignedTechnicianExternalId) });
+        // requiredDate is the date somebody set on the ticket, which is what the portal reads as its due date.
+        if (update.DueDate is { } due) ops.Add(new { op = "replace", path = "requiredDate", value = due.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") });
 
         await SendAsync<CwTicket>(HttpMethod.Patch, $"service/tickets/{ticketId}", ops, ct);
         return new UpdateTicketResult(true, null);

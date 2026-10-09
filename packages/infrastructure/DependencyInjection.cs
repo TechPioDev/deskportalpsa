@@ -123,6 +123,7 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Tickets.ITicketFollowerService, Tickets.TicketFollowerService>();
         services.AddScoped<Desk.Application.Tickets.ISatisfactionService, Tickets.SatisfactionService>();
         services.AddScoped<Tickets.TicketStatusWriter>();
+        services.AddScoped<Desk.Application.Tickets.ITicketDueDateService, Tickets.TicketDueDateService>();
         services.AddScoped<Desk.Application.Tickets.IApprovalService, Tickets.ApprovalService>();
         services.AddScoped<Desk.Application.Tickets.ITicketDeviceService, Tickets.TicketDeviceService>();
         services.AddScoped<Desk.Application.Knowledge.IKnowledgeBaseService, Knowledge.KnowledgeBaseService>();

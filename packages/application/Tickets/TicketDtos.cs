@@ -274,7 +274,9 @@ public sealed record TicketDetailDto(
     /// </summary>
     TicketBoardDetailsDto? BoardDetails = null,
     /// <summary>Who resolved it in the portal - the person productivity credits it to. Staff only.</summary>
-    string? ResolvedByName = null);
+    string? ResolvedByName = null,
+    /// <summary>How the due date was moved, where it was. Null when never moved, and always for a client.</summary>
+    TicketDueDateDto? DueDate = null);
 
 public sealed record TicketBoardDetailsDto(
     Guid BoardId, Guid? BoardTopicId, Guid? DepartmentId, Guid? ClientCompanyId,

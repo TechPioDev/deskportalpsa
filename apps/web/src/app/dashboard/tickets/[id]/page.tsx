@@ -8,7 +8,8 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Pencil, MoreHorizontal, Paperclip,
   Send, ArrowUpDown, Lock, Monitor, Wifi, Mail, KeyRound, Cpu, Ticket,
   Copy, RefreshCw, Download, Clock, Trash2, Check, X, ClipboardList, UserCog, ExternalLink, AlertTriangle,
-  Eye, Hand, UserPlus} from 'lucide-react';
+  Eye, Hand, UserPlus, CalendarClock
+} from 'lucide-react';
 import { useWorkTime, WorkControls } from '@/components/WorkTime';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
@@ -873,7 +874,24 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   <SlaMeta label="Resolution" due={ticket.slaDueAt} met={ticket.resolvedAt} pausedAt={ticket.slaPausedAt}
                     open={!['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase())} />
                 )}
+                {/* A PSA ticket's due date is the PSA's own; shown so that extending it has something to extend. */}
+                {isFromPsa && ticket.slaDueAt && <Meta label="Due" value={fmt(ticket.slaDueAt)} />}
+                {ticket.dueDate && (
+                  <div className="col-span-2">
+                    <dt className="text-xs text-[var(--muted)]">Due date moved</dt>
+                    <dd className="text-sm">
+                      {ticket.dueDate.extensions === 1 ? 'Once' : `${ticket.dueDate.extensions} times`}
+                      {ticket.dueDate.originalDueAt && <> · first due {fmt(ticket.dueDate.originalDueAt)}</>}
+                      {ticket.dueDate.lastReason && <span className="block text-xs text-[var(--muted)]">
+                        &ldquo;{ticket.dueDate.lastReason}&rdquo;{ticket.dueDate.lastExtendedByName ? ` — ${ticket.dueDate.lastExtendedByName}` : ''}{ticket.dueDate.lastExtendedAt ? `, ${fmt(ticket.dueDate.lastExtendedAt)}` : ''}
+                      </span>}
+                    </dd>
+                  </div>
+                )}
               </dl>
+              {canUpdate && isStaff && !['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase()) && (
+                <ExtendDueDate ticketId={id} currentDueAt={ticket.slaDueAt} onDone={() => qc.invalidateQueries({ queryKey: ['ticket', id] })} />
+              )}
 
               {canUpdate && (
               <div className="mt-4 border-t border-[var(--border)] pt-4">
@@ -1690,6 +1708,54 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
  * A due date from the SLA, and whether it was kept. Kept or not is the point of the row, so it says
  * so in words as well as colour: met on time, met late, overdue, or when it falls due.
  */
+/**
+ * Moving the due date later, with a reason. For a PSA ticket the PSA is asked first; a refusal
+ * is shown and nothing changes. A client never sees the reason; the desk's history does.
+ */
+function ExtendDueDate({ ticketId, currentDueAt, onDone }: { ticketId: string; currentDueAt: string | null; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [dueAt, setDueAt] = useState('');
+  const [reason, setReason] = useState('');
+  const extend = useMutation({
+    mutationFn: () => api.extendDueDate(ticketId, new Date(dueAt).toISOString(), reason.trim()),
+    onSuccess: () => { setOpen(false); setDueAt(''); setReason(''); onDone(); },
+  });
+  const floor = currentDueAt ? new Date(currentDueAt) : new Date();
+  const valid = dueAt !== '' && new Date(dueAt).getTime() > floor.getTime() && reason.trim().length >= 3;
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--bg)]">
+        <CalendarClock size={13} aria-hidden="true" /> Extend due date
+      </button>
+    );
+  }
+  return (
+    <form aria-label="Extend due date" className="mt-3 space-y-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3"
+      onSubmit={(e) => { e.preventDefault(); if (valid && !extend.isPending) extend.mutate(); }}>
+      <label className="block text-xs font-medium text-[var(--muted)]">New due date
+        <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} required
+          className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm" />
+      </label>
+      <label className="block text-xs font-medium text-[var(--muted)]">Why
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} required placeholder="Parts on back-order until Friday"
+          className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm" />
+      </label>
+      <p className="text-xs text-[var(--faint)]">
+        {currentDueAt ? `Later than ${fmt(currentDueAt)}. ` : ''}The reason goes to the ticket&rsquo;s history, never to the client.
+      </p>
+      {extend.isError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{(extend.error as Error).message}</p>}
+      <div className="flex gap-2">
+        <button type="submit" disabled={!valid || extend.isPending}
+          className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-40">
+          {extend.isPending ? 'Saving…' : 'Move the due date'}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--surface)]">Cancel</button>
+      </div>
+    </form>
+  );
+}
+
 function SlaMeta({ label, due, met, open, pausedAt }: {
   label: string; due: string; met: string | null; open: boolean; pausedAt?: string | null;
 }) {
