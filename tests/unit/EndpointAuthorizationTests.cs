@@ -56,6 +56,9 @@ public class EndpointAuthorizationTests
     {
         "PublicEnquiriesController", "WebhooksController", "AttachmentsController.Blob",
         "AlertIntakeController",
+        // Invitation and password-reset links: the person has no sign-in yet, or has lost it. The
+        // link's token is the credential; the controller is rate-limited like the other public forms.
+        "InvitationsController",
     };
 
     [Fact]

@@ -230,7 +230,8 @@ public sealed class ControlPanelService(DeskDbContext db, IAuditWriter audit) : 
 
     private static ClientUserDto ToUserDto(ClientUser u, IEnumerable<ClientAccessGrant> grants)
         => new(u.Id, u.Email, u.DisplayName, u.IsCompanyAdministrator, u.IsActive,
-               grants.Select(g => new AccessGrantDto(SectionKey(g.Section), g.ClientCompanyId)).ToList());
+               grants.Select(g => new AccessGrantDto(SectionKey(g.Section), g.ClientCompanyId)).ToList(),
+               SignInLinked: u.IdpSubject != null);
 
     // Wire format: camelCase section key (e.g. "ticketInstructions").
     private static string SectionKey(ControlPanelSection s)

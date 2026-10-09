@@ -27,6 +27,7 @@ builder.Services.AddScoped<IJobHandler, InboundEventJobHandler>();
 builder.Services.AddHostedService<BackgroundJobPollingService>();
 builder.Services.AddHostedService<PollingSyncService>();
 builder.Services.AddHostedService<ScheduledReportService>();
+builder.Services.AddHostedService<InvitationReminderService>();
 builder.Services.AddHostedService<StaffReportBackgroundService>();
 builder.Services.AddHostedService<AttentionDigestBackgroundService>();
 builder.Services.AddHostedService<RecurringTicketBackgroundService>();
