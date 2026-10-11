@@ -172,6 +172,22 @@ public sealed class PsaTechnicianIgnoreConfig : IEntityTypeConfiguration<Desk.Do
     }
 }
 
+public sealed class PsaCustomFieldConfig : IEntityTypeConfiguration<Desk.Domain.Mapping.PsaCustomField>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Mapping.PsaCustomField> b)
+    {
+        b.ToTable("psa_custom_fields");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.ExternalKey).HasMaxLength(200).IsRequired();
+        b.Property(x => x.ExternalLabel).HasMaxLength(200).IsRequired();
+        b.Property(x => x.DataType).HasMaxLength(20).IsRequired();
+        b.Property(x => x.PortalLabel).HasMaxLength(200).IsRequired();
+        // One decision for one field of one connection.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalKey }).IsUnique();
+        b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class ClassificationMappingConfig : IEntityTypeConfiguration<Desk.Domain.Mapping.ClassificationMapping>
 {
     public void Configure(EntityTypeBuilder<Desk.Domain.Mapping.ClassificationMapping> b)

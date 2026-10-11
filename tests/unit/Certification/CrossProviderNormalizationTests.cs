@@ -86,8 +86,10 @@ public class CrossProviderNormalizationTests
 
         (atCaps.SupportsInboundWebhooks, cwCaps.SupportsInboundWebhooks).Should().Be((false, false),
             "no provider-native callback is understood until the webhook slice");
-        cwCaps.SupportsCustomFields.Should().BeFalse();
-        (await ConnectWise().GetCustomFieldsAsync()).Should().BeEmpty("which is why it says so");
-        atCaps.SupportsCustomFields.Should().BeTrue();
+        // Both read a ticket's own fields. ConnectWise reads which fields there are off a ticket,
+        // so a tenant with no ticket yet lists none.
+        (atCaps.SupportsCustomFields, cwCaps.SupportsCustomFields).Should().Be((true, true));
+        (await ConnectWise().GetCustomFieldsAsync()).Should().BeEmpty();
+        (await Autotask().GetCustomFieldsAsync()).Should().NotBeEmpty();
     }
 }

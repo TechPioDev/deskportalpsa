@@ -40,6 +40,13 @@ never sees a secret it was not constructed with.
   portal knowing less about a ticket than it told the PSA. Nothing more is needed for a desk to say what
   those levels mean in the portal: the rules of [classification-mapping.md](classification-mapping.md)
   are written against the words a connector reads, whichever PSA they came from.
+- **List its custom fields so they can be chosen, and send their values by the same key.**
+  `GetCustomFieldsAsync` lists the PSA account's own ticket fields: a key that does not change, a
+  label, and a kind from `CustomFieldTypes` (a kind it cannot tell is text). A ticket that is read
+  carries its values in `UnifiedTicket.CustomFields` under those keys, as words: a list's value is
+  its label, and a field nothing was entered in has no value. The portal keeps only the fields an
+  administrator chose ([custom-fields.md](custom-fields.md)); the connector sends what the PSA has.
+  A failure to read the field list must not fail a read of tickets.
 - **What it does not do must still be safe to ask for.** A method behind a capability it does not
   claim returns an empty answer, never an exception (`GetCustomFieldsAsync`, `GetHolidaysAsync`,
   `GetAgreementsAsync`).
@@ -170,7 +177,7 @@ ticket create/read/update, notes with their visibility, attachments and the swee
 paging to the last ticket, incremental reads, a count that agrees with the read, what a ticket is
 raised under read back, safety of what is not claimed, and the webhook frame (valid, tampered,
 stale, replayed, no secret, another secret). It runs today against Autotask, ConnectWise and the
-mock: 27 contract tests each. Where the PSA holds the three levels by id, override `RaisedUnder`
+mock: 28 contract tests each. Where the PSA holds the three levels by id, override `RaisedUnder`
 and `ReadAs` (Autotask does).
 
 **The factory.** Add yours to `ConnectorFactoryCertificationTests.Factories`. It holds the

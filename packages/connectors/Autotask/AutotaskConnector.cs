@@ -792,12 +792,73 @@ public sealed class AutotaskConnector(
         return items.Select(r => new ExternalFieldOption(r.Id.ToString(), r.Name ?? r.Id.ToString(), true)).ToList();
     }
 
+    /// <summary>
+    /// The tenant's own ticket fields (user-defined fields). A field is known by its name, which
+    /// is also how a ticket carries its value; the label is what the screen calls it.
+    /// </summary>
     public async Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
     {
         var info = await SendAsync<AtFieldInfoResult>(HttpMethod.Get, "V1.0/Tickets/entityInformation/userDefinedFields", null, ct);
-        return (info?.Fields ?? []).Select(f => new ExternalFieldDefinition(
-            f.Name ?? "", f.Name ?? "", "string", false)).ToList();
+        return (info?.Fields ?? [])
+            .Where(f => !string.IsNullOrWhiteSpace(f.Name))
+            .Select(f => new ExternalFieldDefinition(
+                f.Name!, string.IsNullOrWhiteSpace(f.Label) ? f.Name! : f.Label!.Trim(), CustomFieldTypeOf(f), false,
+                f.PicklistValues.Count == 0 ? null
+                    : f.PicklistValues.Select(p => new ExternalFieldOption(p.Value ?? "", p.Label ?? p.Value ?? "", p.IsActive)).ToList()))
+            .ToList();
     }
+
+    private static string CustomFieldTypeOf(AtFieldInfo field)
+        => field.IsPickList || field.PicklistValues.Count > 0 ? CustomFieldTypes.List
+            : (field.DataType ?? "").ToLowerInvariant() switch
+            {
+                "integer" or "long" or "short" or "double" or "decimal" or "float" => CustomFieldTypes.Number,
+                "datetime" or "date" => CustomFieldTypes.Date,
+                "boolean" => CustomFieldTypes.Boolean,
+                _ => CustomFieldTypes.Text,
+            };
+
+    // The words for each list-kind field's values, by field name: fetched at most once for this
+    // connector, and only when a ticket that carries a custom field is read. A failure to read
+    // them is not a failure to read tickets: a list's value then stays as the id Autotask holds.
+    private Task<Dictionary<string, Dictionary<string, string>>>? _customFieldLists;
+
+    private async Task<Dictionary<string, Dictionary<string, string>>> CustomFieldListsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var info = await SendAsync<AtFieldInfoResult>(HttpMethod.Get, "V1.0/Tickets/entityInformation/userDefinedFields", null, ct);
+            return (info?.Fields ?? [])
+                .Where(f => !string.IsNullOrWhiteSpace(f.Name) && f.PicklistValues.Count > 0)
+                .GroupBy(f => f.Name!, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First().PicklistValues
+                    .Where(p => !string.IsNullOrEmpty(p.Value))
+                    .GroupBy(p => p.Value!, StringComparer.Ordinal)
+                    .ToDictionary(v => v.Key, v => v.First().Label ?? v.Key, StringComparer.Ordinal), StringComparer.Ordinal);
+        }
+        catch (ConnectorException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>A ticket's custom fields by name, each as words where Autotask holds an id of a list.</summary>
+    private async Task<IReadOnlyDictionary<string, string?>> CustomFieldsOfAsync(AtTicket t, CancellationToken ct)
+    {
+        if (t.UserDefinedFields is not { Count: > 0 } fields) return NoCustomFields;
+        var lists = await (_customFieldLists ??= CustomFieldListsAsync(ct));
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var field in fields)
+        {
+            if (string.IsNullOrWhiteSpace(field.Name)) continue;
+            var value = string.IsNullOrWhiteSpace(field.Value) ? null : field.Value;
+            if (value is not null && lists.TryGetValue(field.Name, out var options) && options.TryGetValue(value, out var label)) value = label;
+            values[field.Name] = value;
+        }
+        return values;
+    }
+
+    private static readonly IReadOnlyDictionary<string, string?> NoCustomFields = new Dictionary<string, string?>();
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
         => Task.FromResult(WebhookSignature.Validate(request, config.WebhookSecret, config.WebhookMaxSkew));
@@ -1178,6 +1239,7 @@ public sealed class AutotaskConnector(
         TicketType = await LabelForAsync("ticketType", t.TicketType, ct),
         IssueType = await LabelForAsync("issueType", t.IssueType, ct),
         SubIssueType = await LabelForAsync("subIssueType", t.SubIssueType, ct),
+        CustomFields = await CustomFieldsOfAsync(t, ct),
         QueueOrBoard = await LabelForAsync("queueID", t.QueueId, ct),
         QueueOrBoardId = string.IsNullOrWhiteSpace(t.QueueId) ? null : t.QueueId,
         AssignedTechnicianExternalId = t.AssignedResourceId,

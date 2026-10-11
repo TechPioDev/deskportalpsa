@@ -833,6 +833,12 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 {portalClassification(isFromPsa ? ticket.classification : null).map((row) => (
                   <Meta key={row.label} label={row.label} value={row.value} />
                 ))}
+                {/* The PSA's custom fields that were chosen for the portal. A client is sent only the
+                    ones marked as theirs to see; staff see all of them, and which the client sees too. */}
+                {(ticket.customFields ?? []).map((f) => (
+                  <Meta key={f.label} label={isStaff && f.clientVisible ? `${f.label} (client sees this)` : f.label}
+                    value={f.dataType === 'boolean' ? (f.value === 'true' ? 'Yes' : f.value === 'false' ? 'No' : f.value) : f.value} />
+                ))}
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 {/* The device it is about, when the PSA or the portal knows one. Serial and warranty
                     reach staff only; a client sees the name and type. A technician can set or change

@@ -124,6 +124,8 @@ public sealed class MockConnector : IServiceManagementConnector
             Status = ticket.Status ?? "New", Priority = ticket.Priority ?? "Medium",
             Category = ticket.Category, QueueOrBoard = ticket.QueueOrBoard,
             TicketType = ticket.TicketType, IssueType = ticket.IssueType, SubIssueType = ticket.SubIssueType,
+            // Raised with custom fields, a ticket is read back with them.
+            CustomFields = new Dictionary<string, string?>(ticket.CustomFields),
             RequesterEmail = ticket.RequesterEmail, CreatedAt = now, ModifiedAt = now,
         };
         _idempotency[ticket.IdempotencyKey] = id;
@@ -282,7 +284,8 @@ public sealed class MockConnector : IServiceManagementConnector
     {
         Guard();
         return Task.FromResult<IReadOnlyList<ExternalFieldDefinition>>(
-            [new ExternalFieldDefinition("cf_site", "Site", "string", false)]);
+            [new ExternalFieldDefinition("cf_site", "Site", CustomFieldTypes.Text, false),
+             new ExternalFieldDefinition("cf_asset", "Asset tag", CustomFieldTypes.Text, false)]);
     }
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)

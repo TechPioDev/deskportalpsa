@@ -226,6 +226,9 @@ public static class DependencyInjection
         services.AddScoped<IMappingAdminService, MappingAdminService>();
         services.AddScoped<IClassificationMappingService, ClassificationMappingService>();
         services.AddScoped<IClientCompanyAccessService, ClientCompanyAccessService>();
+        // Asked through the connection service, which knows how to reach a connection still in setup.
+        services.AddScoped<ICustomFieldSource>(sp => (ConnectionAdminService)sp.GetRequiredService<IConnectionAdminService>());
+        services.AddScoped<ICustomFieldService, CustomFieldService>();
         services.AddScoped<IJobMonitorService, JobMonitorService>();
         services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();
         services.AddScoped<IAttentionService, AttentionService>();

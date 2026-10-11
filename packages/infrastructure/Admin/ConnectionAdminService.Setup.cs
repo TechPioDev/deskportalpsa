@@ -45,6 +45,15 @@ public sealed partial class ConnectionAdminService
     /// A connector for a connection as it stands. One still being set up is not switched on, and
     /// has to be read from all the same: what its PSA offers is what its setup is decided on.
     /// </summary>
+    /// <summary>The PSA's custom ticket fields, for a connection that is switched on or still being set up.</summary>
+    public async Task<(bool Supported, IReadOnlyList<ExternalFieldDefinition> Fields)> ListCustomFieldsAsync(Guid connectionId, CancellationToken ct = default)
+    {
+        var connector = await ConnectorForAsync(connectionId, ct);
+        return (await connector.GetCapabilitiesAsync(ct)).SupportsCustomFields
+            ? (true, await connector.GetCustomFieldsAsync(ct))
+            : (false, []);
+    }
+
     private async Task<IServiceManagementConnector> ConnectorForAsync(Guid connectionId, CancellationToken ct)
     {
         var connection = await db.PsaConnections.AsNoTracking().FirstOrDefaultAsync(c => c.Id == connectionId, ct)

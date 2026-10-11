@@ -51,7 +51,8 @@ the provider's own id, stored when the provider accepted them.
 | Device | PSA ↔ PIO | **PSA**, write-through | In: kept when the provider does not carry it. Out: a technician sets or changes it (`TicketDeviceService`, provider first); in ConnectWise the previous configuration is unlinked from the ticket, the configuration itself untouched | Unchanged |
 | Time totals (worked, billable, non-billable) | PSA → PIO | PSA | Recomputed from the provider's entries on each sync of the ticket | Unchanged |
 | Resolution text, resolved-by, reopen count, review state | PIO only | PIO | Never sent | PIO only |
-| Portal custom fields, tasks, links, approvals, satisfaction | PIO only | PIO | Never sent | PIO only. A PSA custom field mapped in Phase 9 is **PSA → PIO, read-only** in its first version |
+| Portal custom fields, tasks, links, approvals, satisfaction | PIO only | PIO | Never sent | PIO only |
+| A PSA's own custom fields on a ticket | PSA → PIO, **only the fields an administrator chose** for that connection | PSA | Kept as sent in `CustomFieldsJson`; a field not chosen is not stored. See [custom-fields.md](custom-fields.md) | PSA → PIO, **read-only**: never written to the PSA. Staff only unless a field is separately marked as the client's to see |
 
 ## Notes, attachments, time
 

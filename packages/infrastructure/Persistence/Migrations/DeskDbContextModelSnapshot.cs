@@ -1457,6 +1457,58 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.ToTable("field_mapping_versions", (string)null);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Mapping.PsaCustomField", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("ClientVisible")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DataType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ExternalKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ExternalLabel")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("Import")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PortalLabel")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId", "ExternalKey")
+                        .IsUnique();
+
+                    b.ToTable("psa_custom_fields", (string)null);
+                });
+
             modelBuilder.Entity("Desk.Domain.Marketing.Enquiry", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3300,6 +3352,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CreatedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CustomFieldsJson")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("DepartmentId")
                         .HasColumnType("uuid");
 
@@ -4796,6 +4851,17 @@ namespace Desk.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("Desk.Domain.Mapping.ClassificationMapping", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", "PsaConnection")
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PsaConnection");
+                });
+
+            modelBuilder.Entity("Desk.Domain.Mapping.PsaCustomField", b =>
                 {
                     b.HasOne("Desk.Domain.Tenancy.PsaConnection", "PsaConnection")
                         .WithMany()

@@ -11,6 +11,7 @@ import {
   ConnectionMappingHealthSchema, MappingPreviewRowSchema, MappingApplyResultSchema,
   type ConnectionMappingHealth, type MappingPreviewRow, type MappingApplyResult,
   MyCompanySchema, ClientUserAccessSchema, type MyCompany, type ClientUserAccess,
+  CustomFieldSettingsSchema, type CustomFieldSettings,
   ClassificationMappingSchema, ClassificationPreviewSchema, ClassificationApplyResultSchema,
   type ClassificationMapping, type ClassificationPreview, type ClassificationApplyResult, type ClassificationRule,
   type ConnectionCheckReport, type ConnectionMappingCoverage, type ConnectionPreview, type Preflight,
@@ -1125,6 +1126,13 @@ export const api = {
   /** Re-maps imported tickets still showing the PSA's own word for a value a rule now maps. */
   applyConnectionMapping: (id: string) =>
     request(`/api/admin/connections/${id}/mapping-apply`, MappingApplyResultSchema, { method: 'POST' }) as Promise<MappingApplyResult>,
+  /** A connection's PSA custom fields and what has been decided about each. */
+  customFields: (id: string) =>
+    request(`/api/admin/connections/${id}/custom-fields`, CustomFieldSettingsSchema) as Promise<CustomFieldSettings>,
+  /** Saves decisions about some fields. A field left out keeps what was decided before. */
+  saveCustomFields: (id: string, changes: { key: string; import: boolean; portalLabel: string | null; clientVisible: boolean }[]) =>
+    request(`/api/admin/connections/${id}/custom-fields`, CustomFieldSettingsSchema,
+      { method: 'PUT', body: JSON.stringify(changes) }) as Promise<CustomFieldSettings>,
   /** What a connection's PSA classification means in the portal's words: the rules, and what tickets are filed under. */
   classificationMapping: (id: string) =>
     request(`/api/admin/connections/${id}/classification`, ClassificationMappingSchema) as Promise<ClassificationMapping>,
