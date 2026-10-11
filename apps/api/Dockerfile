@@ -1,4 +1,4 @@
-# Desk Portal API. Build from the REPO ROOT so central package management applies:
+# PioManage API. Build from the REPO ROOT so central package management applies:
 #   docker build -f apps/api/Dockerfile -t desk-api .
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
