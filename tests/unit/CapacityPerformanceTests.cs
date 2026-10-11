@@ -851,9 +851,17 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         var workers = Enumerable.Range(0, 6).Select(_ => NewContext()).ToList();
         try
         {
-            // What each worker was told is due before any of them saved.
+            // What each worker was told is due before any of them saved, and the rows as each read them
+            // then: unheld. A worker keeps what it read. Without this each claim would read the row
+            // afresh, see the first taker's hold and step aside, and it would be the read that turned
+            // the others away. Holding the stale row, every worker believes the change is free and
+            // tries to save; the version checked by that save is then the only thing that refuses five
+            // of the six, which is what this test is for.
             foreach (var w in workers)
+            {
                 (await new Desk.Infrastructure.Sync.OutboundQueue(w, _clock).DueAsync(100)).Should().BeEquivalentTo(ids);
+                (await w.OutboundOperations.ToListAsync()).Should().HaveCount(30).And.OnlyContain(o => o.LeaseExpiresAt == null && o.Version == 0);
+            }
 
             var taken = await Task.WhenAll(workers.Select((w, k) => Task.Run(async () =>
             {
