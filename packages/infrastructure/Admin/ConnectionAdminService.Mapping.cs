@@ -148,14 +148,21 @@ public sealed partial class ConnectionAdminService
             .CountAsync(t => t.PsaConnectionId == connectionId
                 && db.ClientCompanies.Any(c => c.Id == t.ClientCompanyId && c.ExternalCompanyId == "unknown"), ct);
 
+        // The classification rules, where the connection has any. Writing none is a choice and
+        // costs nothing: tickets keep the PSA's own words. Once there are rules, a classification
+        // none of them names is something left to do, and no more than that - the ticket is whole
+        // without it.
+        var classification = await ClassificationMappingService.HealthAsync(db, _mapping, connection, rules, ct);
+        var classificationLeft = classification.Rules > 0 && (classification.UnmappedTickets > 0 || classification.TicketsOutOfStep > 0);
+
         var level =
             statuses.Values > 0 && statuses.Mapped == 0 ? Blocking
             : unmappedTickets > 0 || outbound.Any(o => o.Problem is not null) ? Warning
-            : statuses.Mapped < statuses.Values || priorities.Mapped < priorities.Values || people.Unlinked.Count > 0 ? Optional
+            : statuses.Mapped < statuses.Values || priorities.Mapped < priorities.Values || people.Unlinked.Count > 0 || classificationLeft ? Optional
             : Pass;
 
         return new MappingHealthDto(connection.Id, connection.Name, clock.GetUtcNow(), level,
-            [statuses, priorities], outbound, people, total, unmappedTickets, withoutClient, notes);
+            [statuses, priorities], outbound, people, total, unmappedTickets, withoutClient, notes, classification);
     }
 
     private static bool Same(string a, string b) => string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
