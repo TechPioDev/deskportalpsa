@@ -63,6 +63,18 @@ public class PsaConnection : TenantEntity
     public DateTimeOffset? SyncPausedAt { get; set; }
 
     /// <summary>
+    /// When someone asked for a sync that has not finished yet. The worker takes it within
+    /// seconds, and clears it when the read it started is complete. Asking twice is asking once.
+    /// </summary>
+    public DateTimeOffset? SyncRequestedAt { get; set; }
+
+    /// <summary>The sync asked for reads everything from the start, not only what has changed.</summary>
+    public bool SyncRequestedFull { get; set; }
+
+    /// <summary>Who asked, as it is shown on the run.</summary>
+    public string? SyncRequestedBy { get; set; }
+
+    /// <summary>
     /// Set when the connection was put away. Nothing it imported is removed - tickets, clients,
     /// mappings and history stay - but it is disabled and no longer listed. There is no delete.
     /// </summary>

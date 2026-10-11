@@ -219,6 +219,49 @@ test('a connection is added a step at a time against a PSA and is switched on on
   await expect(card.getByText('Switched on.')).toBeVisible();
   await expect(card.getByRole('button', { name: 'Sync now' })).toBeEnabled();
 
+  // "Sync now" where a worker runs the syncs: the API answers at once that the sync has been
+  // asked for, and the card follows it until it has finished. The local API has no worker and
+  // runs a sync inside the request, so the three things the card is told - asked for, running,
+  // done - are stood in for here, over the real list. Nothing is synced, for the reason below.
+  let stage: 'asked' | 'running' | 'done' = 'asked';
+  const syncUrl = '**/api/bff/api/admin/connections/*/sync';
+  const listUrl = '**/api/bff/api/admin/connections';
+  const stateUrl = `**/api/bff/api/admin/connections/${saved.id}/sync-state*`;
+  await page.route(syncUrl, (route) => route.fulfill({ status: 202, json: { queued: true, requestedAt: new Date().toISOString(), full: false } }));
+  await page.route(listUrl, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    const list = await response.json() as { id: string; state: number; syncRequestedAt: string | null }[];
+    for (const c of list) {
+      if (c.id !== saved.id || stage === 'done') continue;
+      c.syncRequestedAt = new Date().toISOString();
+      if (stage === 'running') c.state = 2;
+    }
+    await route.fulfill({ response, json: list });
+  });
+  await page.route(stateUrl, (route) => route.fulfill({
+    json: {
+      connectionId: saved.id, watermark: null, readInProgress: false, pagesReadSoFar: 0, running: false, openFailures: 0, needsReview: 0,
+      requestedAt: null, requestedFull: false,
+      runs: [{
+        id: '00000000-0000-4000-8000-000000000001', trigger: 'Manual', status: 'Succeeded',
+        startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+        fetched: 7, created: 5, updated: 2, skipped: 0, pages: 1, notes: 0, attachments: 0,
+        failedRecords: 0, retried: 0, recovered: 0, error: null, notice: null, requestedBy: 'Demo Admin',
+      }],
+    },
+  }));
+  await card.getByRole('button', { name: 'Sync now' }).click();
+  await expect(card.getByText('A sync has been asked for. It starts within a few seconds, and this card follows it.')).toBeVisible();
+  await expect(card.getByText('A sync has been asked for and starts within a few seconds.')).toBeVisible();
+  stage = 'running';
+  await expect(card.getByText('Syncing', { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(card.getByText('A sync has been asked for and starts within a few seconds.')).toHaveCount(0);
+  stage = 'done';
+  await expect(card.getByText('Synced · 5 new, 2 updated (7 fetched)')).toBeVisible({ timeout: 20_000 });
+  await expect(card.getByText('Syncing', { exact: true })).toHaveCount(0);
+  for (const url of [syncUrl, listUrl, stateUrl]) await page.unroute(url);
+
   // Mapping health, before anything has been imported: the statuses the PSA lists, none of them
   // mapped, and a ticket read from the PSA to show what the rules make of it.
   //

@@ -5,7 +5,7 @@ import {
   ConnectionSummarySchema, HealthSchema, JobSchema, AuditEntrySchema, AttachmentSchema,
   TechnicianDaySchema, type TechnicianDay,
   ConnectionFieldsSchema, FieldOptionSchema, type ConnectionFields,
-  ProviderCatalogEntrySchema, SyncStateSchema, SyncFailureSchema,
+  ProviderCatalogEntrySchema, SyncStateSchema, SyncFailureSchema, SyncAnswerSchema,
   type ProviderCatalogEntry, type SyncState, type SyncFailure,
   ConnectionCheckReportSchema, ConnectionMappingCoverageSchema, ConnectionPreviewSchema, PreflightSchema,
   ConnectionMappingHealthSchema, MappingPreviewRowSchema, MappingApplyResultSchema,
@@ -1084,16 +1084,7 @@ export const api = {
       z.object({ success: z.boolean(), message: z.string().nullable(), latencyMs: z.number() }),
       { method: 'POST' }),
   syncConnection: (id: string, full = false) =>
-    request(`/api/admin/connections/${id}/sync${full ? '?full=true' : ''}`,
-      z.object({
-        fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number(),
-        // A run reads a bounded number of pages; when there is more, later runs carry on by themselves.
-        moreToRead: z.boolean().default(false),
-        // Records it could not read or apply. They are kept and tried again.
-        failed: z.number().default(0),
-        recovered: z.number().default(0),
-      }),
-      { method: 'POST' }),
+    request(`/api/admin/connections/${id}/sync${full ? '?full=true' : ''}`, SyncAnswerSchema, { method: 'POST' }),
   updateConnection: (id: string, body: {
     name: string; apiEndpoint: string; tenantIdentifier?: string; timeZone?: string;
     isEnabled: boolean; credentials?: Record<string, string>; logoUrl?: string;

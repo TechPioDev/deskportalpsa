@@ -771,6 +771,52 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     }
 
     [Fact]
+    public async Task Many_workers_taking_the_same_jobs_on_a_real_database_run_each_one_once()
+    {
+        // Six workers, each with all thirty jobs in hand as it read them: queued. Every one of them
+        // then tries to take every job. A job's version is checked by the save that takes it, so
+        // each job has exactly one taker and the other five saves are refused - a hundred and fifty
+        // refusals, whatever the order the workers happen to run in.
+        // Needs PostgreSQL for the same reason as the tests above: one shared SQLite connection
+        // cannot carry six workers at once.
+        if (Postgres is null) return;
+        var (db, _, _, _, _) = await SeedAsync(1);
+        var jobs = Enumerable.Range(0, 30)
+            .Select(_ => new Desk.Domain.Sync.BackgroundJob { MspOrganizationId = Org, JobType = "t", PayloadJson = "{}", Status = BackgroundJobStatus.Queued })
+            .ToList();
+        db.AddRange(jobs);
+        await db.SaveChangesAsync();
+        var ids = jobs.Select(j => j.Id).ToList();
+
+        var workers = Enumerable.Range(0, 6).Select(_ => NewContext()).ToList();
+        try
+        {
+            // What each worker read before any of them saved: the moment that mattered.
+            foreach (var w in workers)
+                (await w.BackgroundJobs.ToListAsync()).Should().HaveCount(30).And.OnlyContain(j => j.Status == BackgroundJobStatus.Queued);
+
+            var taken = await Task.WhenAll(workers.Select((w, k) => Task.Run(async () =>
+            {
+                var queue = new Desk.Infrastructure.Jobs.JobQueue(w, _clock);
+                var mine = new List<Guid>();
+                // Each starts somewhere else in the list, so they meet from the first job on.
+                foreach (var id in ids.Skip(k * 5).Concat(ids.Take(k * 5)))
+                    if (await queue.ClaimAsync(id) is { } job) mine.Add(job.Id);
+                return mine;
+            })));
+
+            taken.SelectMany(t => t).Should().OnlyHaveUniqueItems("no job was taken by two workers").And.HaveCount(30, "and every job was taken by one");
+            var rows = await db.BackgroundJobs.AsNoTracking().Select(j => new { j.Status, j.Attempts, j.Version }).ToListAsync();
+            rows.Should().OnlyContain(j => j.Status == BackgroundJobStatus.Running && j.Attempts == 1 && j.Version == 1);
+            output.WriteLine($"job queue: 6 workers each tried all 30 jobs on PostgreSQL; taken {string.Join(" + ", taken.Select(t => t.Count))} = 30, each once, {6 * 30 - 30} saves refused");
+        }
+        finally
+        {
+            foreach (var w in workers) await w.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task Ticket_visibility_through_PSA_links_runs_on_a_real_database()
     {
         // The predicate that decides which tickets a person may see is assembled by hand, one clause

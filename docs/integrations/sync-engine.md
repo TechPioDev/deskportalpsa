@@ -99,12 +99,56 @@ organization's connection, run or failure is "not found".
 | `POST …/sync-failures/{failureId}/retry` | Put one at the front of the next run (one more try, not six). Audited `sync.failure.retried` |
 | `POST …/sync-failures/{failureId}/dismiss` | Stop trying one. It is kept, marked dismissed. Audited `sync.failure.dismissed` |
 
-"Sync now" is audited as `connection.sync.requested`, records who asked on the run, and reports
-"more to read" and "could not be read" in its answer.
+"Sync now" is audited as `connection.sync.requested` and records who asked on the run. It no longer
+runs the sync: see the next section.
 
 Since slice 3a these are on the connection's card as **Sync activity**: how far the sync has read,
 its last runs with who started each, and each failed record with *Try on next sync* and
 *Stop trying*.
+
+## Asking for a sync
+
+"Sync now" and "Re-sync all" used to run the sync inside the web request that asked for it. A first
+import of a large PSA takes minutes, and a request that long is cut off by whatever stands in
+front of the API: the person saw an error, and the sync, which had not stopped, went on unseen.
+
+Asking is now a note on the connection (`SyncRequestedAt`, whether it is for everything, and who
+asked). The API answers **202** at once. The worker reads those notes every five seconds
+(`Sync:RequestPollSeconds`), in a loop of its own beside the schedule's, and runs each through the
+same runner the schedule uses.
+
+| | What happens |
+|---|---|
+| Asked twice | It runs once. The second ask changes nothing |
+| Asked for everything after asking for what changed | A new request: everything is read, after the run already under way |
+| A run already has the connection | The request waits and is come back to on the next turn. One run at a time is the run's own rule |
+| More to read than one run's pages | The request stands and the worker carries straight on, as a continuation: a second "everything" would start again from the first page |
+| The PSA stopped answering, or asked to be left alone | The run stops early, and the rest is **left to the schedule**. Coming back every five seconds is what the PSA asked not to be done |
+| The run fails | The request is spent. The run and the connection say why; asking again is a person's to do |
+| The connection is paused or archived | Asking is refused, in words. Pausing or archiving withdraws a request that was waiting, so it does not start by itself on resume |
+| Nothing takes it for ten minutes | The attention list says so (`sync-request-waiting`): the worker is not running. A long import that is being worked through is not that |
+
+The card says a sync has been asked for, shows *Syncing* while it runs, and then what the run did,
+in the words it always used. **Sync activity** says the same.
+
+Local mode is one process with no worker beside it. There the sync still runs in the request, as
+it did, and the answer is the run's result.
+
+## The job queue
+
+Not the sync, but beside it: `background_jobs`, which carries inbound events. A job was taken by
+reading it, and marked running only in memory until its handler had returned. Two workers reading
+at once both ran it, and a worker that stopped left nothing to say the job had started (R11 in the
+[audit](PHASE9_PSA_INTEGRATION_ARCHITECTURE_AUDIT.md)). One worker runs today, which is the only
+reason neither had happened.
+
+Taking a job is now a save of its own, before the handler runs (`JobQueue.ClaimAsync`). The job's
+`Version` is checked by that save, so of two workers taking the same job one is refused and moves
+on. The job is held for a lease of five minutes: a worker that stops leaves a running job whose
+lease runs out, and the next cycle takes it again, counted as another attempt. A job that has had
+every attempt it is allowed that way is set aside (`DeadLettered`) and not run for ever.
+
+A handler must finish inside the lease and be safe to run twice. The one there is today is both.
 
 ## One person per PSA login
 
@@ -132,7 +176,9 @@ another connection is another login.
 - The HTTP calls themselves are paced, bounded and repeated one layer down, and every list is read
   to its end: see [provider-calls.md](provider-calls.md). What reaches a run as a failure is what
   that layer could not get through.
-- A screen for runs and failures: the routes are here; the screen comes with the connections work.
+- A hundred connections asking at once are run one after another, like the schedule's. The worker
+  does not run several syncs side by side.
+- A job's lease cannot be extended by its handler. Nothing needs it yet.
 - Old runs are not removed. A connection records 288 a day at the default five minutes. Reading
   them is indexed and does not slow down ([performance.md](performance.md)); it is disk, and it
   wants a retention period.

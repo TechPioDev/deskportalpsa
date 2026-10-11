@@ -16,8 +16,13 @@ public sealed class SyncHealthService(DeskDbContext db, IAuditWriter audit, Time
 {
     public async Task<SyncStateDto> StateAsync(Guid connectionId, int runs = 20, CancellationToken ct = default)
     {
-        await EnsureConnectionAsync(connectionId, ct);
         runs = Math.Clamp(runs, 1, 100);
+        // Found under the caller's tenant or not found at all; and with it, whether a sync has been asked for.
+        var asked = await db.PsaConnections.AsNoTracking()
+                .Where(c => c.Id == connectionId)
+                .Select(c => new { c.SyncRequestedAt, c.SyncRequestedFull })
+                .FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException("PSA connection");
 
         var cursor = await db.SyncCursors.AsNoTracking()
             .FirstOrDefaultAsync(c => c.PsaConnectionId == connectionId && c.Entity == SyncCursor.Tickets, ct);
@@ -42,7 +47,8 @@ public sealed class SyncHealthService(DeskDbContext db, IAuditWriter audit, Time
             Running: recent.Any(r => r.Status == SyncRunStatus.Running && r.LeaseExpiresAt > now),
             OpenFailures: open.Count,
             NeedsReview: open.Count(s => s == SyncFailureStatus.NeedsReview),
-            recent.Select(Dto).ToList());
+            recent.Select(Dto).ToList(),
+            asked.SyncRequestedAt, asked.SyncRequestedAt is not null && asked.SyncRequestedFull);
     }
 
     public async Task<IReadOnlyList<SyncFailureDto>> FailuresAsync(Guid connectionId, CancellationToken ct = default)

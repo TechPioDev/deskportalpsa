@@ -18,6 +18,7 @@ namespace Desk.Api.Controllers;
 public sealed class AdminConnectionsController(
     IConnectionAdminService svc,
     IConnectionSyncRunner syncRunner,
+    ISyncRequestService syncRequests,
     DeskDbContext db,
     IConfiguration config,
     ISyncHealthService syncHealth,
@@ -112,10 +113,19 @@ public sealed class AdminConnectionsController(
         // Recorded as asked for, before it runs: a run that then fails was still requested.
         await audit.WriteAsync("connection.sync.requested", "PsaConnection", id.ToString(), new { full }, ct);
 
-        // One run per connection. While the scheduled sync (or an earlier click) has it, this
-        // answers 409 and starts nothing: it used to start a second run over the same tickets.
-        var result = await syncRunner.RunAsync(id,
-            new SyncRunRequest(full, Manual: true, RequestedBy: user.DisplayName ?? user.Email ?? user.Subject), ct);
+        var by = user.DisplayName ?? user.Email ?? user.Subject;
+        // Where there is a worker the sync is the worker's to run, and this only asks for it. A
+        // first import of a large PSA takes minutes; run inside this request it was cut off by
+        // whatever stands in front of the API, and went on unseen behind an error message.
+        if (!config.GetValue("LocalMode:Enabled", false))
+        {
+            var asked = await syncRequests.RequestAsync(id, full, by, ct);
+            return Accepted(new { queued = true, requestedAt = asked.RequestedAt, full = asked.Full });
+        }
+
+        // Local mode is one process with no worker beside it, so the sync runs here as it always
+        // did. One run per connection: while another has it this answers 409 and starts nothing.
+        var result = await syncRunner.RunAsync(id, new SyncRunRequest(full, Manual: true, RequestedBy: by), ct);
         await EnsureLocalClientIdentityAsync(id, ct);
         return Ok(result);
     }

@@ -312,6 +312,8 @@ export const ConnectionSummarySchema = z.object({
   // or not, switched on, paused, rejected by the PSA, syncing). null = an older response.
   state: z.union([z.string(), z.number()]).nullable().default(null),
   syncPausedAt: z.string().nullable().default(null),
+  // A sync someone asked for that has not finished: waiting for the worker, or being run by it.
+  syncRequestedAt: z.string().nullable().default(null),
 });
 export type ConnectionSummary = z.infer<typeof ConnectionSummarySchema>;
 
@@ -350,8 +352,28 @@ export const SyncStateSchema = z.object({
   readInProgress: z.boolean(), pagesReadSoFar: z.number(),
   running: z.boolean(), openFailures: z.number(), needsReview: z.number(),
   runs: z.array(SyncRunSchema),
+  // A sync someone asked for that has not finished.
+  requestedAt: z.string().nullable().default(null), requestedFull: z.boolean().default(false),
 });
 export type SyncState = z.infer<typeof SyncStateSchema>;
+
+/**
+ * What "Sync now" answers. Where a worker runs syncs, only that the sync has been asked for: it
+ * starts within seconds and the page follows it. In one process with no worker (local mode) the
+ * sync has just run, and this is what it did.
+ */
+export const SyncAnswerSchema = z.union([
+  z.object({ queued: z.literal(true), requestedAt: z.string(), full: z.boolean().default(false) }),
+  z.object({
+    fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number(),
+    // A run reads a bounded number of pages; when there is more, later runs carry on by themselves.
+    moreToRead: z.boolean().default(false),
+    // Records it could not read or apply. They are kept and tried again.
+    failed: z.number().default(0),
+    recovered: z.number().default(0),
+  }),
+]);
+export type SyncAnswer = z.infer<typeof SyncAnswerSchema>;
 
 /**
  * One line of a connection's test. `outcome` is Pass, Fail, Warn, NotTested (nothing to try it on,
