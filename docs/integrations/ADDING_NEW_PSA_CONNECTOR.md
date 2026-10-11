@@ -33,6 +33,11 @@ never sees a secret it was not constructed with.
   claims. A flag is true when the connector does the thing today, not when the PSA could. Both
   real connectors claimed inbound webhooks while understanding only the portal's own signed frame,
   which neither PSA can send.
+- **Read what it sends.** A ticket is raised under a type, an issue and a sub-issue
+  (`UnifiedTicketCreateRequest`), in whatever the PSA calls its three levels. The same three are
+  on a ticket that is read (`UnifiedTicket.TicketType`, `IssueType`, `SubIssueType`), as words,
+  and null where the PSA has none. A connector that sends them and does not read them leaves the
+  portal knowing less about a ticket than it told the PSA.
 - **What it does not do must still be safe to ask for.** A method behind a capability it does not
   claim returns an empty answer, never an exception (`GetCustomFieldsAsync`, `GetHolidaysAsync`,
   `GetAgreementsAsync`).
@@ -160,9 +165,11 @@ Then two certifications.
 one for each kind of failure, the id of an organization the fake holds, and the webhook secret. The
 suite then holds the connector to the contract: capabilities, the kinds of failure, directory,
 ticket create/read/update, notes with their visibility, attachments and the sweep, field options,
-paging to the last ticket, incremental reads, a count that agrees with the read, safety of what is
-not claimed, and the webhook frame (valid, tampered, stale, replayed, no secret, another secret).
-It runs today against Autotask, ConnectWise and the mock: 26 contract tests each.
+paging to the last ticket, incremental reads, a count that agrees with the read, what a ticket is
+raised under read back, safety of what is not claimed, and the webhook frame (valid, tampered,
+stale, replayed, no secret, another secret). It runs today against Autotask, ConnectWise and the
+mock: 27 contract tests each. Where the PSA holds the three levels by id, override `RaisedUnder`
+and `ReadAs` (Autotask does).
 
 **The factory.** Add yours to `ConnectorFactoryCertificationTests.Factories`. It holds the
 descriptor to being a form someone can fill in (the fields it asks for are the fields it reads)

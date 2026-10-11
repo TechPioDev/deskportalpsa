@@ -274,7 +274,16 @@ public sealed record TicketDetailDto(
     /// </summary>
     TicketBoardDetailsDto? BoardDetails = null,
     /// <summary>Who resolved it in the portal - the person productivity credits it to. Staff only.</summary>
-    string? ResolvedByName = null);
+    string? ResolvedByName = null,
+    /// <summary>What the PSA files the ticket under, in its own three levels. Staff only, and null when it has none.</summary>
+    TicketClassificationDto? Classification = null);
+
+/// <summary>
+/// The PSA's own classification of a ticket, as it sent it. Which words the three levels go by is
+/// the PSA's: Autotask's ticket type, issue type and sub-issue type; ConnectWise's type, subtype
+/// and item.
+/// </summary>
+public sealed record TicketClassificationDto(string? TicketType, string? IssueType, string? SubIssueType);
 
 public sealed record TicketBoardDetailsDto(
     Guid BoardId, Guid? BoardTopicId, Guid? DepartmentId, Guid? ClientCompanyId,
