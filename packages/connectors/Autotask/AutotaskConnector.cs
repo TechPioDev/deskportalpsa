@@ -661,7 +661,7 @@ public sealed class AutotaskConnector(
         return new CreateTimeEntryResult(true, result!.ItemId.ToString(), null);
     }
 
-    private static string SummaryNotes(string? notes) => string.IsNullOrWhiteSpace(notes) ? "Time logged from Desk Portal." : notes;
+    private static string SummaryNotes(string? notes) => string.IsNullOrWhiteSpace(notes) ? "Time logged from PioManage." : notes;
 
     public async Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
         IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default)

@@ -73,7 +73,7 @@ export const CLIENT_JOURNEY = [
 ];
 
 export const HOW_IT_WORKS = [
-  { n: '01', title: 'Choose your PSA', body: 'Connect Desk Portal to the PSA your MSP already runs.' },
+  { n: '01', title: 'Choose your PSA', body: 'Connect PioManage to the PSA your MSP already runs.' },
   { n: '02', title: 'Configure the experience', body: 'Decide what clients see, how statuses read, and who may do what.' },
   { n: '03', title: 'Invite your clients', body: 'Give each client access to their own support experience.' },
   { n: '04', title: 'Start working', body: 'Clients use the portal. Technicians carry on in the PSA.' },

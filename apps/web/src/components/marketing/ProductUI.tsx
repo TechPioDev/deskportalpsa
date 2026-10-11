@@ -31,7 +31,7 @@ const REQUESTS = [
 ];
 
 export function BrowserFrame({
-  children, url = 'Desk Portal', className = '',
+  children, url = 'PioManage', className = '',
 }: { children: React.ReactNode; url?: string; className?: string }) {
   return (
     <div

@@ -402,7 +402,7 @@ function UnsyncedPanel() {
           {tickets.map((t) => (
             <li key={t.ticketId} className="px-5 py-3">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="font-mono text-xs text-[var(--faint)]" title="Desk Portal ticket ID">{t.ticketId.slice(0, 8)}</span>
+                <span className="font-mono text-xs text-[var(--faint)]" title="PioManage ticket ID">{t.ticketId.slice(0, 8)}</span>
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{t.title}</span>
                 {t.customerName && <span className="hidden shrink-0 text-xs text-[var(--muted)] sm:inline">{t.customerName}</span>}
                 <span className="shrink-0 rounded bg-[var(--bg)] px-1.5 py-0.5 text-[11px] text-[var(--muted)]">{t.connectionName}</span>
@@ -522,7 +522,7 @@ function EmailSettingsForm({ onClose, onSaved }: { onClose: () => void; onSaved:
     port: current?.hasOwnAccount && !savedGraph ? current.port : 587,
     security: current?.hasOwnAccount && !savedGraph ? current.security : 'StartTls',
     username: savedGraph ? '' : current?.username ?? '', password: null,
-    fromAddress: current?.fromAddress ?? '', fromName: current?.fromName ?? 'Desk Portal',
+    fromAddress: current?.fromAddress ?? '', fromName: current?.fromName ?? 'PioManage',
     graphTenantId: current?.graphTenantId ?? '', graphClientId: current?.graphClientId ?? '',
   };
   const set = (patch: Partial<EmailSettingsInput>) => setV({ ...form, ...patch });
@@ -621,7 +621,7 @@ function EmailSettingsForm({ onClose, onSaved }: { onClose: () => void; onSaved:
       </label>
       <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
         Send from (name)
-        <input value={form.fromName ?? ''} onChange={(e) => set({ fromName: e.target.value })} placeholder="Desk Portal" className={field} />
+        <input value={form.fromName ?? ''} onChange={(e) => set({ fromName: e.target.value })} placeholder="PioManage" className={field} />
       </label>
 
       <p className="text-xs text-[var(--faint)] sm:col-span-2">

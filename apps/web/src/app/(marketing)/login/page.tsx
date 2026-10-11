@@ -5,7 +5,7 @@ import { Container } from '@/components/marketing/ui';
 import { Hero } from '@/components/marketing/Hero';
 import { CONTACT_EMAIL } from '@/components/marketing/MarketingFooter';
 
-export const metadata: Metadata = { title: 'Sign in — Desk Portal' };
+export const metadata: Metadata = { title: 'Sign in — PioManage' };
 
 /**
  * Sign-in entry (Keycloak OIDC, auth-code + PKCE; local demo mode skips straight in).

@@ -1,5 +1,5 @@
 /**
- * Pio, the Desk Portal owl — the single definition of the brand mark.
+ * Pio, the PioManage owl — the single definition of the brand mark.
  *
  * The owl watches the desk and carries a ticket: the product's whole job in one shape. Drawn as
  * inline SVG rather than an image file so it inherits crispness at every size, costs no request,
@@ -30,7 +30,7 @@ export function BrandMark({
   size = 36,
   variant = 'primary',
   className,
-  title = 'Desk Portal',
+  title = 'PioManage',
 }: {
   size?: number;
   variant?: BrandVariant;
