@@ -32,6 +32,15 @@ public sealed class TicketScopeQuery(DeskDbContext db, IEffectivePermissionServi
         return await NarrowAsync(byKey, appUserId, Permissions.TicketsViewAll, ct);
     }
 
+    public async Task<bool> SeesEveryPsaTicketAsync(Guid appUserId, CancellationToken ct = default)
+    {
+        // The two things NarrowAsync narrows a PSA ticket by: the scope of the grant, and which
+        // provider queues the person has been given. Board membership, the third, lets every PSA
+        // ticket through.
+        var eff = await ResolveViewAsync(appUserId, Permissions.TicketsViewAll, ct);
+        return !eff.IsDenied && eff.Scope == PermissionScope.All && eff.BoardMode == BoardAccessMode.All;
+    }
+
     private async Task<IQueryable<Ticket>> NarrowAsync(
         IQueryable<Ticket> source, Guid appUserId, string permissionKey, CancellationToken ct)
     {

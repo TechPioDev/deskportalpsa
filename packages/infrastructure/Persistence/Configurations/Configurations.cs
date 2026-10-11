@@ -216,6 +216,30 @@ public sealed class ActivityDailyFactConfig : IEntityTypeConfiguration<Desk.Doma
     }
 }
 
+/// <summary>Indexes that are named, because something outside the model refers to them.</summary>
+public static class TicketIndexes
+{
+    public const string Open = "IX_tickets_open";
+    public const string Search = "IX_tickets_search";
+
+    /// <summary>
+    /// <see cref="Desk.Domain.Tickets.TicketStatusRules.Open"/> as it reaches the database. PostgreSQL uses a
+    /// partial index only where it can see the query asks for no more than the index holds, and
+    /// it sees that by the two conditions being written the same way.
+    /// </summary>
+    public const string OpenFilter = "upper(\"PortalStatus\") NOT LIKE '%RESOLV%' AND upper(\"PortalStatus\") NOT LIKE '%CLOSED%'";
+
+    /// <summary>
+    /// Gives every time entry already stored the PSA account of its ticket. Run once, by the
+    /// migration that adds the column; entries written afterwards are given theirs as they are saved.
+    /// Kept here so that the test which runs it over a million entries runs the migration's own words.
+    /// </summary>
+    public const string GiveTimeEntriesTheirAccount = """
+        UPDATE ticket_time_entries e SET "PsaConnectionId" = t."PsaConnectionId"
+        FROM tickets t WHERE t."Id" = e."TicketId" AND t."PsaConnectionId" IS NOT NULL AND e."PsaConnectionId" IS NULL;
+        """;
+}
+
 public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
 {
     public void Configure(EntityTypeBuilder<Ticket> b)
@@ -252,6 +276,24 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         // "My tickets" for a portal-only technician runs on this, and it is the query every one of
         // them issues on every page load — the same reason the PSA-side index above exists.
         b.HasIndex(x => new { x.MspOrganizationId, x.AssignedAppUserId });
+        // "Who holds a ticket" is found by walking an index from one value to the next, so each
+        // kind of holder needs the index that is walked: who resolved it, and a PSA login within
+        // its account. (A portal assignee walks the index above.) Read as a list of distinct
+        // values it was a pass over every ticket.
+        b.HasIndex(x => new { x.MspOrganizationId, x.ResolvedByAppUserId }).HasFilter("\"ResolvedByAppUserId\" IS NOT NULL");
+        b.HasIndex(x => new { x.MspOrganizationId, x.PsaConnectionId, x.AssignedTechnicianExternalId });
+        // The open work, and with it everything the dashboard counts about it, so that the counting
+        // reads this and not the tickets themselves: most tickets a desk has ever had are closed.
+        // The condition is TicketStatusRules.Open() as the database is sent it, word for word; it
+        // is only used while the two stay the same, which TicketListReadsTests holds on PostgreSQL.
+        b.HasIndex(x => x.MspOrganizationId)
+            .HasDatabaseName(TicketIndexes.Open)
+            .HasFilter(TicketIndexes.OpenFilter)
+            .IncludeProperties(x => new
+            {
+                x.Origin, x.BoardId, x.AssignedAppUserId, x.CreatedByUserId, x.PortalStatus, x.PortalPriority,
+                x.PsaConnectionId, x.SlaPausedAt, x.SlaDueAt, x.AssignedTechnicianExternalId,
+            });
         b.HasMany(x => x.Notes).WithOne(n => n.Ticket!).HasForeignKey(n => n.TicketId);
         b.HasMany(x => x.Attachments).WithOne(a => a.Ticket!).HasForeignKey(a => a.TicketId);
         // The board lists: one board, newest first, is the query the team lives on all day.
@@ -800,6 +842,8 @@ public sealed class TicketTimeEntryConfig : IEntityTypeConfiguration<TicketTimeE
         // "Hours this technician logged between two dates" is the query every productivity report
         // runs, per person, per range — so it gets the date alongside the person.
         b.HasIndex(x => new { x.MspOrganizationId, x.AppUserId, x.EntryDate });
+        // The PSA logins that have logged time and are not linked to anyone here, walked the same way.
+        b.HasIndex(x => new { x.MspOrganizationId, x.PsaConnectionId, x.TechnicianExternalId }).HasFilter("\"AppUserId\" IS NULL");
         // A stopped clock writes exactly one entry: a second write for the same session is refused by the database.
         b.HasIndex(x => x.WorkSessionId).IsUnique().HasFilter("\"WorkSessionId\" IS NOT NULL");
     }

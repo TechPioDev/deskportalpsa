@@ -57,6 +57,7 @@ public sealed class TicketTimeWriter(DeskDbContext db, IConnectionAdminService a
         {
             MspOrganizationId = ticket.MspOrganizationId,
             TicketId = ticket.Id,
+            PsaConnectionId = ticket.PsaConnectionId,
             NoteId = noteId,
             Hours = hours,
             Billable = billable,

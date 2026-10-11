@@ -33,6 +33,14 @@ public class TicketTimeEntry : TenantEntity
     public Guid TicketId { get; set; }
     public Ticket? Ticket { get; set; }
 
+    /// <summary>
+    /// The PSA account its ticket belongs to, kept on the entry itself. A PSA login means a person
+    /// only together with its account, and "who has logged time" asked of a million entries cannot
+    /// afford to visit each one's ticket to find out which account that is. Null for time on a
+    /// ticket that belongs to no PSA. A ticket never changes account, so this never changes.
+    /// </summary>
+    public Guid? PsaConnectionId { get; set; }
+
     /// <summary>The PSA's own entry id. Null while pending, and after a failed push.</summary>
     public string? ExternalEntryId { get; set; }
 
