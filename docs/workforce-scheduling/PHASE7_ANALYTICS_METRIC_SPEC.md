@@ -31,7 +31,7 @@ differences are stated in [§ Source audit](#source-of-truth-audit).
 |---|---|---|
 | Working capacity | Working schedule versions, breaks, capacity exceptions (Phase 1, 2) → `CapacityCalculator.ForDay` over `WorkforceCalendar` inputs → `UsableMinutes` | `CapacityService`; the dashboard calls the same calendar and calculator |
 | Planned time | `work_allocations` rows: Status Planned (1) = confirmed, Tentative (2) = tentative; `PlannedMinutes`; the person-day of `StartsAt` | `WorkPlanService` (My plan), `WorkTimeService.MyDayAsync` |
-| Actual work time | `ticket_time_entries` rows by their portal author (`AppUserId`), **any** sync status, dated by `EntryDate`; plus live work sessions (Active / Paused, no entry yet) by their start | `WorkTimeService.MyDayAsync` ("the one rule for actual time") |
+| Actual work time | `ticket_time_entries` rows by their portal author (`AppUserId`), **any** sync status, dated by `EntryDate`; plus rows with no portal author that the PSA holds, filed under a PSA login linked to the person (time entered in the PSA itself, since Phase 9); plus live work sessions (Active / Paused, no entry yet) by their start | `WorkTimeService.MyDayAsync` ("the one rule for actual time") |
 | Ticket count / work items | `tickets` (the unified work model: boards, Autotask, ConnectWise, monitoring) | — |
 | Completed work | `tickets` with a finished status (`TicketStatusRules.Finished`: RESOLV / CLOSED) and `ResolvedAt ?? ClosedAt`; credit `ResolvedByAppUserId ?? AssignedAppUserId ?? the linked PSA login` | The same attribution rule as `TechnicianMetricsService` |
 | Reactive work | Actual time on a person-ticket-day with **no** Planned or Tentative allocation of that person on that ticket starting that day | `MyDaySummaryDto.UnplannedActualSeconds` (Phase 6) |
@@ -55,7 +55,7 @@ cached, so there is no cache to leak between tenants or scopes.
 | Day an hour belongs to | The person's shift date (their zone) | The UTC date |
 | Which hours count | Every portal entry (Synced, Pending, Failed): rejected time is still work, marked "not in the PSA yet" | Synced only |
 | Period boundaries | Organization zone | Caller-supplied instants (the browser's local calendar) |
-| PSA-side time (entered in the PSA itself) | Not included: it has no portal row and no day. Shown as a note | Ticket totals only |
+| PSA-side time (entered in the PSA itself) | Included since Phase 9, for the person whose linked PSA login it is under, on the day of the entry. Under a login linked to nobody it is in no person's day. A note says how much of the actual time it is | By PSA login, and by the person that login is linked to |
 
 ## 1. Period
 
@@ -174,6 +174,10 @@ Phase 6's one rule, summed: time entries dated the day plus live clocks that sta
 
 ```
 entries(p, d)  = Σ round(Hours × 3600) of ticket_time_entries e: e.AppUserId = p, shiftDate(e.EntryDate, zone(p, d)) = d
+               + Σ round(Hours × 3600) of ticket_time_entries e: e.AppUserId is null, e.SyncStatus = Synced,
+                                                 (e.PsaConnectionId, e.TechnicianExternalId) is a login linked to p
+                                                 and is not the login that connection writes as,
+                                                 shiftDate(e.EntryDate, zone(p, d)) = d
 live(p, d)     = Σ elapsed(s) of work_sessions s: s.AppUserId = p, Status ∈ {Active, Paused}, TimeEntryId = null,
                                                  shiftDate(s.StartedAt, zone(p, d)) = d
 actual(p, d)   = entries(p, d) + live(p, d)          (seconds)
@@ -186,9 +190,17 @@ of the answer.
 **Inclusion.** Every portal time entry whatever its sync status (a rejected push is still work).
 Entries typed in by hand, entries a clock wrote, and corrected entries at their corrected hours.
 
-**Exclusion.** Time entered directly in the PSA (no portal row; it reaches the ticket's totals and
-time notes only). Cancelled or discarded sessions. A stopped session's seconds are in its entry and
-nowhere else, so **no minute is counted twice** (one entry per session is a database rule).
+Since Phase 9, time entered directly in the PSA as well, for the person whose PSA login it is
+under: the sync keeps each such entry as a row marked as the PSA's
+([worklogs.md](../integrations/worklogs.md)). The link is read as it stands when the figure is
+asked for, so linking a login credits the time already under it.
+
+**Exclusion.** Time in the PSA under a login linked to nobody here, and under the login a
+connection itself writes as (the whole portal's writing; the hours a person logged in the portal
+are counted by their author). Cancelled or discarded sessions. A stopped session's seconds are in
+its entry and nowhere else, and an entry logged in the portal and read back from the PSA is the
+same row and not a second one, so **no minute is counted twice** (one entry per session, and one
+row per PSA entry, are database rules).
 
 **Time zone.** The entry's `EntryDate` (for a clock, its start) in the person's zone. A clock across
 midnight belongs to the day it started.
@@ -437,7 +449,6 @@ Nothing is cached.
 | Signal | Why not here |
 |---|---|
 | Reopened work, escalations, SLA met / breached, first response, satisfaction, review pass rate | Already on the productivity dashboard, with their own definitions; duplicating them here under a workforce heading would create two numbers for one fact. Linked from the dashboard |
-| Importing PSA-side time rows | A sync change (Phase 6 deferred item); until then a note states that PSA-entered time is not in any day |
 | Aggregation tables / caching | Benchmarked raw first ([analytics.md](analytics.md#performance)); not needed at the measured volumes |
 | Excel export | CSV only; the organization's spreadsheet opens it |
 | A productivity score | The dashboard introduces none; the existing weighted score stays where it is and is not used here |

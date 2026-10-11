@@ -290,6 +290,8 @@ public sealed class WorkTimeService(
         // Actual: the person's time entries dated the day, and the live clocks not yet written as entries.
         var entries = (await db.TicketTimeEntries.AsNoTracking()
                 .Where(e => e.AppUserId == person.Id && e.EntryDate >= lo && e.EntryDate < hi).ToListAsync(ct))
+            // And what they entered in the PSA itself, under a login that is linked to them.
+            .Concat((await PsaLoggedTime.ForAsync(db, [person.Id], lo, hi, ct)).Select(x => x.Entry))
             .Where(e => WorkforceCalendar.LocalDate(e.EntryDate, zone) == theDay).ToList();
         var sessions = await db.WorkSessions.AsNoTracking().Include(s => s.Ticket).Include(s => s.Segments)
             .Where(s => s.AppUserId == person.Id && ((s.StartedAt >= lo && s.StartedAt < hi) || s.Status == WorkSessionStatus.Active || s.Status == WorkSessionStatus.Paused))
@@ -379,6 +381,8 @@ public sealed class WorkTimeService(
         var entries = await db.TicketTimeEntries.AsNoTracking()
             .Where(e => e.AppUserId != null && ids.Contains(e.AppUserId.Value) && e.EntryDate >= lo && e.EntryDate < hi)
             .Select(e => new { AppUserId = e.AppUserId!.Value, e.TicketId, e.EntryDate, e.Hours }).ToListAsync(ct);
+        // And what each entered in the PSA itself, under a login that is linked to them.
+        entries.AddRange((await PsaLoggedTime.ForAsync(db, ids, lo, hi, ct)).Select(x => new { x.AppUserId, x.Entry.TicketId, x.Entry.EntryDate, x.Entry.Hours }));
         var sessions = await db.WorkSessions.AsNoTracking().Include(s => s.Ticket).Include(s => s.Segments)
             .Where(s => ids.Contains(s.AppUserId) && (s.Status == WorkSessionStatus.Active || s.Status == WorkSessionStatus.Paused))
             .ToListAsync(ct);
