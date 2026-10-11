@@ -942,6 +942,25 @@ public sealed class SyncEventConfig : IEntityTypeConfiguration<SyncEvent>
     }
 }
 
+public sealed class OutboundOperationConfig : IEntityTypeConfiguration<OutboundOperation>
+{
+    public void Configure(EntityTypeBuilder<OutboundOperation> b)
+    {
+        b.ToTable("outbound_operations");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Summary).HasMaxLength(300).IsRequired();
+        b.Property(x => x.PayloadJson).IsRequired();
+        b.Property(x => x.IdempotencyKey).HasMaxLength(64).IsRequired();
+        b.Property(x => x.ExternalId).HasMaxLength(100);
+        b.Property(x => x.RequestedByName).HasMaxLength(200);
+        b.Property(x => x.Version).IsConcurrencyToken();
+        // What is due: by state and time. What a ticket has waiting: by ticket.
+        b.HasIndex(x => new { x.State, x.NextAttemptAt });
+        b.HasIndex(x => new { x.TicketId, x.State });
+        b.HasIndex(x => new { x.MspOrganizationId, x.State });
+    }
+}
+
 public sealed class BackgroundJobConfig : IEntityTypeConfiguration<BackgroundJob>
 {
     public void Configure(EntityTypeBuilder<BackgroundJob> b)

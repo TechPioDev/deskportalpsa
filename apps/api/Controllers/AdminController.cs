@@ -385,6 +385,41 @@ public sealed class AdminClassificationController(IClassificationMappingService 
 }
 
 /// <summary>
+/// Every change made in the portal that a PSA does not have yet: waiting to be sent, or failed.
+/// A list to find them by; sending one again or letting go of it is done on its ticket, by whoever
+/// may change that ticket (<see cref="TicketOutboundController"/>).
+/// </summary>
+[ApiController]
+[Route("api/admin/outbound")]
+public sealed class AdminOutboundController(Desk.Infrastructure.Persistence.DeskDbContext db) : ControllerBase
+{
+    public sealed record OutboundRow(
+        Guid Id, Guid TicketId, string? TicketReference, string TicketTitle, string ConnectionName,
+        string Kind, string Summary, string State, int Attempts, int MaxAttempts,
+        DateTimeOffset RequestedAt, string? RequestedBy, DateTimeOffset? NextAttemptAt, string? LastError);
+
+    [HttpGet]
+    [RequirePermission(Permissions.IntegrationHealthView)]
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        var rows = await (
+                from o in db.OutboundOperations.AsNoTracking()
+                where o.State != Desk.Domain.Sync.OutboundState.Synced
+                join t in db.Tickets.AsNoTracking() on o.TicketId equals t.Id
+                join c in db.PsaConnections.AsNoTracking() on o.PsaConnectionId equals c.Id
+                // What has failed first, then the longest waiting.
+                orderby o.State descending, o.CreatedAt
+                select new { o, Reference = t.ExternalTicketId ?? t.Number, t.Title, Connection = c.Name })
+            .Take(500)
+            .ToListAsync(ct);
+        return Ok(rows.Select(r => new OutboundRow(
+            r.o.Id, r.o.TicketId, r.Reference, r.Title, r.Connection, r.o.Kind.ToString(), r.o.Summary,
+            Desk.Infrastructure.Sync.OutboundQueue.Label(r.o.State), r.o.Attempts, r.o.MaxAttempts,
+            r.o.CreatedAt, r.o.RequestedByName, r.o.NextAttemptAt, r.o.LastError)));
+    }
+}
+
+/// <summary>
 /// Which of a connection's PSA custom fields are brought in, what each is called here, and whether
 /// the client may see it. Nothing is brought in until chosen; a chosen field is staff only until
 /// said otherwise. A connection of another organization is not found. Every change is audited.

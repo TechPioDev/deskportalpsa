@@ -40,4 +40,12 @@ public class TicketNote : TenantEntity
     /// this answers "whose copy is authoritative".
     /// </summary>
     public bool ImportedFromProvider { get; set; }
+
+    /// <summary>
+    /// Where sending this note to the PSA stands, for a note written while the PSA could not be
+    /// reached. Null for every other note: one the PSA took at once, one read from the PSA, one on
+    /// a ticket with no PSA. Pending and failed notes have no id from the PSA yet. A reply of the
+    /// desk's that is not synced is not shown to the client: the PSA has not sent it to them.
+    /// </summary>
+    public Desk.Domain.Sync.OutboundState? SyncState { get; set; }
 }

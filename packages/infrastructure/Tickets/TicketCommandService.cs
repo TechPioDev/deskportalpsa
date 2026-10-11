@@ -6,6 +6,7 @@ using Desk.Application.Tickets;
 using Desk.Domain.Authorization;
 using Desk.Domain.Enums;
 using Desk.Domain.Mapping;
+using Desk.Domain.Sync;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Persistence;
 using Desk.PsaCore.Contracts;
@@ -26,7 +27,8 @@ public sealed class TicketCommandService(
     ISyncEventStore syncEvents,
     ITicketScopeQuery scopeQuery,
     TimeProvider clock,
-    Desk.Application.Analytics.IActivityRecorder activity) : ITicketCommandService
+    Desk.Application.Analytics.IActivityRecorder activity,
+    Sync.OutboundQueue? outbound = null) : ITicketCommandService
 {
     /// <summary>Portal-neutral status a newly raised ticket starts in.</summary>
     private const string NewStatus = "NEW";
@@ -140,6 +142,7 @@ public sealed class TicketCommandService(
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var connector = await connectors.ResolveAsync(connection.Id, ct);
         CreateTicketResult created;
+        ConnectorException? away = null;
         try
         {
             created = await connector.CreateTicketAsync(new UnifiedTicketCreateRequest
@@ -174,6 +177,10 @@ public sealed class TicketCommandService(
         {
             // An unreachable or rate-limited PSA is not the customer's problem to retype.
             created = new CreateTicketResult(false, null, ex.Message);
+            // Only where the request certainly did nothing there is it sent again by itself. One
+            // that may have been carried out is left for a person: a second ticket for one request
+            // is worse than one that waits to be checked.
+            away = ex.IsTransient && ex.NeverSent && outbound is not null ? ex : null;
         }
 
         var now = clock.GetUtcNow();
@@ -198,14 +205,27 @@ public sealed class TicketCommandService(
             // Recorded either way. A rejected create used to throw before anything was written, so
             // the customer's ticket vanished with nothing to retry from and no count of what was
             // lost. It is kept here as Error, listed for staff, and resyncable.
-            SyncStatus = created.Success ? TicketSyncStatus.Synced : TicketSyncStatus.Error,
+            SyncStatus = created.Success ? TicketSyncStatus.Synced : away is not null ? TicketSyncStatus.PendingCreate : TicketSyncStatus.Error,
             SyncError = created.Success ? null : created.Error,
             LastSyncedAt = created.Success ? now : null,
             CorrelationId = Guid.NewGuid(),
         };
         ticket.UpdateHash = HashOf(ticket);
         db.Tickets.Add(ticket);
+        // Kept with the ticket in one save: a ticket waiting for the PSA and nothing set to send it would wait for ever.
+        var sending = away is null ? null : outbound!.Enqueue(ticket, OutboundKind.TicketCreate, "New ticket",
+            new Sync.OutboundCreate(ticket.Id), null, idempotencyKey, null, requester.Id, requester.DisplayName,
+            Sync.OutboundProcessor.Unreachable(away), uncertain: false);
         await db.SaveChangesAsync(ct);
+
+        if (sending is not null)
+        {
+            // Not an error to the customer, and not told as sent: it is theirs, it is kept, and it
+            // goes to the service desk as soon as the PSA can be reached.
+            await outbound!.AuditQueuedAsync(sending, ct);
+            await RecordPortalEventAsync(access.MspOrganizationId, connection.Id, ticket, idempotencyKey, "ticket.create_queued", ct);
+            return new CreateTicketResultDto(ticket.Id, null);
+        }
 
         if (!created.Success)
         {
@@ -243,9 +263,20 @@ public sealed class TicketCommandService(
 
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var connector = await connectors.ResolveAsync(clientConnectionId, ct);
-        var result = await connector.AddPublicNoteAsync(
-            ticket.ExternalTicketId!, new UnifiedTicketNoteCreateRequest(body, IsPublic: true, idempotencyKey), ct);
-        if (!result.Success)
+        CreateNoteResult? result = null;
+        ConnectorException? away = null;
+        try
+        {
+            result = await connector.AddPublicNoteAsync(
+                ticket.ExternalTicketId!, new UnifiedTicketNoteCreateRequest(body, IsPublic: true, idempotencyKey), ct);
+        }
+        catch (ConnectorException ex) when (ex.IsTransient && outbound is not null)
+        {
+            // The PSA is away. What the customer wrote is kept and sent when it is back; it is not
+            // handed back to them as an error to type again.
+            away = ex;
+        }
+        if (result is { Success: false })
             throw new ValidationFailedException(result.Error ?? "The PSA rejected the comment.");
 
         var now = clock.GetUtcNow();
@@ -253,16 +284,25 @@ public sealed class TicketCommandService(
         {
             MspOrganizationId = access.MspOrganizationId,
             TicketId = ticket.Id,
-            ExternalNoteId = result.ExternalId,
+            ExternalNoteId = result?.ExternalId,
             AuthorName = requester.DisplayName,
             AuthoredByClient = true,
             Body = body,
             IsPublic = true,
             NoteCreatedAt = now,
             OriginCorrelationId = ticket.CorrelationId,
+            SyncState = away is null ? null : OutboundState.Pending,
         };
         db.TicketNotes.Add(note);
+        var waiting = away is null ? null : outbound!.Enqueue(ticket, OutboundKind.Note, "Comment from the client",
+            new Sync.OutboundNote(note.Id, true, false, []), note.Id, idempotencyKey, null, requester.Id, requester.DisplayName,
+            Sync.OutboundProcessor.Unreachable(away), uncertain: !away.NeverSent);
         await db.SaveChangesAsync(ct);
+        if (waiting is not null)
+        {
+            await outbound!.AuditQueuedAsync(waiting, ct);
+            return new TicketNoteDto(note.Id, note.AuthorName, true, note.Body, note.NoteCreatedAt, SyncState: Sync.OutboundQueue.PendingLabel);
+        }
 
         await RecordPortalEventAsync(access.MspOrganizationId, clientConnectionId, ticket, idempotencyKey, "note.created", ct);
         await activity.RecordAsync(new Desk.Application.Analytics.ActivityRecord(
@@ -329,34 +369,51 @@ public sealed class TicketCommandService(
         // Not null: a ticket with no connection took the local-note path above.
         var staffConnectionId = ticket.PsaConnectionId!.Value;
         var connector = await connectors.ResolveAsync(staffConnectionId, ct);
-        var result = await connector.AddPublicNoteAsync(
-            ticket.ExternalTicketId,
-            new UnifiedTicketNoteCreateRequest(body, IsPublic: isPublic, idempotencyKey)
-            {
-                EmailContact = emailContact,
-                EmailCc = emailCc,
-            }, ct);
-        if (!result.Success)
+        CreateNoteResult? result = null;
+        ConnectorException? away = null;
+        try
+        {
+            result = await connector.AddPublicNoteAsync(
+                ticket.ExternalTicketId,
+                new UnifiedTicketNoteCreateRequest(body, IsPublic: isPublic, idempotencyKey)
+                {
+                    EmailContact = emailContact,
+                    EmailCc = emailCc,
+                }, ct);
+        }
+        catch (ConnectorException ex) when (ex.IsTransient && outbound is not null)
+        {
+            // The PSA is away. The words are the author's work and are kept; they are sent when it
+            // is back. A PSA that answers and refuses is still an answer, and is said at once.
+            away = ex;
+        }
+        if (result is { Success: false })
             throw new ValidationFailedException(result.Error ?? "The PSA rejected the comment.");
 
         var note = new TicketNote
         {
             MspOrganizationId = ticket.MspOrganizationId,
             TicketId = ticket.Id,
-            ExternalNoteId = result.ExternalId,
+            ExternalNoteId = result?.ExternalId,
             AuthorName = authorName,
             AuthoredByClient = false,
             Body = body,
             IsPublic = isPublic,
             NoteCreatedAt = clock.GetUtcNow(),
             OriginCorrelationId = ticket.CorrelationId,
+            SyncState = away is null ? null : OutboundState.Pending,
         };
         db.TicketNotes.Add(note);
-        // The first time the team answered, for the first-response promise of an SLA plan.
-        ticket.FirstRespondedAt ??= note.NoteCreatedAt;
+        var waiting = away is null ? null : outbound!.Enqueue(ticket, OutboundKind.Note, isPublic ? "Reply" : "Internal note",
+            new Sync.OutboundNote(note.Id, isPublic, emailContact, emailCc.ToList()), note.Id, idempotencyKey, appUserId, null, authorName,
+            Sync.OutboundProcessor.Unreachable(away), uncertain: !away.NeverSent);
+        // The first time the team answered, for the first-response promise of an SLA plan. A reply
+        // still waiting for the PSA has not answered anybody yet: that is stamped when it is sent.
+        if (waiting is null) ticket.FirstRespondedAt ??= note.NoteCreatedAt;
         await db.SaveChangesAsync(ct);
 
-        await RecordPortalEventAsync(ticket.MspOrganizationId, staffConnectionId, ticket, idempotencyKey, "note.created", ct);
+        if (waiting is not null) await outbound!.AuditQueuedAsync(waiting, ct);
+        else await RecordPortalEventAsync(ticket.MspOrganizationId, staffConnectionId, ticket, idempotencyKey, "note.created", ct);
         await activity.RecordAsync(new Desk.Application.Analytics.ActivityRecord(
             Desk.Domain.Analytics.ActivityKind.NoteAdded, Desk.Domain.Analytics.ActivitySource.Portal)
         {
@@ -368,7 +425,8 @@ public sealed class TicketCommandService(
             ClientCompanyId = ticket.ClientCompanyId,
             Detail = isPublic ? "Public reply" : "Internal note",
         }, ct);
-        return new TicketNoteDto(note.Id, note.AuthorName, false, note.Body, note.NoteCreatedAt);
+        return new TicketNoteDto(note.Id, note.AuthorName, false, note.Body, note.NoteCreatedAt, isPublic,
+            SyncState: waiting is null ? null : Sync.OutboundQueue.PendingLabel);
     }
 
     public async Task PostTrailNoteAsync(Guid ticketId, string authorName, bool authoredByClient, string body, CancellationToken ct = default)

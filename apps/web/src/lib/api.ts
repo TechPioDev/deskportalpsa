@@ -12,6 +12,7 @@ import {
   type ConnectionMappingHealth, type MappingPreviewRow, type MappingApplyResult,
   MyCompanySchema, ClientUserAccessSchema, type MyCompany, type ClientUserAccess,
   CustomFieldSettingsSchema, type CustomFieldSettings,
+  OutboundRowSchema, type OutboundRow,
   ClassificationMappingSchema, ClassificationPreviewSchema, ClassificationApplyResultSchema,
   type ClassificationMapping, type ClassificationPreview, type ClassificationApplyResult, type ClassificationRule,
   type ConnectionCheckReport, type ConnectionMappingCoverage, type ConnectionPreview, type Preflight,
@@ -753,7 +754,19 @@ export const api = {
       }).passthrough(),
       { method: 'PUT', body: JSON.stringify(body) }),
   updateTicketStatus: (id: string, status: string, resolution?: string | null) =>
-    request(`/api/tickets/${id}/status`, z.object({ portalStatus: z.string() }), { method: 'POST', body: JSON.stringify({ status, resolution: resolution || null }) }),
+    // `queued` when the PSA could not be reached: the ticket keeps the status it has, and what was
+    // asked for waits to be sent. `portalStatus` is then the status the ticket STILL has.
+    request(`/api/tickets/${id}/status`,
+      z.object({ portalStatus: z.string(), queued: z.boolean().default(false), requested: z.string().nullable().default(null) }),
+      { method: 'POST', body: JSON.stringify({ status, resolution: resolution || null }) }),
+  /** Sends a change that has not reached the PSA round again, or brings a waiting one forward to now. */
+  retryOutbound: (ticketId: string, operationId: string) =>
+    request(`/api/tickets/${ticketId}/outbound/${operationId}/retry`, z.object({ id: z.string(), state: z.string() }), { method: 'POST' }),
+  /** Lets go of a change that has not reached the PSA. It is not sent. */
+  discardOutbound: (ticketId: string, operationId: string) =>
+    request(`/api/tickets/${ticketId}/outbound/${operationId}`, z.void(), { method: 'DELETE' }),
+  /** Every change made here that a PSA does not have: failed first, then the longest waiting. */
+  outboundList: () => request('/api/admin/outbound', z.array(OutboundRowSchema)) as Promise<OutboundRow[]>,
   /** A board ticket's details, sent whole. */
   editBoardTicket: (id: string, body: BoardTicketEdit) =>
     request(`/api/boards/tickets/${id}`, z.unknown(), { method: 'PUT', body: JSON.stringify(body) }),

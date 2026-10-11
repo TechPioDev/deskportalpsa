@@ -85,6 +85,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
     public DbSet<SyncCursor> SyncCursors => Set<SyncCursor>();
     public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
+    public DbSet<OutboundOperation> OutboundOperations => Set<OutboundOperation>();
     public DbSet<SyncFailure> SyncFailures => Set<SyncFailure>();
     public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
     public DbSet<TicketInstruction> TicketInstructions => Set<TicketInstruction>();

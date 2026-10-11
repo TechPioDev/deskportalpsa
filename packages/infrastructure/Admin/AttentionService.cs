@@ -173,6 +173,30 @@ public sealed class AttentionService(
             .OrderBy(t => t.SlaDueAt)
             .Select(t => new { Ref = t.Number ?? t.ExternalTicketId, t.Title, Due = t.SlaDueAt!.Value })
             .ToListAsync(ct);
+        // Changes made here that a PSA does not have. A failed one is somebody's work that was not
+        // delivered and will not be tried again by itself. A waiting one is said only once it has
+        // waited long enough to wonder about: a minute's wait while a PSA restarts is not news.
+        var undelivered = await db.OutboundOperations.AsNoTracking()
+            .Where(o => o.State != Desk.Domain.Sync.OutboundState.Synced)
+            .Select(o => new { o.State, o.CreatedAt })
+            .ToListAsync(ct);
+        var refused = undelivered.Count(o => o.State == Desk.Domain.Sync.OutboundState.Failed);
+        if (refused > 0)
+            items.Add(new AttentionItem(
+                "outbound-failed", "critical",
+                $"{Plural(refused, "change")} made here did not reach the PSA",
+                "A reply, a status, an hour or a ticket that the PSA refused, or could not be given after every try. " +
+                "Each is kept, marked Sync Failed, for somebody to send again or let go of.",
+                refused, "/dashboard/outbound"));
+        var longWaiting = undelivered.Count(o => o.State == Desk.Domain.Sync.OutboundState.Pending && now - o.CreatedAt > TimeSpan.FromHours(1));
+        if (longWaiting > 0)
+            items.Add(new AttentionItem(
+                "outbound-waiting", "warning",
+                $"{Plural(longWaiting, "change")} {(longWaiting == 1 ? "has" : "have")} waited over an hour to reach the PSA",
+                "They are tried again by themselves, less often as time goes on. If the PSA is up, look at its connection; " +
+                "if nothing is being tried at all, the worker that sends them needs looking at.",
+                longWaiting, "/dashboard/outbound"));
+
         if (breached.Count > 0)
         {
             var oldest = breached[0];
