@@ -66,6 +66,20 @@ public sealed class ClientCompanyConfig : IEntityTypeConfiguration<ClientCompany
     }
 }
 
+public sealed class ClientCompanyAccessConfig : IEntityTypeConfiguration<ClientCompanyAccess>
+{
+    public void Configure(EntityTypeBuilder<ClientCompanyAccess> b)
+    {
+        b.ToTable("client_company_access");
+        b.HasKey(x => x.Id);
+        // A person is given a company or is not: one row says so, and what it gives.
+        b.HasIndex(x => new { x.ClientUserId, x.ClientCompanyId }).IsUnique();
+        b.HasOne(x => x.ClientUser).WithMany().HasForeignKey(x => x.ClientUserId).OnDelete(DeleteBehavior.Cascade);
+        // A company that goes takes the access to it with it.
+        b.HasOne(x => x.ClientCompany).WithMany().HasForeignKey(x => x.ClientCompanyId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class ClientUserConfig : IEntityTypeConfiguration<ClientUser>
 {
     public void Configure(EntityTypeBuilder<ClientUser> b)

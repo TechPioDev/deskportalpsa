@@ -2337,6 +2337,43 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.ToTable("client_companies", (string)null);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Tenancy.ClientCompanyAccess", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("CanCreate")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ClientCompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ClientUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("SeesAllTickets")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientCompanyId");
+
+                    b.HasIndex("ClientUserId", "ClientCompanyId")
+                        .IsUnique();
+
+                    b.ToTable("client_company_access", (string)null);
+                });
+
             modelBuilder.Entity("Desk.Domain.Tenancy.ClientUser", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4865,6 +4902,25 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("PsaConnection");
+                });
+
+            modelBuilder.Entity("Desk.Domain.Tenancy.ClientCompanyAccess", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.ClientCompany", "ClientCompany")
+                        .WithMany()
+                        .HasForeignKey("ClientCompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Desk.Domain.Tenancy.ClientUser", "ClientUser")
+                        .WithMany()
+                        .HasForeignKey("ClientUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ClientCompany");
+
+                    b.Navigation("ClientUser");
                 });
 
             modelBuilder.Entity("Desk.Domain.Tenancy.ClientUser", b =>

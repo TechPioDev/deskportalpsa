@@ -77,6 +77,9 @@ public sealed class TicketDeviceService(DeskDbContext db, ITicketScopeQuery scop
 
     public async Task<IReadOnlyList<ClientDeviceChoiceDto>> ClientChoicesAsync(ClientAccess access, CancellationToken ct = default)
     {
+        // The list is for choosing a device when raising a ticket. Someone given a company only to
+        // look at raises none in it, and is not handed an inventory of its devices for nothing.
+        if (access.IsGranted && !access.CanWrite) return [];
         // A client's ticket goes to the PSA, so only the devices the PSA knows - and only in use.
         var connection = await db.ClientCompanies.AsNoTracking()
             .Where(c => c.Id == access.ClientCompanyId).Select(c => (Guid?)c.PsaConnectionId).FirstOrDefaultAsync(ct);

@@ -3,7 +3,46 @@ using Desk.Domain.Enums;
 namespace Desk.Application.Tickets;
 
 /// <summary>The client identity a request acts on behalf of, resolved from the authenticated subject.</summary>
-public sealed record ClientAccess(Guid MspOrganizationId, Guid ClientCompanyId, Guid ClientUserId, bool IsCompanyAdministrator);
+/// <summary>
+/// Who a client request is from and which ONE company it is about. Every client read and write is
+/// held to <see cref="ClientCompanyId"/>; nothing a client is answered is gathered across companies.
+///
+/// It is the person's own company unless the request names another, and then only a company they
+/// have been explicitly given (see <c>ClientCompanyAccess</c>). In a company they were given they
+/// are never its administrator: <see cref="IsCompanyAdministrator"/> is the control panel's flag,
+/// and a grant does not carry it.
+/// </summary>
+public sealed record ClientAccess(Guid MspOrganizationId, Guid ClientCompanyId, Guid ClientUserId, bool IsCompanyAdministrator)
+{
+    /// <summary>True when this is a company the person was given, and not their own.</summary>
+    public bool IsGranted { get; init; }
+
+    /// <summary>What a grant says about seeing every ticket. Null in the person's own company, where the administrator flag decides.</summary>
+    public bool? GrantSeesAllTickets { get; init; }
+
+    /// <summary>Every ticket of the company, or only the ones this person raised.</summary>
+    public bool SeesAllTickets => GrantSeesAllTickets ?? IsCompanyAdministrator;
+
+    /// <summary>May raise tickets and reply. False for a company given to be looked at only.</summary>
+    public bool CanWrite { get; init; } = true;
+}
+
+/// <summary>
+/// The company a client request asks to act in, when it names one, and whether the request would
+/// change anything. Read from the request by the API; the resolver decides whether it is allowed.
+/// A request carries no authority of its own: naming a company gives nothing that a grant has not.
+/// </summary>
+public interface IActingCompany
+{
+    /// <summary>The company named, or null when none was (the person's own is meant).</summary>
+    Guid? RequestedCompanyId { get; }
+
+    /// <summary>A company was named and could not be read as one. Refused, never treated as "none".</summary>
+    bool Malformed { get; }
+
+    /// <summary>The request would change something (anything but a read).</summary>
+    bool IsWrite { get; }
+}
 
 public sealed record TicketListItem(
     Guid Id,
