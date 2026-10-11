@@ -1,6 +1,7 @@
 using Desk.Application.Admin;
 using Desk.Application.Common;
 using Desk.Application.Mapping;
+using Desk.Domain.Enums;
 using Desk.Domain.Mapping;
 using Desk.Domain.Tickets;
 using Desk.Infrastructure.Sync;
@@ -247,22 +248,22 @@ public sealed partial class ConnectionAdminService
         var connection = await FindAsync(connectionId, ct);
         var rules = await ConnectionMappingRules.LoadAsync(db, connection.MspOrganizationId, connection.Provider, connection.Id, ct);
         var changes = new Dictionary<string, int>();
-        int statuses = 0, priorities = 0;
 
         // Only a ticket still showing the PSA's own word - the mark of a value that passed through
         // unmapped. A status someone set in the portal, or one a rule already translated, is not
-        // this rule's to rewrite. Tickets are taken a group at a time (everything a rule can depend
-        // on being equal) and a batch at a time, so a connection of any size is done in bounded steps.
+        // this rule's to rewrite. Tickets are taken a batch at a time, so a connection of any size
+        // is done in bounded steps.
         const int batchSize = 500;
 
-        async Task<int> RewriteAsync(string field, string raw, string? queue, Guid? client, bool isStatus)
+        async Task<int> RewriteAsync(string field, string raw, (string? Queue, Guid? Client)? place, bool isStatus)
         {
-            var result = _mapping.MapToPortal(rules, ContextOf(connection, queue, client), field, raw.Trim());
+            var result = _mapping.MapToPortal(rules, ContextOf(connection, place?.Queue, place?.Client), field, raw.Trim());
             if (!result.Resolved || string.IsNullOrEmpty(result.Value) || result.Value == raw) return 0;
             var changed = 0;
             while (true)
             {
-                var scope = db.Tickets.Where(t => t.PsaConnectionId == connectionId && t.QueueOrBoard == queue && t.ClientCompanyId == client);
+                var scope = db.Tickets.Where(t => t.PsaConnectionId == connectionId);
+                if (place is { } at) scope = scope.Where(t => t.QueueOrBoard == at.Queue && t.ClientCompanyId == at.Client);
                 scope = isStatus
                     ? scope.Where(t => t.PsaStatus == raw && t.PortalStatus == raw)
                     : scope.Where(t => t.PsaPriority == raw && t.PortalPriority == raw);
@@ -274,6 +275,9 @@ public sealed partial class ConnectionAdminService
                     ticket.Version++;
                 }
                 await db.SaveChangesAsync(ct);
+                // Saved, so let go of: a ticket carries its whole description, and a connection of
+                // any size must not be held in memory a batch after it was done.
+                foreach (var ticket in batch) db.Entry(ticket).State = EntityState.Detached;
                 changed += batch.Count;
                 if (batch.Count < batchSize) break;
             }
@@ -281,20 +285,39 @@ public sealed partial class ConnectionAdminService
             return changed;
         }
 
-        var held = db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId == connectionId);
-        var statusGroups = await held
-            .Where(t => t.PsaStatus != null && t.PsaStatus != "" && t.PortalStatus == t.PsaStatus)
-            .Select(t => new { Raw = t.PsaStatus!, t.QueueOrBoard, t.ClientCompanyId })
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var g in statusGroups) statuses += await RewriteAsync("status", g.Raw, g.QueueOrBoard, g.ClientCompanyId, isStatus: true);
+        async Task<int> FieldAsync(string field, bool isStatus)
+        {
+            var held = db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId == connectionId);
+            held = isStatus
+                ? held.Where(t => t.PsaStatus != null && t.PsaStatus != "" && t.PortalStatus == t.PsaStatus)
+                : held.Where(t => t.PsaPriority != null && t.PsaPriority != "" && t.PortalPriority == t.PsaPriority);
+            var total = 0;
 
-        var priorityGroups = await held
-            .Where(t => t.PsaPriority != null && t.PsaPriority != "" && t.PortalPriority == t.PsaPriority)
-            .Select(t => new { Raw = t.PsaPriority!, t.QueueOrBoard, t.ClientCompanyId })
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var g in priorityGroups) priorities += await RewriteAsync("priority", g.Raw, g.QueueOrBoard, g.ClientCompanyId, isStatus: false);
+            // A rule can be written for one client or one board, and the same word then means two
+            // things on one connection: those tickets are taken a client and a board at a time.
+            // Where no rule of the field is, every ticket holding a value maps the same way and
+            // they are rewritten together - one pass a value, not one for each client on each board,
+            // which on a PSA of two thousand clients was tens of thousands of round trips.
+            var byPlace = rules.Any(r => r.IsActive && string.Equals(r.ExternalField, field, StringComparison.OrdinalIgnoreCase)
+                && r.Scope is MappingScope.ClientCompanyOverride or MappingScope.QueueOrBoardOverride);
+            if (!byPlace)
+            {
+                var values = await (isStatus ? held.Select(t => t.PsaStatus!) : held.Select(t => t.PsaPriority!)).Distinct().ToListAsync(ct);
+                foreach (var raw in values) total += await RewriteAsync(field, raw, null, isStatus);
+                return total;
+            }
+
+            var places = await (isStatus
+                    ? held.Select(t => new { Raw = t.PsaStatus!, t.QueueOrBoard, t.ClientCompanyId })
+                    : held.Select(t => new { Raw = t.PsaPriority!, t.QueueOrBoard, t.ClientCompanyId }))
+                .Distinct()
+                .ToListAsync(ct);
+            foreach (var g in places) total += await RewriteAsync(field, g.Raw, (g.QueueOrBoard, g.ClientCompanyId), isStatus);
+            return total;
+        }
+
+        var statuses = await FieldAsync("status", isStatus: true);
+        var priorities = await FieldAsync("priority", isStatus: false);
 
         var summary = changes.OrderByDescending(c => c.Value).Select(c => $"{c.Key} ({c.Value})").ToList();
         await audit.WriteAsync("mapping.applied", "PsaConnection", connectionId.ToString(),

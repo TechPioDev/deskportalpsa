@@ -220,6 +220,42 @@ public class MappingHealthTests
     }
 
     [Fact]
+    public async Task A_rule_written_for_one_board_is_applied_to_that_boards_tickets_and_no_others()
+    {
+        // The same word can mean two things on one connection: "Complete" is closed on the
+        // projects board and only resolved everywhere else. Tickets holding a value are rewritten
+        // together when no rule is like that - and must not be when one is.
+        var w = await BuildAsync();
+        await using var _ = w.H.Db;
+        Ticket On(string? board)
+        {
+            var t = T(w.Connection, "Complete", "Medium");
+            t.QueueOrBoard = board;
+            return t;
+        }
+        var project = On("Projects");
+        var desk = On("Service Desk");
+        var nowhere = On(null);
+        w.H.Db.Tickets.AddRange(project, desk, nowhere);
+        var forProjects = Rule(w.Connection, "status", "Complete", "CLOSED");
+        (forProjects.Scope, forProjects.QueueOrBoardKey) = (MappingScope.QueueOrBoardOverride, "Projects");
+        w.H.Db.FieldMappings.AddRange(forProjects, Rule(w.Connection, "status", "Complete", "RESOLVED"));
+        await w.H.Db.SaveChangesAsync();
+
+        var applied = await w.Service.ApplyMappingAsync(w.Connection);
+
+        applied.StatusesChanged.Should().Be(3);
+        applied.Changes.Should().BeEquivalentTo(["status: Complete → RESOLVED (2)", "status: Complete → CLOSED (1)"]);
+        async Task<string> NowAsync(Ticket t) => (await w.H.Db.Tickets.AsNoTracking().SingleAsync(x => x.Id == t.Id)).PortalStatus;
+        (await NowAsync(project)).Should().Be("CLOSED");
+        (await NowAsync(desk)).Should().Be("RESOLVED");
+        (await NowAsync(nowhere)).Should().Be("RESOLVED");
+        var health = await w.Service.MappingHealthAsync(w.Connection);
+        Value(health, "status", "Complete").UnmappedTickets.Should().Be(0);
+        health.UnmappedTickets.Should().Be(3, "the priority Medium still has no rule, on any of them");
+    }
+
+    [Fact]
     public async Task Applying_the_mapping_changes_only_tickets_still_showing_the_PSAs_own_word()
     {
         var w = await BuildAsync();

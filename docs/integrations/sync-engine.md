@@ -51,7 +51,9 @@ credentials the PSA has rejected) is in [connections.md](connections.md).
    through the same path as any other ticket (up to 50 a run).
 4. **Read pages** (100 tickets a page, up to 50 pages a run). After each page the position and the
    run's counts are saved and the lease is extended, so a process that stops mid-run loses at most
-   one page of work, and that page is simply read again.
+   one page of work, and that page is simply read again. What the page read is then let go of: a
+   run that held every ticket it had read took longer for each one
+   ([performance.md](performance.md)).
 5. **For each ticket:** save it, then read its notes, its assignee's name and its time. A failure
    in any of those is recorded against that ticket and the run moves on.
 6. **Attachments.** A provider with a tenant-wide sweep is swept once the ticket read has finished;
@@ -131,6 +133,9 @@ another connection is another login.
   to its end: see [provider-calls.md](provider-calls.md). What reaches a run as a failure is what
   that layer could not get through.
 - A screen for runs and failures: the routes are here; the screen comes with the connections work.
+- Old runs are not removed. A connection records 288 a day at the default five minutes. Reading
+  them is indexed and does not slow down ([performance.md](performance.md)); it is disk, and it
+  wants a retention period.
 - Notes and attachments have no unique index on the PSA's id. A reply written in the portal and a
   sync reading the same ticket can legitimately race, and an index would turn a rare duplicate into
   a failed reply the PSA had already accepted. The lock closes the case that mattered, two syncs.
