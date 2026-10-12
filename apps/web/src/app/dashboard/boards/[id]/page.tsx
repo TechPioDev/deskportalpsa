@@ -156,7 +156,7 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
       </div>
 
       {raising && (
-        <RaiseForm boardId={id} members={members?.map((m) => ({ id: m.appUserId, name: m.displayName })) ?? null}
+        <RaiseForm boardId={id} canAddClients={canManage} members={members?.map((m) => ({ id: m.appUserId, name: m.displayName })) ?? null}
           onClose={() => setRaising(false)}
           onRaised={() => {
             setRaising(false);
@@ -348,10 +348,24 @@ function MembersEditor({ boardId, current, onDone }: { boardId: string; current:
   );
 }
 
-function RaiseForm({ boardId, members, onClose, onRaised }: {
+function RaiseForm({ boardId, members, canAddClients, onClose, onRaised }: {
   boardId: string; members: { id: string; name: string }[] | null;
+  /** Whether this person may add a client that is in no PSA (the people who look after the boards). */
+  canAddClients: boolean;
   onClose: () => void; onRaised: () => void;
 }) {
+  const qc = useQueryClient();
+  // Adding a client that is not in the list, without leaving the form.
+  const [newClient, setNewClient] = useState<string | null>(null);
+  const addClient = useMutation({
+    mutationFn: (name: string) => api.addLocalClient(name),
+    onSuccess: (made) => {
+      qc.invalidateQueries({ queryKey: ['board-clients'] });
+      qc.invalidateQueries({ queryKey: ['local-clients'] });
+      setClient(made.id);
+      setNewClient(null);
+    },
+  });
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('NORMAL');
@@ -370,7 +384,7 @@ function RaiseForm({ boardId, members, onClose, onRaised }: {
   const { data: staff } = useQuery({
     queryKey: ['staff-users-min'], queryFn: () => api.staffUsers({ pageSize: 200 }), staleTime: 5 * 60_000, retry: false,
   });
-  const { data: clients } = useQuery({ queryKey: ['report-clients'], queryFn: api.reportClients, staleTime: 5 * 60_000, retry: false });
+  const { data: clients } = useQuery({ queryKey: ['board-clients'], queryFn: api.boardClients, staleTime: 5 * 60_000, retry: false });
 
   const people = useMemo(() => members?.length
     ? members
@@ -498,16 +512,49 @@ function RaiseForm({ boardId, members, onClose, onRaised }: {
         </select>
       </label>
 
-      <label className="space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2">
-        For a client (optional)
-        <select value={client} onChange={(e) => setClient(e.target.value)} className={field}>
+      <div className="space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2">
+        <label htmlFor="ticket-client">For a client (optional)</label>
+        <select id="ticket-client" value={client} onChange={(e) => setClient(e.target.value)} className={field}>
           <option value="">No client — our own work</option>
-          {(clients ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {(clients ?? []).some((c) => !c.local) && (
+            <optgroup label="From your PSA">
+              {(clients ?? []).filter((c) => !c.local).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </optgroup>
+          )}
+          {(clients ?? []).some((c) => c.local) && (
+            <optgroup label="Added by hand (not in a PSA)">
+              {(clients ?? []).filter((c) => c.local).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </optgroup>
+          )}
         </select>
         <span className="block text-[11px] font-normal text-[var(--faint)]">
           Naming a client records who the work was for. It stays on this board and the client never sees it.
         </span>
-      </label>
+        {canAddClients && newClient === null && (
+          <button type="button" onClick={() => setNewClient('')}
+            className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline">
+            <Plus size={12} aria-hidden="true" /> The client is not in the list — add them
+          </button>
+        )}
+        {canAddClients && newClient !== null && (
+          <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5" role="group" aria-label="Add a client">
+            <div className="flex flex-wrap items-center gap-2">
+              <input autoFocus value={newClient} onChange={(e) => setNewClient(e.target.value)} maxLength={200}
+                placeholder="Client name, e.g. NeedTech" aria-label="Name of the client to add"
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (newClient.trim().length >= 2) addClient.mutate(newClient); } }}
+                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-sm font-normal text-[var(--fg)] outline-none focus:border-brand" />
+              <button type="button" disabled={addClient.isPending || newClient.trim().length < 2} onClick={() => addClient.mutate(newClient)}
+                className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-50">
+                {addClient.isPending ? 'Adding…' : 'Add client'}
+              </button>
+              <button type="button" onClick={() => { setNewClient(null); addClient.reset(); }}
+                className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--bg)]">Cancel</button>
+            </div>
+            <p className="font-normal text-[var(--faint)]">For a client that is not set up in your PSA. They are added to the list for every board and are never told about the ticket.</p>
+            {addClient.isError && <p role="alert" className="font-normal text-red-600 dark:text-red-400">{(addClient.error as Error).message}</p>}
+          </div>
+        )}
+      </div>
 
       {raise.isError && (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400 sm:col-span-2">{(raise.error as Error).message}</p>

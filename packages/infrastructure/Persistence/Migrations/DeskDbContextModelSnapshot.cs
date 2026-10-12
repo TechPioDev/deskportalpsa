@@ -2652,7 +2652,7 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
-                    b.Property<Guid>("PsaConnectionId")
+                    b.Property<Guid?>("PsaConnectionId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
@@ -5270,8 +5270,7 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.HasOne("Desk.Domain.Tenancy.PsaConnection", "PsaConnection")
                         .WithMany("ClientCompanies")
                         .HasForeignKey("PsaConnectionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("PsaConnection");
                 });

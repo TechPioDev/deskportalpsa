@@ -44,7 +44,7 @@ public sealed class AccountSettingsService(
         // (derived from already-synced tickets) down with it.
         try
         {
-            var connector = await connectors.ResolveAsync(company.PsaConnectionId, ct);
+            var connector = await connectors.ResolveAsync(PsaOf(company), ct);
             var caps = await connector.GetCapabilitiesAsync(ct);
             if (!caps.SupportsContracts)
                 return new AccountPsaViewDto(false, [], queues);
@@ -66,7 +66,7 @@ public sealed class AccountSettingsService(
 
         var company = await db.ClientCompanies.FirstOrDefaultAsync(c => c.Id == access.ClientCompanyId, ct)
             ?? throw new NotFoundException("Account");
-        var connector = await connectors.ResolveAsync(company.PsaConnectionId, ct);
+        var connector = await connectors.ResolveAsync(PsaOf(company), ct);
         if (!(await connector.GetCapabilitiesAsync(ct)).SupportsHolidayCalendars)
             return new HolidayImportResult(false, 0, 0);
 
@@ -109,7 +109,7 @@ public sealed class AccountSettingsService(
 
         var company = await db.ClientCompanies.FirstOrDefaultAsync(c => c.Id == access.ClientCompanyId, ct)
             ?? throw new NotFoundException("Account");
-        var connector = await connectors.ResolveAsync(company.PsaConnectionId, ct);
+        var connector = await connectors.ResolveAsync(PsaOf(company), ct);
 
         int usersCreated = 0, usersUpdated = 0, devicesCreated = 0, devicesUpdated = 0;
 
@@ -380,4 +380,8 @@ public sealed class AccountSettingsService(
     }
 
     private static string? Trim(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+
+    /// <summary>The connection a company's account lives in. A company added by hand is in no PSA and has no account there to read or change.</summary>
+    private static Guid PsaOf(Desk.Domain.Tenancy.ClientCompany company)
+        => company.PsaConnectionId ?? throw new ValidationFailedException("This company is not in a PSA, so it has no account settings there.");
 }

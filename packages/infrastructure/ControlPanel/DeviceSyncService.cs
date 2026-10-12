@@ -54,7 +54,10 @@ public sealed class DeviceSyncService(
     {
         var company = await db.ClientCompanies.FirstOrDefaultAsync(c => c.Id == clientCompanyId, ct)
             ?? throw new NotFoundException("Client");
-        return await SyncAsync(company, await connectors.ResolveAsync(company.PsaConnectionId, ct), ct);
+        // A company added by hand is in no PSA: there are no devices to read for it.
+        if (company.PsaConnectionId is not { } connectionId)
+            throw new ValidationFailedException("This client is not in a PSA, so it has no devices to sync.");
+        return await SyncAsync(company, await connectors.ResolveAsync(connectionId, ct), ct);
     }
 
     private async Task<DeviceSyncResult> SyncAsync(ClientCompany company, IServiceManagementConnector connector, CancellationToken ct)

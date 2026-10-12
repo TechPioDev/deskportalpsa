@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Plus, Users, EyeOff, Eye, Archive, RotateCcw, ArrowRight, Radio, Timer, MessageSquareText, Repeat } from 'lucide-react';
 import { api, type Board, type BoardInput } from '@/lib/api';
+import { LocalClientsPanel } from '@/components/LocalClientsPanel';
 
 const KIND = { internal: 0, rmm: 1 } as const;
 
@@ -102,6 +103,7 @@ export default function BoardsPage() {
       <Section title="From monitoring" boards={monitoring} canManage={canManage}
         onEdit={setEditing} onActive={(id, active) => setActive.mutate({ id, active })}
         hint="Alerts raised automatically by an RMM. A board here can be shown to the client it names." />
+      {canManage && <LocalClientsPanel />}
     </div>
   );
 }

@@ -52,6 +52,9 @@ public sealed class ClientCompanyAccessService(DeskDbContext db, IAuditWriter au
 
     public async Task<IReadOnlyList<ClientCompanyChoiceDto>> CompaniesAsync(CancellationToken ct = default)
         => await db.ClientCompanies.AsNoTracking()
+            // Only the PSA's clients. One added by hand is the desk's own note of who work was
+            // for: it has no tickets a client may see, so a grant to it would grant nothing.
+            .Where(c => c.PsaConnectionId != null)
             .OrderBy(c => c.Name).ThenBy(c => c.Id)
             .Select(c => new ClientCompanyChoiceDto(c.Id, c.Name))
             .ToListAsync(ct);
@@ -85,6 +88,8 @@ public sealed class ClientCompanyAccessService(DeskDbContext db, IAuditWriter au
         var company = await db.ClientCompanies.AsNoTracking()
                 .FirstOrDefaultAsync(c => c.Id == clientCompanyId && c.MspOrganizationId == user.MspOrganizationId, ct)
             ?? throw new NotFoundException("Client company");
+        if (company.PsaConnectionId is null)
+            throw new ValidationFailedException($"{company.Name} was added by hand and is in no PSA. It has nothing a client can be shown, so access to it cannot be granted.");
         if (company.Id == user.ClientCompanyId)
             throw new ValidationFailedException($"{company.Name} is {user.DisplayName}'s own company. It needs no grant: what they can do there is set in that company's own users.");
 

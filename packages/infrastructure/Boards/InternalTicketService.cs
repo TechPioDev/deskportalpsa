@@ -42,8 +42,16 @@ public sealed class InternalTicketService(
         var author = await db.AppUsers.AsNoTracking().FirstOrDefaultAsync(u => u.Id == appUserId, ct)
             ?? throw new NotFoundException("User");
 
-        if (input.ClientCompanyId is { } companyId && !await db.ClientCompanies.AnyAsync(c => c.Id == companyId, ct))
-            throw new ValidationFailedException("That client does not exist.");
+        if (input.ClientCompanyId is { } companyId)
+        {
+            var named = await db.ClientCompanies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => new { c.IsActive, Local = c.PsaConnectionId == null }).FirstOrDefaultAsync(ct)
+                ?? throw new ValidationFailedException("That client does not exist.");
+            // Retiring is how a hand-added client is taken out of use: tickets already raised keep
+            // its name, and no new one can take it.
+            if (named.Local && !named.IsActive)
+                throw new ValidationFailedException("That client has been retired. Bring it back first, or choose another.");
+        }
 
         // What the ticket is about, and what that usually implies. A topic is a shortcut: anything
         // the caller stated explicitly wins over it, so the form can pre-fill and still be corrected.
