@@ -296,7 +296,7 @@ function FollowersPanel({ ticketId, initial, people, canUpdate, onNeedPeople }: 
 
       {rows.length === 0 && (
         <p className="mt-2 text-xs text-[var(--muted)]">
-          Nobody is watching this. Follow it to see it in your own list without taking it on.
+          Nobody is watching this. Follow it to see it in your own list without taking it on. A follower gets an e-mail when somebody replies or the ticket is finished.
         </p>
       )}
 

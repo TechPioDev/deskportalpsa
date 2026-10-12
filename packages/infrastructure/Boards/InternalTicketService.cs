@@ -67,6 +67,18 @@ public sealed class InternalTicketService(
             assignee = wanted;
         }
 
+        // Kept informed, not given the work. The assignee already hears about their own ticket,
+        // so naming them here as well adds nothing and is quietly dropped.
+        var followers = (input.FollowerUserIds ?? []).Where(id => id != Guid.Empty && id != assignee).Distinct().ToList();
+        if (followers.Count > InternalTicketInput.MaxFollowers)
+            throw new ValidationFailedException($"A ticket can keep up to {InternalTicketInput.MaxFollowers} people informed.");
+        if (followers.Count > 0)
+        {
+            var known = await db.AppUsers.AsNoTracking().Where(u => followers.Contains(u.Id) && u.IsActive).Select(u => u.Id).ToListAsync(ct);
+            if (known.Count != followers.Count)
+                throw new ValidationFailedException("One of the people to keep informed is not an active member of staff.");
+        }
+
         var number = await NextNumberAsync(board, ct);
         var now = clock.GetUtcNow();
         var sla = await SlaPlanner.ForAsync(db, board, topic, now, ct);
@@ -119,6 +131,15 @@ public sealed class InternalTicketService(
                 ToAppUserId = to,
                 AssignedByUserId = appUserId,
                 Note = "Raised and assigned",
+            });
+
+        foreach (var follower in followers)
+            db.TicketFollowers.Add(new TicketFollower
+            {
+                MspOrganizationId = Org,
+                TicketId = ticket.Id,
+                AppUserId = follower,
+                AddedByUserId = appUserId,
             });
 
         await db.SaveChangesAsync(ct);

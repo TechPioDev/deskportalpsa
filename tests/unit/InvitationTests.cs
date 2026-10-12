@@ -335,7 +335,8 @@ public sealed class InvitationTests : IDisposable
     public async Task An_administrators_wording_is_checked_previewed_sent_and_put_back()
     {
         var all = await Templates.ListAsync();
-        all.Select(t => t.Key).Should().Equal("user.invited", "user.invite_reminder", "user.invite_expired", "user.welcome", "user.password_reset");
+        all.Select(t => t.Key).Should().Equal("user.invited", "user.invite_reminder", "user.invite_expired", "user.welcome", "user.password_reset",
+            "ticket.follower_added", "ticket.follower_news");
         all.Should().OnlyContain(t => t.IsDefault);
 
         (await FluentActions.Awaiting(() => Templates.SaveAsync("user.invited", new EmailTemplateInput("Hello {{user.nmae}}", "Body {{ticket.number}}", "Go")))

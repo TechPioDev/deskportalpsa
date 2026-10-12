@@ -59,7 +59,16 @@ public sealed record InternalTicketInput(
     /// <summary>Which department owns it. Overrides whatever the topic would have chosen.</summary>
     Guid? DepartmentId = null,
     /// <summary>How the work reached us: Phone, Email, Chat, Walk-in, Meeting, Monitoring, Other.</summary>
-    string? Source = null);
+    string? Source = null,
+    /// <summary>
+    /// Colleagues to keep informed without giving them the ticket: each becomes a follower, is told
+    /// they were put on it, and is told what happens after. Staff only; at most
+    /// <see cref="MaxFollowers"/>.
+    /// </summary>
+    IReadOnlyList<Guid>? FollowerUserIds = null)
+{
+    public const int MaxFollowers = 20;
+}
 
 /// <param name="MemberCount">0 means the board is open to the whole team.</param>
 public sealed record BoardTopicDto(

@@ -4085,6 +4085,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("AddedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("AddedNotifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("AppUserId")
                         .HasColumnType("uuid");
 
@@ -4093,6 +4096,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.Property<Guid>("MspOrganizationId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("NotifiedThrough")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("TicketId")
                         .HasColumnType("uuid");

@@ -25,9 +25,13 @@ public static class EmailTemplates
     public const string InviteExpired = "user.invite_expired";
     public const string UserWelcome = "user.welcome";
     public const string PasswordReset = "user.password_reset";
+    public const string FollowerAdded = "ticket.follower_added";
+    public const string FollowerNews = "ticket.follower_news";
 
     private static readonly string[] Person = ["user.name", "user.first_name", "user.email", "organization.name", "product", "product_url"];
     private static readonly string[] WithLink = [.. Person, "link", "expires", "invited_by"];
+    // To a follower: no organization name is carried (the notifier works per ticket), so it is not offered.
+    private static readonly string[] Follower = ["user.name", "user.first_name", "user.email", "product", "product_url", "ticket.number", "ticket.title", "link"];
 
     public static readonly IReadOnlyList<EmailTemplateDefinition> All =
     [
@@ -51,6 +55,14 @@ public static class EmailTemplates
             "Reset your {{product}} password",
             "Hi {{user.first_name}},\n\nSomebody asked to reset the {{product}} password for {{user.email}}. If that was you, use the button below; the link works until {{expires}}.\n\nIf it was not you, nothing has changed and you can ignore this e-mail.",
             "Choose a new password", [.. Person, "link", "expires"]),
+        new(FollowerAdded, "Ticket: you were added", "Sent to a colleague when somebody adds them to a ticket to keep them informed.",
+            "{{added_by}} added you to {{ticket.number}}",
+            "Hi {{user.first_name}},\n\n{{added_by}} added you to the ticket {{ticket.number}}, \"{{ticket.title}}\", to keep you informed. It is not assigned to you.\n\nYou will get a short e-mail when somebody replies or when the ticket is finished. To stop, open the ticket and press Unfollow.",
+            "Open the ticket", [.. Follower, "added_by"]),
+        new(FollowerNews, "Ticket: news for followers", "Sent to the people who follow a ticket when somebody else replies or the ticket is finished.",
+            "News on {{ticket.number}}: {{ticket.title}}",
+            "Hi {{user.first_name}},\n\nThere is news on the ticket {{ticket.number}}, \"{{ticket.title}}\", which you follow:\n\n{{updates}}\n\nTo stop these e-mails, open the ticket and press Unfollow.",
+            "Open the ticket", [.. Follower, "updates"]),
     ];
 
     public static EmailTemplateDefinition? Find(string key) => All.FirstOrDefault(t => t.Key == key);
@@ -77,6 +89,8 @@ public static class EmailTemplates
             ["organization.name"] = organizationName, ["product"] = Product, ["product_url"] = productUrl,
             ["link"] = productUrl.TrimEnd('/') + "/invite/example-link-not-real", ["expires"] = "Tuesday 14 October 2026, 09:00",
             ["invited_by"] = "Priya Nair",
+            ["ticket.number"] = "INT-000123", ["ticket.title"] = "Replace the office router", ["added_by"] = "Priya Nair",
+            ["updates"] = "- Ravi Kumar replied\n- Priya Nair added an internal note\n- The ticket was closed",
         };
 
     /// <summary>

@@ -19,6 +19,9 @@ public enum PushKind
 
     /// <summary>Someone else put work into your plan, moved it, or took it out.</summary>
     WorkPlanned = 4,
+
+    /// <summary>News on a ticket they follow: they were put on it, somebody replied, it was finished.</summary>
+    Following = 5,
 }
 
 /// <summary>
