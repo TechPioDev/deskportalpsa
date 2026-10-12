@@ -1,4 +1,4 @@
-# Desk Portal background worker (scheduled sync, job processing, reports).
+# PioManage background worker (scheduled sync, job processing, reports).
 # Build from the REPO ROOT: docker build -f apps/worker/Dockerfile -t desk-worker .
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src

@@ -30,6 +30,18 @@ public abstract class ConnectorCertificationSuite
     /// <summary>Shared webhook secret used to sign the certification's webhook payloads.</summary>
     protected abstract string WebhookSecret { get; }
 
+    /// <summary>The connector as it is built for a connection that has no webhook secret stored.</summary>
+    protected abstract IServiceManagementConnector CreateConnectorWithoutWebhookSecret();
+
+    /// <summary>
+    /// A type, an issue and a sub-issue this PSA takes when a ticket is raised, as they are sent
+    /// to it. Words, unless the PSA holds them by id.
+    /// </summary>
+    protected virtual (string TicketType, string IssueType, string SubIssueType) RaisedUnder => ("Hardware", "Printer", "Toner");
+
+    /// <summary>The same three as a ticket read from the PSA carries them: always words.</summary>
+    protected virtual (string TicketType, string IssueType, string SubIssueType) ReadAs => RaisedUnder;
+
     protected static string Hmac(string body, string secret)
         => Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(body)));
 
@@ -141,6 +153,27 @@ public abstract class ConnectorCertificationSuite
     }
 
     [Fact]
+    public async Task A_due_date_set_from_the_portal_is_what_is_read_back()
+    {
+        // The portal moves a ticket's due date later (Autotask dueDateTime, ConnectWise requiredDate,
+        // the mock's own). What the connector reads back as the ticket's due date must be that date,
+        // or the next sync would quietly put the old one back.
+        var c = CreateConnector();
+        var created = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "Needs more time", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "due-1", Priority = "High",
+        });
+        created.Success.Should().BeTrue();
+        var later = new DateTimeOffset(2026, 11, 3, 15, 0, 0, TimeSpan.Zero);
+
+        (await c.UpdateTicketAsync(created.ExternalId!, new UnifiedTicketUpdate { DueDate = later, IdempotencyKey = "due-2" })).Success.Should().BeTrue();
+
+        var read = await c.GetTicketAsync(created.ExternalId!);
+        read!.SlaDueAt.Should().NotBeNull();
+        read.SlaDueAt!.Value.ToUniversalTime().Should().Be(later);
+    }
+
+    [Fact]
     public async Task Update_of_missing_ticket_is_not_found()
     {
         var act = async () => await CreateConnector().UpdateTicketAsync("999999", new UnifiedTicketUpdate { IdempotencyKey = "x" });
@@ -201,7 +234,7 @@ public abstract class ConnectorCertificationSuite
         byte[] content = [1, 2, 3];
         await c.AddAttachmentAsync(t.ExternalId!, new SecureAttachment("a.bin", "application/octet-stream", 3, "k", content));
 
-        var swept = await c.GetRecentAttachmentsAsync(null);
+        var swept = (await c.GetRecentAttachmentsAsync(null)).Items;
 
         // Providers do not reliably bump a ticket's modified date when a file is attached, so sync
         // depends on this dated sweep rather than on the ticket page.
@@ -220,6 +253,94 @@ public abstract class ConnectorCertificationSuite
     }
 
     // ---- incremental read ----
+
+    [Fact]
+    public async Task What_a_ticket_is_raised_under_is_what_is_read_back()
+    {
+        // A PSA files a ticket under three levels of its own. A connector that sends them and does
+        // not read them leaves the portal knowing less about a ticket than it told the PSA.
+        var c = CreateConnector();
+        var raised = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "Label printer jams", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "filed-1",
+            TicketType = RaisedUnder.TicketType, IssueType = RaisedUnder.IssueType, SubIssueType = RaisedUnder.SubIssueType,
+        });
+        var bare = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Unsorted", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "filed-2" });
+        raised.Success.Should().BeTrue();
+
+        var one = await c.GetTicketAsync(raised.ExternalId!);
+        var listed = (await c.GetTicketsAsync(new TicketFilter())).Items;
+
+        (one!.TicketType, one.IssueType, one.SubIssueType).Should().Be(ReadAs);
+        var inList = listed.Single(t => t.ExternalId == raised.ExternalId);
+        (inList.TicketType, inList.IssueType, inList.SubIssueType).Should().Be(ReadAs, "a ticket in a list says what the same ticket says by itself");
+        var unsorted = listed.Single(t => t.ExternalId == bare.ExternalId);
+        (unsorted.TicketType, unsorted.IssueType, unsorted.SubIssueType).Should().Be((null, null, null), "filed under nothing is nothing, not a guess");
+    }
+
+    [Fact]
+    public async Task A_count_is_the_number_the_same_filter_reads_or_an_honest_cannot_say()
+    {
+        // Before an import the portal says how much there is. A connector that can ask its PSA for a
+        // number has to give the number the read would produce; one that cannot answers null, and
+        // the screen then says "not known". What it may not do is answer with a number of its own.
+        var c = CreateConnector();
+        for (var i = 0; i < 3; i++)
+            await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+            {
+                Title = $"counted {i}", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = $"count-{i}",
+            });
+
+        var count = await c.CountTicketsAsync(new TicketFilter());
+        if (count is null) return;
+
+        var read = 0;
+        string? cursor = null;
+        var pages = 0;
+        do
+        {
+            var page = await c.GetTicketsAsync(new TicketFilter { PageSize = 100, Cursor = cursor });
+            read += page.Items.Count;
+            cursor = page.NextCursor;
+            if (!page.HasMore) break;
+        } while (cursor is not null && ++pages < 50);
+
+        count.Should().Be(read, "a count and a read of the same filter are one question asked two ways");
+        (await c.CountTicketsAsync(new TicketFilter { IncludeClosed = false }))
+            .Should().NotBeNull().And.BeLessThanOrEqualTo(count.Value, "open tickets are some of the tickets");
+    }
+
+    [Fact]
+    public async Task The_custom_fields_it_lists_can_each_be_told_apart_and_named()
+    {
+        // An administrator chooses among these by name, and the choice is kept against the key. A
+        // field with no key cannot be chosen, and two with one key cannot be told apart.
+        var c = CreateConnector();
+        if (!(await c.GetCapabilitiesAsync()).SupportsCustomFields) return;
+
+        var fields = await c.GetCustomFieldsAsync();
+        // None listed is an answer too (ConnectWise lists none until it has a ticket to read them off).
+        fields.Where(f => string.IsNullOrWhiteSpace(f.Key) || string.IsNullOrWhiteSpace(f.Label)).Should().BeEmpty();
+        fields.Select(f => f.Key).Should().OnlyHaveUniqueItems();
+        fields.Where(f => !CustomFieldTypes.All.Contains(f.DataType)).Should().BeEmpty("a kind the portal does not know is said as text");
+    }
+
+    [Fact]
+    public async Task A_capability_that_is_not_claimed_is_still_safe_to_ask_for()
+    {
+        // The screens offer what a connector says it can do. So what it says it cannot do must not
+        // be a trap for the code that asks anyway: an empty answer, not an exception.
+        var c = CreateConnector();
+        var caps = await c.GetCapabilitiesAsync();
+
+        var customFields = await c.GetCustomFieldsAsync();
+        if (!caps.SupportsCustomFields) customFields.Should().BeEmpty("it says it reads none");
+        if (!caps.SupportsHolidayCalendars) (await c.GetHolidaysAsync()).Should().BeEmpty();
+        if (!caps.SupportsContracts) (await c.GetAgreementsAsync(SeededOrganizationId)).Should().BeEmpty();
+
+        // And a readiness check is always answerable in words, whatever the PSA needs for time.
+        (await c.CheckTimeEntryReadinessAsync()).Summary.Should().NotBeNullOrWhiteSpace();
+    }
 
     [Fact]
     public async Task Reading_continues_past_the_first_page_until_every_ticket_is_seen()
@@ -283,12 +404,15 @@ public abstract class ConnectorCertificationSuite
 
     // ---- webhook validation ----
 
-    private WebhookRequest SignedWebhook(string body, DateTimeOffset? ts = null)
-        => new(
-            Headers: new Dictionary<string, string> { ["X-Timestamp"] = (ts ?? Clock.GetUtcNow()).ToString("o") },
+    private WebhookRequest SignedWebhook(string body, DateTimeOffset? ts = null, string? secret = null)
+    {
+        var timestamp = (ts ?? Clock.GetUtcNow()).ToString("o");
+        return new(
+            Headers: new Dictionary<string, string> { [WebhookSignature.TimestampHeader] = timestamp },
             Body: body,
-            RawSignature: Hmac(body, WebhookSecret),
+            RawSignature: WebhookSignature.Compute(timestamp, body, secret ?? WebhookSecret),
             ReceivedAt: Clock.GetUtcNow());
+    }
 
     [Fact]
     public async Task Valid_webhook_signature_passes()
@@ -307,6 +431,40 @@ public abstract class ConnectorCertificationSuite
         var stale = Clock.GetUtcNow() - TimeSpan.FromMinutes(30);
         (await CreateConnector().ValidateWebhookAsync(SignedWebhook("{\"x\":1}", stale))).IsValid.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task A_captured_delivery_cannot_be_replayed_under_a_new_timestamp()
+    {
+        // The timestamp is part of what is signed. When it was only checked, a delivery captured
+        // an hour ago could be sent again with the header changed to "now".
+        var captured = SignedWebhook("{\"x\":1}", Clock.GetUtcNow() - TimeSpan.FromMinutes(30));
+        var replayed = captured with
+        {
+            Headers = new Dictionary<string, string> { [WebhookSignature.TimestampHeader] = Clock.GetUtcNow().ToString("o") },
+        };
+
+        (await CreateConnector().ValidateWebhookAsync(replayed)).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task With_no_webhook_secret_stored_no_delivery_is_valid()
+    {
+        // A connection is given a webhook secret only if someone sets one. Until then the key was
+        // the empty string, and a signature made with the empty string is one anybody can make.
+        var timestamp = Clock.GetUtcNow().ToString("o");
+        const string body = "{\"eventType\":\"ticket.updated\"}";
+        WebhookRequest Signed(string signature) => new(
+            new Dictionary<string, string> { [WebhookSignature.TimestampHeader] = timestamp }, body, signature, Clock.GetUtcNow());
+        var c = CreateConnectorWithoutWebhookSecret();
+
+        (await c.ValidateWebhookAsync(Signed(WebhookSignature.Compute(timestamp, body, "")))).IsValid.Should().BeFalse();
+        // Over the body alone: the form that used to be accepted.
+        (await c.ValidateWebhookAsync(Signed(Hmac(body, "")))).IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_delivery_signed_with_another_secret_is_rejected()
+        => (await CreateConnector().ValidateWebhookAsync(SignedWebhook("{\"x\":1}", secret: "not-the-secret"))).IsValid.Should().BeFalse();
 
     [Fact]
     public async Task Webhook_payload_normalizes_to_a_provider_event()

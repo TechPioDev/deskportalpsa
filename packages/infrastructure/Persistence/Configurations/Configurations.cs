@@ -37,6 +37,14 @@ public sealed class PsaConnectionConfig : IEntityTypeConfiguration<PsaConnection
         b.Property(x => x.Name).HasMaxLength(200).IsRequired();
         b.Property(x => x.ApiEndpoint).HasMaxLength(500).IsRequired();
         b.Property(x => x.CredentialSecretRef).HasMaxLength(500).IsRequired();
+        b.Property(x => x.LastErrorKind).HasMaxLength(40);
+        b.Property(x => x.AccountKeyHash).HasMaxLength(64);
+        // A database default, so a row written by the previous version of the code - which does
+        // not know the column - is a connection that is not in setup, as every one of its were.
+        b.Property(x => x.InSetup).HasDefaultValue(false);
+        // The same, for the same reason: the previous version writes a connection nobody has asked to sync.
+        b.Property(x => x.SyncRequestedFull).HasDefaultValue(false);
+        b.Property(x => x.SyncRequestedBy).HasMaxLength(200);
         b.HasIndex(x => x.MspOrganizationId);
         b.HasOne<MspOrganization>().WithMany(o => o.PsaConnections)
             .HasForeignKey(x => x.MspOrganizationId).OnDelete(DeleteBehavior.Cascade);
@@ -55,6 +63,20 @@ public sealed class ClientCompanyConfig : IEntityTypeConfiguration<ClientCompany
         b.HasIndex(x => new { x.PsaConnectionId, x.ExternalCompanyId }).IsUnique();
         b.HasOne(x => x.PsaConnection).WithMany(c => c.ClientCompanies)
             .HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+public sealed class ClientCompanyAccessConfig : IEntityTypeConfiguration<ClientCompanyAccess>
+{
+    public void Configure(EntityTypeBuilder<ClientCompanyAccess> b)
+    {
+        b.ToTable("client_company_access");
+        b.HasKey(x => x.Id);
+        // A person is given a company or is not: one row says so, and what it gives.
+        b.HasIndex(x => new { x.ClientUserId, x.ClientCompanyId }).IsUnique();
+        b.HasOne(x => x.ClientUser).WithMany().HasForeignKey(x => x.ClientUserId).OnDelete(DeleteBehavior.Cascade);
+        // A company that goes takes the access to it with it.
+        b.HasOne(x => x.ClientCompany).WithMany().HasForeignKey(x => x.ClientCompanyId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -136,6 +158,55 @@ public sealed class UserRoleConfig : IEntityTypeConfiguration<UserRole>
     }
 }
 
+public sealed class PsaTechnicianIgnoreConfig : IEntityTypeConfiguration<Desk.Domain.Identity.PsaTechnicianIgnore>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.PsaTechnicianIgnore> b)
+    {
+        b.ToTable("psa_technician_ignores");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.ExternalTechnicianId).HasMaxLength(100).IsRequired();
+        b.Property(x => x.ExternalTechnicianName).HasMaxLength(200);
+        // A login is ignored or it is not: one row says so.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalTechnicianId }).IsUnique();
+        b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class PsaCustomFieldConfig : IEntityTypeConfiguration<Desk.Domain.Mapping.PsaCustomField>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Mapping.PsaCustomField> b)
+    {
+        b.ToTable("psa_custom_fields");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.ExternalKey).HasMaxLength(200).IsRequired();
+        b.Property(x => x.ExternalLabel).HasMaxLength(200).IsRequired();
+        b.Property(x => x.DataType).HasMaxLength(20).IsRequired();
+        b.Property(x => x.PortalLabel).HasMaxLength(200).IsRequired();
+        // One decision for one field of one connection.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalKey }).IsUnique();
+        b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class ClassificationMappingConfig : IEntityTypeConfiguration<Desk.Domain.Mapping.ClassificationMapping>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Mapping.ClassificationMapping> b)
+    {
+        b.ToTable("classification_mappings");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.TicketType).HasMaxLength(200).IsRequired();
+        b.Property(x => x.IssueType).HasMaxLength(200).IsRequired();
+        b.Property(x => x.SubIssueType).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Category).HasMaxLength(200);
+        b.Property(x => x.WorkType).HasMaxLength(200);
+        b.Property(x => x.Subcategory).HasMaxLength(200);
+        // One rule for one set of levels. A level left open is stored as empty and not as null, so
+        // that this holds for those too: a database treats two nulls as two different things.
+        b.HasIndex(x => new { x.PsaConnectionId, x.TicketType, x.IssueType, x.SubIssueType }).IsUnique();
+        b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class UserPsaIdentityConfig : IEntityTypeConfiguration<Desk.Domain.Identity.UserPsaIdentity>
 {
     public void Configure(EntityTypeBuilder<Desk.Domain.Identity.UserPsaIdentity> b)
@@ -147,6 +218,10 @@ public sealed class UserPsaIdentityConfig : IEntityTypeConfiguration<Desk.Domain
         // One identity per person per connection — a second row would make "who is this user in
         // Autotask" ambiguous exactly where the answer decides whose timesheet an hour lands on.
         b.HasIndex(x => new { x.AppUserId, x.PsaConnectionId }).IsUnique();
+        // And one person per PSA login on a connection. A link says "this login IS this person":
+        // with two people on one login, work done in the PSA under it was credited to whichever
+        // link was read last.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalTechnicianId }).IsUnique();
         b.HasOne(x => x.AppUser).WithMany().HasForeignKey(x => x.AppUserId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne(x => x.PsaConnection).WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
     }
@@ -190,6 +265,30 @@ public sealed class ActivityDailyFactConfig : IEntityTypeConfiguration<Desk.Doma
     }
 }
 
+/// <summary>Indexes that are named, because something outside the model refers to them.</summary>
+public static class TicketIndexes
+{
+    public const string Open = "IX_tickets_open";
+    public const string Search = "IX_tickets_search";
+
+    /// <summary>
+    /// <see cref="Desk.Domain.Tickets.TicketStatusRules.Open"/> as it reaches the database. PostgreSQL uses a
+    /// partial index only where it can see the query asks for no more than the index holds, and
+    /// it sees that by the two conditions being written the same way.
+    /// </summary>
+    public const string OpenFilter = "upper(\"PortalStatus\") NOT LIKE '%RESOLV%' AND upper(\"PortalStatus\") NOT LIKE '%CLOSED%'";
+
+    /// <summary>
+    /// Gives every time entry already stored the PSA account of its ticket. Run once, by the
+    /// migration that adds the column; entries written afterwards are given theirs as they are saved.
+    /// Kept here so that the test which runs it over a million entries runs the migration's own words.
+    /// </summary>
+    public const string GiveTimeEntriesTheirAccount = """
+        UPDATE ticket_time_entries e SET "PsaConnectionId" = t."PsaConnectionId"
+        FROM tickets t WHERE t."Id" = e."TicketId" AND t."PsaConnectionId" IS NOT NULL AND e."PsaConnectionId" IS NULL;
+        """;
+}
+
 public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
 {
     public void Configure(EntityTypeBuilder<Ticket> b)
@@ -200,6 +299,10 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         b.Property(x => x.Title).HasMaxLength(500).IsRequired();
         b.Property(x => x.RequesterName).HasMaxLength(200).IsRequired();
         b.Property(x => x.RequesterEmail).HasMaxLength(320).IsRequired();
+        b.Property(x => x.PortalWorkType).HasMaxLength(200);
+        b.Property(x => x.PsaTicketType).HasMaxLength(200);
+        b.Property(x => x.PsaIssueType).HasMaxLength(200);
+        b.Property(x => x.PsaSubIssueType).HasMaxLength(200);
         b.Property(x => x.TimeWorkedHours).HasPrecision(10, 2);
         b.Property(x => x.BillableHours).HasPrecision(10, 2);
         b.Property(x => x.NonBillableHours).HasPrecision(10, 2);
@@ -223,6 +326,24 @@ public sealed class TicketConfig : IEntityTypeConfiguration<Ticket>
         // "My tickets" for a portal-only technician runs on this, and it is the query every one of
         // them issues on every page load — the same reason the PSA-side index above exists.
         b.HasIndex(x => new { x.MspOrganizationId, x.AssignedAppUserId });
+        // "Who holds a ticket" is found by walking an index from one value to the next, so each
+        // kind of holder needs the index that is walked: who resolved it, and a PSA login within
+        // its account. (A portal assignee walks the index above.) Read as a list of distinct
+        // values it was a pass over every ticket.
+        b.HasIndex(x => new { x.MspOrganizationId, x.ResolvedByAppUserId }).HasFilter("\"ResolvedByAppUserId\" IS NOT NULL");
+        b.HasIndex(x => new { x.MspOrganizationId, x.PsaConnectionId, x.AssignedTechnicianExternalId });
+        // The open work, and with it everything the dashboard counts about it, so that the counting
+        // reads this and not the tickets themselves: most tickets a desk has ever had are closed.
+        // The condition is TicketStatusRules.Open() as the database is sent it, word for word; it
+        // is only used while the two stay the same, which TicketListReadsTests holds on PostgreSQL.
+        b.HasIndex(x => x.MspOrganizationId)
+            .HasDatabaseName(TicketIndexes.Open)
+            .HasFilter(TicketIndexes.OpenFilter)
+            .IncludeProperties(x => new
+            {
+                x.Origin, x.BoardId, x.AssignedAppUserId, x.CreatedByUserId, x.PortalStatus, x.PortalPriority,
+                x.PsaConnectionId, x.SlaPausedAt, x.SlaDueAt, x.AssignedTechnicianExternalId,
+            });
         b.HasMany(x => x.Notes).WithOne(n => n.Ticket!).HasForeignKey(n => n.TicketId);
         b.HasMany(x => x.Attachments).WithOne(a => a.Ticket!).HasForeignKey(a => a.TicketId);
         // The board lists: one board, newest first, is the query the team lives on all day.
@@ -512,6 +633,55 @@ public sealed class CannedResponseConfig : IEntityTypeConfiguration<CannedRespon
     }
 }
 
+public sealed class SignInInvitationConfig : IEntityTypeConfiguration<Desk.Domain.Identity.SignInInvitation>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.SignInInvitation> b)
+    {
+        b.ToTable("sign_in_invitations");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Email).HasMaxLength(254).IsRequired();
+        b.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+        b.Property(x => x.CreatedByName).HasMaxLength(200);
+        // A link is looked up by its hash, before any organization is known.
+        b.HasIndex(x => x.TokenHash).IsUnique();
+        // The worker's turn: what is open, per organization.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Purpose, x.ConsumedAt, x.RevokedAt });
+        b.HasIndex(x => x.AppUserId);
+        b.HasIndex(x => x.ClientUserId);
+    }
+}
+
+public sealed class EmailTemplateConfig : IEntityTypeConfiguration<Desk.Domain.Identity.EmailTemplate>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.EmailTemplate> b)
+    {
+        b.ToTable("email_templates");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Key).HasMaxLength(60).IsRequired();
+        b.Property(x => x.Subject).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Body).HasMaxLength(5000).IsRequired();
+        b.Property(x => x.ButtonLabel).HasMaxLength(80);
+        b.Property(x => x.UpdatedByName).HasMaxLength(200);
+        // One wording per kind of e-mail per organization.
+        b.HasIndex(x => new { x.MspOrganizationId, x.Key }).IsUnique();
+    }
+}
+
+public sealed class EmailLogEntryConfig : IEntityTypeConfiguration<Desk.Domain.Identity.EmailLogEntry>
+{
+    public void Configure(EntityTypeBuilder<Desk.Domain.Identity.EmailLogEntry> b)
+    {
+        b.ToTable("email_log");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.TemplateKey).HasMaxLength(60).IsRequired();
+        b.Property(x => x.To).HasMaxLength(254).IsRequired();
+        b.Property(x => x.Subject).HasMaxLength(300).IsRequired();
+        b.Property(x => x.Error).HasMaxLength(500);
+        b.Property(x => x.SubjectType).HasMaxLength(40);
+        b.HasIndex(x => new { x.MspOrganizationId, x.SentAt });
+    }
+}
+
 public sealed class TicketSatisfactionConfig : IEntityTypeConfiguration<TicketSatisfaction>
 {
     public void Configure(EntityTypeBuilder<TicketSatisfaction> b)
@@ -768,9 +938,16 @@ public sealed class TicketTimeEntryConfig : IEntityTypeConfiguration<TicketTimeE
         b.HasIndex(x => x.TicketId);
         // Reconciling a provider read against portal rows is a lookup by the PSA's own id.
         b.HasIndex(x => x.ExternalEntryId);
+        // One row for one entry of a PSA account, whether it was logged here and pushed out or
+        // entered in the PSA and read back. The reconciling above is what keeps to this; the
+        // database refuses a second row should two reads of the same ticket ever race.
+        b.HasIndex(x => new { x.PsaConnectionId, x.ExternalEntryId }).IsUnique()
+            .HasFilter("\"PsaConnectionId\" IS NOT NULL AND \"ExternalEntryId\" IS NOT NULL");
         // "Hours this technician logged between two dates" is the query every productivity report
         // runs, per person, per range — so it gets the date alongside the person.
         b.HasIndex(x => new { x.MspOrganizationId, x.AppUserId, x.EntryDate });
+        // The PSA logins that have logged time and are not linked to anyone here, walked the same way.
+        b.HasIndex(x => new { x.MspOrganizationId, x.PsaConnectionId, x.TechnicianExternalId }).HasFilter("\"AppUserId\" IS NULL");
         // A stopped clock writes exactly one entry: a second write for the same session is refused by the database.
         b.HasIndex(x => x.WorkSessionId).IsUnique().HasFilter("\"WorkSessionId\" IS NOT NULL");
     }
@@ -814,6 +991,25 @@ public sealed class SyncEventConfig : IEntityTypeConfiguration<SyncEvent>
     }
 }
 
+public sealed class OutboundOperationConfig : IEntityTypeConfiguration<OutboundOperation>
+{
+    public void Configure(EntityTypeBuilder<OutboundOperation> b)
+    {
+        b.ToTable("outbound_operations");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Summary).HasMaxLength(300).IsRequired();
+        b.Property(x => x.PayloadJson).IsRequired();
+        b.Property(x => x.IdempotencyKey).HasMaxLength(64).IsRequired();
+        b.Property(x => x.ExternalId).HasMaxLength(100);
+        b.Property(x => x.RequestedByName).HasMaxLength(200);
+        b.Property(x => x.Version).IsConcurrencyToken();
+        // What is due: by state and time. What a ticket has waiting: by ticket.
+        b.HasIndex(x => new { x.State, x.NextAttemptAt });
+        b.HasIndex(x => new { x.TicketId, x.State });
+        b.HasIndex(x => new { x.MspOrganizationId, x.State });
+    }
+}
+
 public sealed class BackgroundJobConfig : IEntityTypeConfiguration<BackgroundJob>
 {
     public void Configure(EntityTypeBuilder<BackgroundJob> b)
@@ -822,7 +1018,60 @@ public sealed class BackgroundJobConfig : IEntityTypeConfiguration<BackgroundJob
         b.HasKey(x => x.Id);
         b.Property(x => x.JobType).HasMaxLength(100).IsRequired();
         b.Property(x => x.PayloadJson).IsRequired();
+        // A database default, so a job queued by the previous version of the code - which does
+        // not know the column - starts at zero like any other.
+        b.Property(x => x.Version).IsConcurrencyToken().HasDefaultValue(0);
         b.HasIndex(x => new { x.Status, x.NextAttemptAt });
+    }
+}
+
+public sealed class SyncCursorConfig : IEntityTypeConfiguration<SyncCursor>
+{
+    public void Configure(EntityTypeBuilder<SyncCursor> b)
+    {
+        b.ToTable("sync_cursors");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Entity).HasMaxLength(40).IsRequired();
+        // A provider's page cursor can be a whole URL (Autotask's is).
+        b.Property(x => x.Continuation).HasMaxLength(4000);
+        b.HasIndex(x => new { x.PsaConnectionId, x.Entity }).IsUnique();
+        b.HasOne<PsaConnection>().WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class SyncRunConfig : IEntityTypeConfiguration<SyncRun>
+{
+    public void Configure(EntityTypeBuilder<SyncRun> b)
+    {
+        b.ToTable("sync_runs");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Error).HasMaxLength(1000);
+        b.Property(x => x.Notice).HasMaxLength(1000);
+        b.Property(x => x.RequestedBy).HasMaxLength(200);
+        // The lock. A second run for a connection that already has one in progress cannot be
+        // recorded, so it cannot start - whichever process it is in.
+        b.HasIndex(x => x.PsaConnectionId).HasDatabaseName("IX_sync_runs_one_running").IsUnique().HasFilter("\"Status\" = 0");
+        b.HasIndex(x => new { x.PsaConnectionId, x.StartedAt });
+        b.HasOne<PsaConnection>().WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class SyncFailureConfig : IEntityTypeConfiguration<SyncFailure>
+{
+    public void Configure(EntityTypeBuilder<SyncFailure> b)
+    {
+        b.ToTable("sync_failures");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Entity).HasMaxLength(40).IsRequired();
+        b.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Operation).HasMaxLength(40).IsRequired();
+        b.Property(x => x.Category).HasMaxLength(40).IsRequired();
+        b.Property(x => x.Message).HasMaxLength(1000).IsRequired();
+        // One open failure per record and operation: failing again updates it rather than adding a row.
+        b.HasIndex(x => new { x.PsaConnectionId, x.Entity, x.ExternalId, x.Operation })
+            .HasDatabaseName("IX_sync_failures_one_open").IsUnique().HasFilter("\"Status\" IN (0, 2)");
+        b.HasIndex(x => new { x.PsaConnectionId, x.Status, x.NextAttemptAt });
+        b.HasOne<PsaConnection>().WithMany().HasForeignKey(x => x.PsaConnectionId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 

@@ -155,6 +155,52 @@ public class ClientPortalTests
     }
 
     [Fact]
+    public async Task What_the_PSA_files_a_ticket_under_reaches_staff_and_not_the_client()
+    {
+        // How the desk files its work in its own PSA is the desk's working. The client sees their
+        // ticket; they are not shown the desk's taxonomy for it.
+        var dbName = Guid.NewGuid().ToString();
+        await using var db = await SeedAsync(dbName);
+        var filed = Ticket(CompanyA, RegularUser, "filed");
+        (filed.PsaTicketType, filed.PsaIssueType, filed.PsaSubIssueType) = ("Hardware", "Printer", null);
+        var bare = Ticket(CompanyA, RegularUser, "bare");
+        db.Tickets.AddRange(filed, bare);
+        await db.SaveChangesAsync();
+        var reads = new TicketReadService(db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: Guid.NewGuid()));
+
+        (await reads.GetDetailForStaffAsync(filed.Id))!.Classification.Should().Be(new TicketClassificationDto("Hardware", "Printer", null),
+            "the connection has no rules: there is no work type, and nothing is said about mapping");
+        (await reads.GetDetailForStaffAsync(bare.Id))!.Classification.Should().BeNull("filed under nothing, there is nothing to show");
+        (await reads.GetDetailAsync(Access(CompanyA, RegularUser, false), filed.Id))!.Classification.Should().BeNull();
+        (await reads.GetDetailAsync(Access(CompanyA, AdminUser, true), filed.Id))!.Classification.Should().BeNull("their administrator is still the client");
+
+        // What a rule of the desk's makes of it is the desk's working too: the work type and the
+        // subcategory reach staff, and the client is shown neither.
+        db.ClassificationMappings.Add(new Desk.Domain.Mapping.ClassificationMapping
+        {
+            MspOrganizationId = Org, PsaConnectionId = filed.PsaConnectionId!.Value, TicketType = "hardware", WorkType = "Break/fix", Subcategory = "Printing",
+        });
+        (filed.PortalWorkType, filed.PortalSubcategory) = ("Break/fix", "Printing");
+        await db.SaveChangesAsync();
+
+        (await reads.GetDetailForStaffAsync(filed.Id))!.Classification.Should().Be(
+            new TicketClassificationDto("Hardware", "Printer", null, "Break/fix", "Printing", Mapped: true));
+        // The connection has rules now, and none of them names this one: unmapped, and said to be.
+        var unnamed = Ticket(CompanyA, RegularUser, "unnamed");
+        (unnamed.PsaTicketType, unnamed.PsaIssueType) = ("Software", "Licence");
+        db.Tickets.Add(unnamed);
+        await db.SaveChangesAsync();
+        (await reads.GetDetailForStaffAsync(unnamed.Id))!.Classification.Should().Be(
+            new TicketClassificationDto("Software", "Licence", null, null, null, Mapped: false));
+        foreach (var access in new[] { Access(CompanyA, RegularUser, false), Access(CompanyA, AdminUser, true) })
+        {
+            var theirs = await reads.GetDetailAsync(access, filed.Id);
+            theirs!.Classification.Should().BeNull();
+            System.Text.Json.JsonSerializer.Serialize(theirs).Should().NotContain("Break/fix").And.NotContain("Printing");
+        }
+    }
+
+    [Fact]
     public async Task An_attachment_whose_note_is_gone_is_withheld_from_the_client()
     {
         // Fail closed. A dangling note id cannot be shown to be public, and "cannot prove it is

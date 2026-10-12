@@ -119,6 +119,58 @@ public class PsaIdentityTests
     }
 
     [Fact]
+    public async Task A_PSA_login_belongs_to_one_person_on_a_connection()
+    {
+        // A link says "this login IS this person": tickets assigned to it are theirs to see, and
+        // work done under it is credited to them. With two people on one login the later link won
+        // without a word, and listing the connection's technicians failed outright.
+        var (h, svc) = Build();
+        var at = AddConnection(h, "Autotask", ProviderType.AutotaskPsa);
+        var harpal = AddUser(h, "harpal@techpio.test");
+        var anika = AddUser(h, "anika@techpio.test");
+        await h.Db.SaveChangesAsync();
+        await svc.SetPsaIdentityAsync(harpal, at, "29682885", "Harpal Singh");
+
+        var act = () => svc.SetPsaIdentityAsync(anika, at, "29682885", "Harpal Singh");
+
+        (await act.Should().ThrowAsync<ValidationFailedException>()).WithMessage("*already linked to harpal@techpio.test*");
+        (await h.Db.UserPsaIdentities.SingleAsync()).AppUserId.Should().Be(harpal);
+    }
+
+    [Fact]
+    public async Task The_same_login_id_on_another_connection_is_free_and_saving_ones_own_link_again_is_fine()
+    {
+        var (h, svc) = Build();
+        var first = AddConnection(h, "ConnectWise - A", ProviderType.ConnectWisePsa);
+        var second = AddConnection(h, "ConnectWise - B", ProviderType.ConnectWisePsa);
+        var harpal = AddUser(h, "harpal@techpio.test");
+        var anika = AddUser(h, "anika@techpio.test");
+        await h.Db.SaveChangesAsync();
+
+        await svc.SetPsaIdentityAsync(harpal, first, "5", "Harpal");
+        await svc.SetPsaIdentityAsync(anika, second, "5", "Anika");      // member 5 of another account is somebody else
+        await svc.SetPsaIdentityAsync(harpal, first, "5", "Harpal S.");  // re-saving your own
+
+        (await h.Db.UserPsaIdentities.CountAsync()).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Once_a_link_is_removed_the_login_can_be_given_to_someone_else()
+    {
+        var (h, svc) = Build();
+        var at = AddConnection(h, "Autotask", ProviderType.AutotaskPsa);
+        var harpal = AddUser(h, "harpal@techpio.test");
+        var anika = AddUser(h, "anika@techpio.test");
+        await h.Db.SaveChangesAsync();
+        await svc.SetPsaIdentityAsync(harpal, at, "29682885", "Harpal Singh");
+
+        await svc.SetPsaIdentityAsync(harpal, at, null, null);
+        await svc.SetPsaIdentityAsync(anika, at, "29682885", "Anika");
+
+        (await h.Db.UserPsaIdentities.SingleAsync()).AppUserId.Should().Be(anika);
+    }
+
+    [Fact]
     public async Task A_user_from_another_tenant_is_not_found()
     {
         var (h, svc) = Build();

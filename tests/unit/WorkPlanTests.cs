@@ -40,7 +40,7 @@ public partial class WorkPlanTests
     private static DateTimeOffset At(DateOnly date, string hm) => TimeZones.WallToUtc(date.ToDateTime(TimeOnly.Parse(hm)), Tz, true);
 
     private sealed record Services(WorkPlanService Plans, CapacityService Capacity, WorkScheduleService Schedules, CapacityExceptionService Exceptions, WorkAllocationReleaser Releaser,
-        WorkTimeService Time, TicketTimeWriter Writer, TicketScopeQuery Scope, AuditWriter Audit);
+        WorkTimeService Time, TicketTimeWriter Writer, TicketScopeQuery Scope, AuditWriter Audit, WorkforceAnalyticsService Analytics);
 
     private sealed record World(DeskDbContext Db, string DbName, AppUser Admin, AppUser Lead, AppUser Jason, AppUser Abbie, AppUser Sam, AppUser Outsider,
         Team Noc, Board Board, Ticket JasonsTicket, Ticket OpenTicket, Ticket SamsTicket, Ticket Autotask, Ticket ConnectWise, TestClock Clock)
@@ -65,7 +65,8 @@ public partial class WorkPlanTests
             var writer = new TicketTimeWriter(db, null!, audit);
             var time = new WorkTimeService(db, access, capacity, scope, plans, new StubResolver(connector ?? new StubConnector()), writer, permissions, gate, audit, clock);
             return new Services(plans, capacity, new WorkScheduleService(db, access, audit, clock), new CapacityExceptionService(db, access, audit, clock),
-                new WorkAllocationReleaser(db, audit, clock), time, writer, scope, audit);
+                new WorkAllocationReleaser(db, audit, clock), time, writer, scope, audit,
+                new WorkforceAnalyticsService(db, access, capacity, scope, permissions, audit, clock));
         }
     }
 
@@ -83,7 +84,8 @@ public partial class WorkPlanTests
         }
         var all = PermissionScope.All;
         var admin = R("Administrator", RoleType.MspAdministrator, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all), (Permissions.BoardsManage, all),
-            (Permissions.ScheduleView, all), (Permissions.WorkforceManage, all), (Permissions.AvailabilityManage, all), (Permissions.ScheduleManage, all), (Permissions.ScheduleOverride, all));
+            (Permissions.ScheduleView, all), (Permissions.WorkforceManage, all), (Permissions.AvailabilityManage, all), (Permissions.ScheduleManage, all), (Permissions.ScheduleOverride, all),
+            (Permissions.WorkforceAnalyticsExport, all));
         var lead = R("Team lead", RoleType.Manager, (Permissions.TicketsViewAll, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all), (Permissions.BoardsManage, all),
             (Permissions.ScheduleView, PermissionScope.Team), (Permissions.AvailabilityManage, PermissionScope.Team), (Permissions.ScheduleManage, PermissionScope.Team));
         var tech = R("Technician", RoleType.Technician, (Permissions.TicketsViewAssigned, PermissionScope.Assigned), (Permissions.TicketsCreate, all), (Permissions.TicketsUpdate, all), (Permissions.TicketsLogTime, all),
@@ -175,6 +177,37 @@ public partial class WorkPlanTests
         var entry = await w.Db.AuditLog.SingleAsync(a => a.Action == "workforce.allocation.created");
         entry.DetailJson.Should().Contain("\"method\":\"Self\"").And.Contain("INT-000001");
         (await w.Db.PushNotifications.CountAsync()).Should().Be(0, "nobody is told about their own planning");
+    }
+
+    /// <summary>
+    /// "Autotask 43829" says which ticket only while there is one Autotask account. With two, both
+    /// can have a 43829, so the reference names the connection - and with one, it reads as it did.
+    /// </summary>
+    [Fact]
+    public async Task A_reference_names_the_connection_once_there_are_two_accounts_of_the_same_PSA()
+    {
+        var w = await WorldAsync();
+        var a = new PsaConnection { MspOrganizationId = OrgA, Name = "Customer A", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://a", CredentialSecretRef = "mem://a" };
+        w.Db.PsaConnections.Add(a);
+        (await w.Db.Tickets.SingleAsync(t => t.Id == w.Autotask.Id)).PsaConnectionId = a.Id;
+        await w.Db.SaveChangesAsync();
+
+        var one = await w.As(w.Jason).Plans.CreateAsync(w.Jason.Id, Place(w.Autotask, w.Jason, Monday, "09:30", "10:30"));
+        one.Reference.Should().Be("Autotask 43829", "one Autotask account: its name adds nothing");
+
+        // Put away still counts: its tickets are still here to be told apart from.
+        w.Db.PsaConnections.Add(new PsaConnection
+        {
+            MspOrganizationId = OrgA, Name = "Customer B", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://b",
+            CredentialSecretRef = "mem://b", ArchivedAt = w.Clock.GetUtcNow(), IsEnabled = false,
+        });
+        await w.Db.SaveChangesAsync();
+
+        var two = await w.As(w.Jason).Plans.CreateAsync(w.Jason.Id, Place(w.Autotask, w.Jason, Monday, "11:00", "12:00"));
+        two.Reference.Should().Be("Customer A 43829");
+        (await w.As(w.Jason).Plans.ForTicketAsync(w.Jason.Id, w.Autotask.Id)).Select(p => p.Reference).Distinct().Should().Equal("Customer A 43829");
+        (await w.Db.AuditLog.OrderBy(x => x.CreatedAt).Where(x => x.Action == "workforce.allocation.created").Select(x => x.DetailJson).ToListAsync())
+            .Last().Should().Contain("Customer A 43829");
     }
 
     [Fact]

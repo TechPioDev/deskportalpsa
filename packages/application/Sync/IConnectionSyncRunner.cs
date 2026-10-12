@@ -4,7 +4,17 @@ namespace Desk.Application.Sync;
 /// <summary>Outcome of one inbound run. <paramref name="Notes"/> counts conversation entries
 /// mirrored from the provider, and <paramref name="Attachments"/> the files pulled down with
 /// them, so an admin can see import actually doing something.</summary>
-public sealed record SyncRunResult(int Fetched, int Created, int Updated, int Skipped, int Pages, int Notes = 0, int Attachments = 0, int AttachmentsRemoved = 0, int NotesRemoved = 0);
+/// <param name="MoreToRead">The run used its page budget and the read is not finished; the next run continues it.</param>
+/// <param name="Failed">Records that could not be read or applied this run. They are kept and tried again.</param>
+/// <param name="Recovered">Earlier failures that went through this time.</param>
+public sealed record SyncRunResult(int Fetched, int Created, int Updated, int Skipped, int Pages, int Notes = 0, int Attachments = 0, int AttachmentsRemoved = 0, int NotesRemoved = 0,
+    bool MoreToRead = false, int Failed = 0, int Recovered = 0);
+
+/// <summary>Who is asking for a run, and for how much.</summary>
+/// <param name="Full">Ignore the cursor and read every ticket again.</param>
+/// <param name="Manual">A person asked, rather than the schedule.</param>
+/// <param name="RequestedBy">That person, for the run's record.</param>
+public sealed record SyncRunRequest(bool Full = false, bool Manual = false, string? RequestedBy = null);
 
 /// <summary>
 /// Runs a full inbound sync for one PSA connection: pages tickets from the provider connector,
@@ -19,6 +29,13 @@ public interface IConnectionSyncRunner
     /// since nothing changed on the provider side).
     /// </param>
     Task<SyncRunResult> RunAsync(Guid psaConnectionId, bool full = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// The same run, saying who asked. Throws <see cref="Desk.Application.Common.ConflictException"/>
+    /// when a run is already in progress for the connection: one connection is synced by one run at
+    /// a time.
+    /// </summary>
+    Task<SyncRunResult> RunAsync(Guid psaConnectionId, SyncRunRequest request, CancellationToken ct = default);
 
     /// <summary>
     /// Re-reads the notes of tickets the portal already holds and heals them exactly as a sync does

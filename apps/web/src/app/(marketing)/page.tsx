@@ -11,16 +11,16 @@ import { PSA_PLATFORMS } from '@/lib/psaPlatforms';
 import { HOME_FEATURES, HOW_IT_WORKS } from '@/lib/marketingContent';
 
 export const metadata: Metadata = {
-  title: 'Desk Portal — one modern client portal for the PSA your MSP already runs',
+  title: 'PioManage — one modern client portal for the PSA your MSP already runs',
   description:
     'Give clients a modern way to submit requests, follow updates and share files, while your technicians keep working in the PSA they already use. Multi-PSA by design.',
   alternates: { canonical: '/' },
   openGraph: {
-    title: 'Desk Portal — one modern client portal. Any PSA.',
+    title: 'PioManage — one modern client portal. Any PSA.',
     description:
       'A client experience platform that sits on top of your existing PSA. Two-way sync, multi-tenant, self-hosted.',
     type: 'website',
-    siteName: 'Desk Portal',
+    siteName: 'PioManage',
   },
 };
 
@@ -112,7 +112,7 @@ export default function HomePage() {
           <SectionHead
             eyebrow="How it works"
             title="One request. Two experiences. One system of record."
-            lead="The client gets a portal. The technician keeps the PSA. Desk Portal keeps the two in step."
+            lead="The client gets a portal. The technician keeps the PSA. PioManage keeps the two in step."
             align="center"
           />
           <Reveal delay={80} className="mt-12"><FlowRail /></Reveal>

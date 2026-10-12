@@ -14,6 +14,18 @@ public sealed class AutotaskConnectorConfig
     public string WebhookSecret { get; init; } = "";
     public TimeSpan WebhookMaxSkew { get; init; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>Records asked for per page of a list (Autotask allows up to 500).</summary>
+    public int ListPageSize { get; init; } = 500;
+
+    /// <summary>Pages of one list read before it is refused as too long to finish: 50,000 records.</summary>
+    public int MaxListPages { get; init; } = 100;
+
+    /// <summary>Attachments asked for per page of a tenant-wide sweep (Autotask allows up to 500).</summary>
+    public int AttachmentSweepPageSize { get; init; } = 500;
+
+    /// <summary>Pages one sweep will read before it stops and reports itself incomplete.</summary>
+    public int AttachmentSweepMaxPages { get; init; } = 20;
+
     /// <summary>publish value the connector writes for a public (client-visible) note.</summary>
     public int PublicPublishValue { get; init; } = 1;
     /// <summary>publish value used for internal-only notes (never mirrored to the portal).</summary>
@@ -36,6 +48,12 @@ internal sealed class AtQueryResult<T>
 {
     [JsonPropertyName("items")] public List<T> Items { get; set; } = [];
     [JsonPropertyName("pageDetails")] public AtPageDetails? PageDetails { get; set; }
+}
+
+/// <summary>The answer to <c>{entity}/query/count</c>.</summary>
+internal sealed class AtQueryCount
+{
+    [JsonPropertyName("queryCount")] public int QueryCount { get; set; }
 }
 
 internal sealed class AtPageDetails
@@ -89,6 +107,10 @@ internal sealed class AtTicket
     [JsonPropertyName("priority")] [JsonConverter(typeof(FlexibleStringConverter))] public string? Priority { get; set; }
     [JsonPropertyName("queueID")] [JsonConverter(typeof(FlexibleStringConverter))] public string? QueueId { get; set; }
     [JsonPropertyName("ticketCategory")] [JsonConverter(typeof(FlexibleStringConverter))] public string? Category { get; set; }
+    // Three more picklists: what kind of ticket it is, and the issue and sub-issue it was filed under.
+    [JsonPropertyName("ticketType")] [JsonConverter(typeof(FlexibleStringConverter))] public string? TicketType { get; set; }
+    [JsonPropertyName("issueType")] [JsonConverter(typeof(FlexibleStringConverter))] public string? IssueType { get; set; }
+    [JsonPropertyName("subIssueType")] [JsonConverter(typeof(FlexibleStringConverter))] public string? SubIssueType { get; set; }
     [JsonPropertyName("companyID")] public long CompanyId { get; set; }
     // The customer contact the ticket is for; only the id rides on the ticket.
     [JsonPropertyName("contactID")] public long? ContactId { get; set; }
@@ -104,6 +126,8 @@ internal sealed class AtTicket
     [JsonPropertyName("resolvedDueDateTime")] public DateTimeOffset? ResolvedDueDateTime { get; set; }
     // Falls back to the ticket's own due date where no SLA applies to it.
     [JsonPropertyName("dueDateTime")] public DateTimeOffset? DueDateTime { get; set; }
+    // The tenant's own fields on a ticket, each by its name with the value as Autotask holds it.
+    [JsonPropertyName("userDefinedFields")] public List<AtUserDefinedField>? UserDefinedFields { get; set; }
     // The configuration item (installed product) the ticket is about; absent when none is set.
     [JsonPropertyName("configurationItemID")] public long? ConfigurationItemId { get; set; }
 }
@@ -156,9 +180,19 @@ internal sealed class AtFieldInfoResult
     [JsonPropertyName("fields")] public List<AtFieldInfo> Fields { get; set; } = [];
 }
 
+internal sealed class AtUserDefinedField
+{
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("value")] [JsonConverter(typeof(FlexibleStringConverter))] public string? Value { get; set; }
+}
+
 internal sealed class AtFieldInfo
 {
     [JsonPropertyName("name")] public string? Name { get; set; }
+    // What the field is called on the screen, where it differs from its name, and what kind it is.
+    [JsonPropertyName("label")] public string? Label { get; set; }
+    [JsonPropertyName("dataType")] public string? DataType { get; set; }
+    [JsonPropertyName("isPickList")] [JsonConverter(typeof(FlexibleBoolConverter))] public bool IsPickList { get; set; }
     [JsonPropertyName("picklistValues")] public List<AtPicklistValue> PicklistValues { get; set; } = [];
 }
 

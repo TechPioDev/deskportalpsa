@@ -19,6 +19,9 @@ public sealed class MockConnectorCertificationTests : ConnectorCertificationSuit
     protected override string SeededOrganizationId => "ORG-1";
     protected override string WebhookSecret => _options.WebhookSecret;
 
+    protected override IServiceManagementConnector CreateConnectorWithoutWebhookSecret()
+        => new MockConnector(new MockConnectorOptions { WebhookSecret = "" }, Clock);
+
     [Fact]
     public async Task Mock_create_is_idempotent_on_key()
     {

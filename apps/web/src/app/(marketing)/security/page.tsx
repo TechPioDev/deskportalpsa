@@ -4,9 +4,9 @@ import { Reveal } from '@/components/marketing/Reveal';
 import { SECURITY, PLATFORM_PILLARS } from '@/lib/marketingContent';
 
 export const metadata: Metadata = {
-  title: 'Security — Desk Portal',
+  title: 'Security — PioManage',
   description:
-    'How Desk Portal is built: multi-tenant isolation, role-based access, SSO and MFA through your own identity provider, audit logging, vaulted PSA credentials and self-hosted deployment.',
+    'How PioManage is built: multi-tenant isolation, role-based access, SSO and MFA through your own identity provider, audit logging, vaulted PSA credentials and self-hosted deployment.',
   alternates: { canonical: '/security' },
 };
 
@@ -54,7 +54,7 @@ export default function SecurityPage() {
           <SectionHead
             eyebrow="Deployment"
             title="Run it where your data is allowed to live."
-            lead="Desk Portal is self-hosted. The platform, its database and its secrets store sit on infrastructure you control, alongside whatever else you already run."
+            lead="PioManage is self-hosted. The platform, its database and its secrets store sit on infrastructure you control, alongside whatever else you already run."
           />
           <div className="mt-10 grid gap-4 lg:grid-cols-3">
             {PLATFORM_PILLARS.map((p, i) => (

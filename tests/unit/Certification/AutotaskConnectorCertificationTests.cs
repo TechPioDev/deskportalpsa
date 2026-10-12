@@ -16,19 +16,21 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
 {
     private const string Secret = "at-webhook-secret";
 
-    private AutotaskConnector Build(FakeAutotaskServer server)
+    private AutotaskConnector Build(FakeAutotaskServer server, string webhookSecret = Secret)
     {
         var http = new HttpClient(server) { BaseAddress = new Uri("https://webservices.local/atservicesrest/") };
         var config = new AutotaskConnectorConfig
         {
             BaseUrl = "https://webservices.local/atservicesrest/",
             Credentials = new AutotaskCredentials("code", "user", "secret"),
-            WebhookSecret = Secret,
+            WebhookSecret = webhookSecret,
         };
         return new AutotaskConnector(http, config, Clock);
     }
 
     protected override IServiceManagementConnector CreateConnector() => Build(new FakeAutotaskServer(Clock));
+
+    protected override IServiceManagementConnector CreateConnectorWithoutWebhookSecret() => Build(new FakeAutotaskServer(Clock), "");
 
     [Fact]
     public async Task A_ticket_carries_its_contact_resolved_from_the_contact_id()
@@ -48,6 +50,82 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
         (a.RequesterName, a.RequesterEmail).Should().Be(("Acme User", "user@acme.test"));
         (b.RequesterName, b.RequesterEmail).Should().Be(((string?)null, (string?)null));
         (await c.GetTicketAsync(withContact.ExternalId!))!.RequesterEmail.Should().Be("user@acme.test");
+    }
+
+    [Fact]
+    public async Task A_tickets_own_fields_are_read_by_name_with_a_lists_value_in_words()
+    {
+        // The tenant's own fields were listed by name and never read off a ticket. A list's value
+        // is held as an id, like a status: it reaches the portal as the word.
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        var fields = await c.GetCustomFieldsAsync();
+        fields.Select(f => (f.Key, f.Label, f.DataType)).Should().Equal(
+            ("cf_site", "Site", CustomFieldTypes.Text), ("Cost Centre", "Cost centre", CustomFieldTypes.List),
+            ("Warranty Until", "Warranty Until", CustomFieldTypes.Date), ("Seats", "Seats", CustomFieldTypes.Number));
+        fields.Single(f => f.Key == "Cost Centre").Options!.Select(o => (o.Value, o.Label, o.IsActive)).Should().Equal(("7", "Finance", true), ("8", "Operations", false));
+
+        var with = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Laptop will not charge", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u1" });
+        var second = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Dock is dead", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u2" });
+        var without = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "No fields set", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u3" });
+        server.SetTicketUserDefinedFields(long.Parse(with.ExternalId!), ("cf_site", "Mohali"), ("Cost Centre", 7), ("Warranty Until", null), ("Seats", 12.5));
+        server.SetTicketUserDefinedFields(long.Parse(second.ExternalId!), ("cf_site", " "), ("Cost Centre", "99"));
+        int Asked() => server.RequestCounts.Where(r => r.Key.EndsWith("entityInformation/userDefinedFields", StringComparison.OrdinalIgnoreCase)).Sum(r => r.Value);
+        var before = Asked();
+
+        var listed = (await c.GetTicketsAsync(new TicketFilter())).Items;
+        var one = await c.GetTicketAsync(with.ExternalId!);
+
+        var expected = new Dictionary<string, string?> { ["cf_site"] = "Mohali", ["Cost Centre"] = "Finance", ["Warranty Until"] = null, ["Seats"] = "12.5" };
+        one!.CustomFields.Should().BeEquivalentTo(expected);
+        listed.Single(t => t.ExternalId == with.ExternalId).CustomFields.Should().BeEquivalentTo(expected, "a ticket in a list says what the same ticket says by itself");
+        listed.Single(t => t.ExternalId == second.ExternalId).CustomFields.Should().BeEquivalentTo(
+            new Dictionary<string, string?> { ["cf_site"] = null, ["Cost Centre"] = "99" }, "blank is no value, and an id that names nothing in the list stays the id it was");
+        listed.Single(t => t.ExternalId == without.ExternalId).CustomFields.Should().BeEmpty();
+        (Asked() - before).Should().Be(1,
+            "the words for the lists are asked for once, not once a ticket");
+    }
+
+    [Fact]
+    public async Task Tickets_are_still_read_when_the_list_of_their_own_fields_cannot_be()
+    {
+        var server = new FakeAutotaskServer(Clock) { UserDefinedFieldInfoFails = true };
+        var c = Build(server);
+        var with = await c.CreateTicketAsync(new UnifiedTicketCreateRequest { Title = "Laptop will not charge", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "u1" });
+        server.SetTicketUserDefinedFields(long.Parse(with.ExternalId!), ("cf_site", "Mohali"), ("Cost Centre", 7));
+
+        (await c.GetTicketAsync(with.ExternalId!))!.CustomFields.Should().BeEquivalentTo(
+            new Dictionary<string, string?> { ["cf_site"] = "Mohali", ["Cost Centre"] = "7" }, "the value is there; only the word for the list's id is not");
+        await FluentActions.Awaiting(() => c.GetCustomFieldsAsync()).Should().ThrowAsync<ConnectorException>("asked for the list itself, the failure is said");
+    }
+
+    [Fact]
+    public async Task What_a_ticket_is_filed_under_is_read_in_Autotasks_own_words()
+    {
+        // Autotask holds a ticket's type, issue and sub-issue as ids, like its status. They were
+        // not read at all: the portal knew a ticket's category and nothing under it.
+        var server = new FakeAutotaskServer(Clock);
+        var c = Build(server);
+        async Task<string> RaiseAsync(string key) => (await c.CreateTicketAsync(
+            new UnifiedTicketCreateRequest { Title = key, ExternalCompanyId = SeededOrganizationId, IdempotencyKey = key })).ExternalId!;
+        var filed = await RaiseAsync("filed");
+        var other = await RaiseAsync("other");
+        var unlisted = await RaiseAsync("unlisted");
+        var bare = await RaiseAsync("bare");
+        server.FileTicketUnder(long.Parse(filed), "2", "10", "100");
+        // The same word under another issue: its own id, and still the word.
+        server.FileTicketUnder(long.Parse(other), "1", "11", "103");
+        // A value retired from the list since the ticket was filed. The id is all there is to show.
+        server.FileTicketUnder(long.Parse(unlisted), "2", "77", null);
+
+        var page = (await c.GetTicketsAsync(new TicketFilter())).Items.ToDictionary(t => t.ExternalId);
+
+        (page[filed].TicketType, page[filed].IssueType, page[filed].SubIssueType).Should().Be(("Incident", "Hardware", "Printer"));
+        (page[other].TicketType, page[other].IssueType, page[other].SubIssueType).Should().Be(("Service Request", "Software", "Other"));
+        (page[unlisted].TicketType, page[unlisted].IssueType, page[unlisted].SubIssueType).Should().Be(("Incident", "77", null));
+        (page[bare].TicketType, page[bare].IssueType, page[bare].SubIssueType).Should().Be((null, null, null), "filed under nothing is nothing, not a guess");
+        var one = await c.GetTicketAsync(filed);
+        (one!.TicketType, one.IssueType, one.SubIssueType).Should().Be(("Incident", "Hardware", "Printer"), "one ticket read by itself says the same");
     }
 
     [Fact]
@@ -114,6 +192,10 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
     }
 
     protected override string SeededOrganizationId => "1";
+
+    // Autotask holds a type, an issue and a sub-issue as ids, and refuses words for them as it does for a status.
+    protected override (string TicketType, string IssueType, string SubIssueType) RaisedUnder => ("2", "10", "100");
+    protected override (string TicketType, string IssueType, string SubIssueType) ReadAs => ("Incident", "Hardware", "Printer");
 
     /// <summary>
     /// The live failure this pins: changing a ticket's status from the portal sent the LABEL
@@ -379,11 +461,93 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
         byte[] content = [1, 2, 3];
         await c.AddAttachmentAsync(ticket.ExternalId!, new SecureAttachment("a.bin", "application/octet-stream", 3, "k", content));
 
-        var swept = await c.GetRecentAttachmentsAsync(null);
+        var swept = (await c.GetRecentAttachmentsAsync(null)).Items;
 
         // The fake stamps attachedByResourceID 20 on every file it stores, as Autotask does.
         swept.Should().ContainSingle(r => r.TicketExternalId == ticket.ExternalId)
             .Which.Attachment.AuthorExternalId.Should().Be("20");
+    }
+
+    [Fact]
+    public async Task A_ticket_carries_its_queues_id_beside_the_name()
+    {
+        // The name is what people read and map. The id is what Autotask is asked for, so it is what
+        // a connection's queue limit holds - and with only the name on the ticket, that limit could
+        // never be checked against what came back.
+        var c = Build(new FakeAutotaskServer(Clock));
+        var created = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "Queued", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "q1", QueueOrBoard = "Service Desk",
+        });
+
+        var ticket = await c.GetTicketAsync(created.ExternalId!);
+
+        (ticket!.QueueOrBoard, ticket.QueueOrBoardId).Should().Be(("Service Desk", "8"));
+    }
+
+    private AutotaskConnector BuildWithSweepLimits(FakeAutotaskServer server, int pageSize, int maxPages)
+    {
+        var http = new HttpClient(server) { BaseAddress = new Uri("https://webservices.local/atservicesrest/") };
+        return new AutotaskConnector(http, new AutotaskConnectorConfig
+        {
+            BaseUrl = "https://webservices.local/atservicesrest/",
+            Credentials = new AutotaskCredentials("code", "user", "secret"),
+            WebhookSecret = Secret,
+            AttachmentSweepPageSize = pageSize,
+            AttachmentSweepMaxPages = maxPages,
+        }, Clock);
+    }
+
+    private async Task<string> TicketWithFilesAsync(AutotaskConnector c, int files)
+    {
+        var ticket = await c.CreateTicketAsync(new UnifiedTicketCreateRequest
+        {
+            Title = "t", IdempotencyKey = "k", ExternalCompanyId = SeededOrganizationId,
+        });
+        for (var i = 0; i < files; i++)
+            await c.AddAttachmentAsync(ticket.ExternalId!,
+                new SecureAttachment($"file-{i}.bin", "application/octet-stream", 3, $"k{i}", [1, 2, 3]));
+        return ticket.ExternalId!;
+    }
+
+    [Fact]
+    public async Task The_attachment_sweep_reads_every_page_and_says_the_list_is_complete()
+    {
+        // It read the first page only. Five files at two a page is three pages.
+        var c = BuildWithSweepLimits(new FakeAutotaskServer(Clock), pageSize: 2, maxPages: 20);
+        var ticketId = await TicketWithFilesAsync(c, 5);
+
+        var sweep = await c.GetRecentAttachmentsAsync(null);
+
+        sweep.Complete.Should().BeTrue();
+        sweep.Items.Where(r => r.TicketExternalId == ticketId).Select(r => r.Attachment.FileName)
+            .Should().BeEquivalentTo(["file-0.bin", "file-1.bin", "file-2.bin", "file-3.bin", "file-4.bin"]);
+    }
+
+    [Fact]
+    public async Task The_attachment_sweep_says_so_when_it_stops_before_the_end()
+    {
+        // What it read is returned; what it must not do is call it everything, because the sync
+        // deletes stored files that a complete list no longer contains.
+        var c = BuildWithSweepLimits(new FakeAutotaskServer(Clock), pageSize: 2, maxPages: 2);
+        await TicketWithFilesAsync(c, 5);
+
+        var sweep = await c.GetRecentAttachmentsAsync(null);
+
+        sweep.Complete.Should().BeFalse();
+        sweep.Items.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public async Task A_sweep_that_ends_exactly_on_its_last_allowed_page_is_complete()
+    {
+        var c = BuildWithSweepLimits(new FakeAutotaskServer(Clock), pageSize: 2, maxPages: 2);
+        await TicketWithFilesAsync(c, 4);
+
+        var sweep = await c.GetRecentAttachmentsAsync(null);
+
+        sweep.Complete.Should().BeTrue();
+        sweep.Items.Should().HaveCount(4);
     }
 
     protected override string WebhookSecret => Secret;
@@ -528,6 +692,32 @@ public sealed class AutotaskConnectorCertificationTests : ConnectorCertification
             new TicketFilter { CompanyIds = [SeededOrganizationId] });
 
         page.Items.Select(t => t.Title).Should().BeEquivalentTo(["wanted"]);
+    }
+
+    /// <summary>
+    /// A count asks Autotask how many tickets a filter matches without reading them, and sends the
+    /// filter the read sends. "Open only" has to be asked for here: the sync leaves it to the
+    /// runner, which sees each ticket, and a count sees none.
+    /// </summary>
+    [Fact]
+    public async Task A_count_matches_what_the_same_filter_reads_and_can_count_open_tickets_alone()
+    {
+        var server = new FakeAutotaskServer(Clock);
+        var connector = Build(server);
+        var first = await connector.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "one", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c-1" });
+        await connector.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "two", ExternalCompanyId = SeededOrganizationId, IdempotencyKey = "c-2" });
+        await connector.CreateTicketAsync(new UnifiedTicketCreateRequest
+        { Title = "elsewhere", ExternalCompanyId = "9999", IdempotencyKey = "c-3" });
+        server.CompleteTicket(long.Parse(first.ExternalId!));
+
+        (await connector.CountTicketsAsync(new TicketFilter())).Should().Be(3);
+        (await connector.CountTicketsAsync(new TicketFilter { CompanyIds = [SeededOrganizationId] })).Should().Be(2);
+        (await connector.CountTicketsAsync(new TicketFilter { CompanyIds = [SeededOrganizationId], IncludeClosed = false }))
+            .Should().Be(1, "the completed one is not open");
+        (await connector.GetTicketsAsync(new TicketFilter { CompanyIds = [SeededOrganizationId] })).Items
+            .Should().HaveCount(2, "the read and the count send one filter");
     }
 
     /// <summary>

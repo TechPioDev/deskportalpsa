@@ -7,8 +7,8 @@ import { EnquiryForm } from '@/components/marketing/EnquiryForm';
 import { CONTACT_EMAIL } from '@/components/marketing/MarketingFooter';
 
 export const metadata: Metadata = {
-  title: 'Contact us — Desk Portal',
-  description: 'Ask a question about Desk Portal, or tell us what you need it to do.',
+  title: 'Contact us — PioManage',
+  description: 'Ask a question about PioManage, or tell us what you need it to do.',
 };
 
 export default function ContactPage() {

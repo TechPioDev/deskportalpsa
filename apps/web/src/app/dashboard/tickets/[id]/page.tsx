@@ -8,7 +8,8 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight, ChevronDown, Pencil, MoreHorizontal, Paperclip,
   Send, ArrowUpDown, Lock, Monitor, Wifi, Mail, KeyRound, Cpu, Ticket,
   Copy, RefreshCw, Download, Clock, Trash2, Check, X, ClipboardList, UserCog, ExternalLink, AlertTriangle,
-  Eye, Hand, UserPlus} from 'lucide-react';
+  Eye, Hand, UserPlus, CalendarClock
+} from 'lucide-react';
 import { useWorkTime, WorkControls } from '@/components/WorkTime';
 import { NoteBody, notePreview } from '@/components/NoteBody';
 import { AssistantRail } from '@/components/AssistantRail';
@@ -25,6 +26,8 @@ import { ApprovalPanel } from '@/components/ApprovalPanel';
 import { warrantyState, WARRANTY_TONE } from '@/lib/devices';
 import { TicketDevicePicker } from '@/components/TicketDevicePicker';
 import { api, ApiError, type AssigneeOptions } from '@/lib/api';
+import { portalClassification, psaLevels } from '@/lib/psaLevels';
+import { OutboundChanges, SyncStateChip } from '@/components/OutboundChanges';
 import type { TicketDetail, TicketFollower } from '@/lib/types';
 import { isStaffPermissions } from '@/lib/staff';
 
@@ -584,6 +587,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const refreshTime = () =>
     [['time-entries', id], ['ticket', id], ['team'], ['trend']].forEach((k) => qc.invalidateQueries({ queryKey: k }));
 
+  // A status that was asked for while the PSA was away: said until the page is left or it is asked again.
+  const [queuedStatus, setQueuedStatus] = useState<string | null>(null);
   const statusMut = useMutation({
     mutationFn: (v: { status: string; resolution?: string | null }) => api.updateTicketStatus(id, v.status, v.resolution),
     onSuccess: (res) => {
@@ -591,6 +596,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       // one, so choosing Closed straight after Resolved asked for the resolution a second time.
       qc.setQueryData<TicketDetail>(['ticket', id], (old) => (old ? { ...old, portalStatus: res.portalStatus } : old));
       setPendingStatus(null);
+      // The PSA could not be reached: the ticket keeps its status, and what was asked for waits.
+      setQueuedStatus(res.queued ? res.requested ?? null : null);
       [['ticket', id], ['tickets'], ['team'], ['trend'], ['ticket-history', id]].forEach((k) => qc.invalidateQueries({ queryKey: k }));
     },
   });
@@ -633,6 +640,16 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   // matters (the conversation bubbles) rather than by starving the whole page.
   return (
     <div className="space-y-4">
+      {/* What was changed here and is not in the PSA yet. Staff only: a client is not sent the list. */}
+      {isStaff && ticket?.outbound && ticket.outbound.length > 0 && (
+        <OutboundChanges ticketId={id} changes={ticket.outbound} canChange={canUpdate} />
+      )}
+      {queuedStatus && ticket && (
+        <p role="status" className="rounded-xl border border-amber-300 bg-amber-50/70 px-4 py-2.5 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+          The PSA could not be reached, so the status is still <span className="font-medium">{ticket.portalStatus}</span>.
+          The change to <span className="font-medium">{queuedStatus}</span> is kept and will be sent when the PSA answers; the ticket changes only once the PSA has accepted it.
+        </p>
+      )}
       {/* Header controls */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link href="/dashboard/tickets" className="inline-flex items-center gap-1.5 text-sm text-[var(--muted)] hover:text-[var(--fg)]">
@@ -821,6 +838,23 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     not route by team is a question the desk never asked. */}
                 {ticket.assignedTeamName && <Meta label="Team" value={ticket.assignedTeamName} />}
                 <Meta label="Category" value={ticket.portalCategory ?? '—'} />
+                {/* What the PSA files it under, level by level, under the PSA's own names for the
+                    levels. Only the levels it has: a row of dashes on every ticket of a desk that
+                    does not use sub-issues would be a question nobody asked. */}
+                {psaLevels(isFromPsa ? Number(ticket.provider) : null, ticket.classification).map((level) => (
+                  <Meta key={level.label} label={level.label} value={level.value} />
+                ))}
+                {/* What the desk's own rules make of that, where it has written any. A ticket the
+                    rules do not name reads "Unmapped": nothing stands in for a rule. */}
+                {portalClassification(isFromPsa ? ticket.classification : null).map((row) => (
+                  <Meta key={row.label} label={row.label} value={row.value} />
+                ))}
+                {/* The PSA's custom fields that were chosen for the portal. A client is sent only the
+                    ones marked as theirs to see; staff see all of them, and which the client sees too. */}
+                {(ticket.customFields ?? []).map((f) => (
+                  <Meta key={f.label} label={isStaff && f.clientVisible ? `${f.label} (client sees this)` : f.label}
+                    value={f.dataType === 'boolean' ? (f.value === 'true' ? 'Yes' : f.value === 'false' ? 'No' : f.value) : f.value} />
+                ))}
                 <Meta label="Customer" value={ticket.customerName ?? '—'} />
                 {/* The device it is about, when the PSA or the portal knows one. Serial and warranty
                     reach staff only; a client sees the name and type. A technician can set or change
@@ -873,7 +907,24 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   <SlaMeta label="Resolution" due={ticket.slaDueAt} met={ticket.resolvedAt} pausedAt={ticket.slaPausedAt}
                     open={!['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase())} />
                 )}
+                {/* A PSA ticket's due date is the PSA's own; shown so that extending it has something to extend. */}
+                {isFromPsa && ticket.slaDueAt && <Meta label="Due" value={fmt(ticket.slaDueAt)} />}
+                {ticket.dueDate && (
+                  <div className="col-span-2">
+                    <dt className="text-xs text-[var(--muted)]">Due date moved</dt>
+                    <dd className="text-sm">
+                      {ticket.dueDate.extensions === 1 ? 'Once' : `${ticket.dueDate.extensions} times`}
+                      {ticket.dueDate.originalDueAt && <> · first due {fmt(ticket.dueDate.originalDueAt)}</>}
+                      {ticket.dueDate.lastReason && <span className="block text-xs text-[var(--muted)]">
+                        &ldquo;{ticket.dueDate.lastReason}&rdquo;{ticket.dueDate.lastExtendedByName ? ` — ${ticket.dueDate.lastExtendedByName}` : ''}{ticket.dueDate.lastExtendedAt ? `, ${fmt(ticket.dueDate.lastExtendedAt)}` : ''}
+                      </span>}
+                    </dd>
+                  </div>
+                )}
               </dl>
+              {canUpdate && isStaff && !['RESOLVED', 'CLOSED'].includes(ticket.portalStatus.toUpperCase()) && (
+                <ExtendDueDate ticketId={id} currentDueAt={ticket.slaDueAt} onDone={() => qc.invalidateQueries({ queryKey: ['ticket', id] })} />
+              )}
 
               {canUpdate && (
               <div className="mt-4 border-t border-[var(--border)] pt-4">
@@ -1261,6 +1312,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                               three signals compete for the same fact. */}
                           <span className="font-semibold">{n.authorName}</span>
                           <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${incoming ? 'bg-slate-200/70 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'}`}>{incoming ? 'Client' : 'Technician'}</span>
+                          {/* Written while the PSA could not be reached: said on the note itself, so a
+                              reply that is still waiting is not taken for one the customer has. */}
+                          {n.syncState && <SyncStateChip state={n.syncState} />}
                           {!n.isPublic && !isTimeCard && (
                             <span title="Internal note from the PSA — never shown to the client"
                               className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">Internal</span>
@@ -1690,6 +1744,54 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
  * A due date from the SLA, and whether it was kept. Kept or not is the point of the row, so it says
  * so in words as well as colour: met on time, met late, overdue, or when it falls due.
  */
+/**
+ * Moving the due date later, with a reason. For a PSA ticket the PSA is asked first; a refusal
+ * is shown and nothing changes. A client never sees the reason; the desk's history does.
+ */
+function ExtendDueDate({ ticketId, currentDueAt, onDone }: { ticketId: string; currentDueAt: string | null; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [dueAt, setDueAt] = useState('');
+  const [reason, setReason] = useState('');
+  const extend = useMutation({
+    mutationFn: () => api.extendDueDate(ticketId, new Date(dueAt).toISOString(), reason.trim()),
+    onSuccess: () => { setOpen(false); setDueAt(''); setReason(''); onDone(); },
+  });
+  const floor = currentDueAt ? new Date(currentDueAt) : new Date();
+  const valid = dueAt !== '' && new Date(dueAt).getTime() > floor.getTime() && reason.trim().length >= 3;
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--bg)]">
+        <CalendarClock size={13} aria-hidden="true" /> Extend due date
+      </button>
+    );
+  }
+  return (
+    <form aria-label="Extend due date" className="mt-3 space-y-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3"
+      onSubmit={(e) => { e.preventDefault(); if (valid && !extend.isPending) extend.mutate(); }}>
+      <label className="block text-xs font-medium text-[var(--muted)]">New due date
+        <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} required
+          className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm" />
+      </label>
+      <label className="block text-xs font-medium text-[var(--muted)]">Why
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} required placeholder="Parts on back-order until Friday"
+          className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm" />
+      </label>
+      <p className="text-xs text-[var(--faint)]">
+        {currentDueAt ? `Later than ${fmt(currentDueAt)}. ` : ''}The reason goes to the ticket&rsquo;s history, never to the client.
+      </p>
+      {extend.isError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{(extend.error as Error).message}</p>}
+      <div className="flex gap-2">
+        <button type="submit" disabled={!valid || extend.isPending}
+          className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:opacity-90 disabled:opacity-40">
+          {extend.isPending ? 'Saving…' : 'Move the due date'}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--surface)]">Cancel</button>
+      </div>
+    </form>
+  );
+}
+
 function SlaMeta({ label, due, met, open, pausedAt }: {
   label: string; due: string; met: string | null; open: boolean; pausedAt?: string | null;
 }) {

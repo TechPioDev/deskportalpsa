@@ -43,8 +43,19 @@ public sealed class TicketSyncService(
         // Translate provider → portal, passing raw values through when no rule matches.
         var portalStatus = Map(rules, ctx, "status", incoming.Status) ?? incoming.Status ?? "NEW";
         var portalPriority = Map(rules, ctx, "priority", incoming.Priority) ?? incoming.Priority ?? "NORMAL";
-        var portalCategory = Map(rules, ctx, "category", incoming.Category) ?? incoming.Category;
+        // What the connection's classification rules make of the three levels the PSA filed it
+        // under. A rule that gives a category speaks over the category field's own mapping, which
+        // is what the ticket has where no rule does. The work type and the subcategory have no
+        // other source: with no rule for them they are empty, never the PSA's word carried across.
+        var filed = ClassificationRules.Resolve(await ClassificationOfAsync(connection, ct),
+            incoming.TicketType, incoming.IssueType, incoming.SubIssueType);
+        var portalCategory = filed.Category ?? Map(rules, ctx, "category", incoming.Category) ?? incoming.Category;
         var portalQueue = Map(rules, ctx, "queue", incoming.QueueOrBoard) ?? incoming.QueueOrBoard;
+
+        // Of the PSA's custom fields, only the ones an administrator chose for this connection, and
+        // of those only the ones with a value. The rest are not kept: what a tenant puts in a field
+        // nobody asked for is not the portal's to hold.
+        var customFields = CustomFieldValues.Keep(incoming.CustomFields, await ImportedFieldsAsync(connection, ct));
 
         var existing = await db.Tickets.FirstOrDefaultAsync(
             t => t.PsaConnectionId == psaConnectionId && t.ExternalTicketId == incoming.ExternalId, ct);
@@ -63,7 +74,9 @@ public sealed class TicketSyncService(
             incoming.ResolvedAt, incoming.ClosedAt, incoming.SlaDueAt, incoming.CreatedAt, portalQueue,
             string.IsNullOrWhiteSpace(incoming.RequesterName) ? null : incoming.RequesterName,
             string.IsNullOrWhiteSpace(incoming.RequesterEmail) ? null : incoming.RequesterEmail,
-            deviceExternalId);
+            deviceExternalId,
+            Level(incoming.TicketType), Level(incoming.IssueType), Level(incoming.SubIssueType),
+            filed.WorkType, filed.Subcategory, customFields);
 
         if (existing is not null)
         {
@@ -107,6 +120,14 @@ public sealed class TicketSyncService(
         ticket.PsaPriority = incoming.Priority;
         ticket.PortalCategory = portalCategory;
         ticket.PsaCategory = incoming.Category;
+        ticket.PortalWorkType = filed.WorkType;
+        ticket.PortalSubcategory = filed.Subcategory;
+        ticket.CustomFieldsJson = customFields;
+        // Kept as the PSA words them. Cleared when the PSA clears them: the hash above no longer
+        // carries a level the ticket has lost, so that change is seen too.
+        ticket.PsaTicketType = Level(incoming.TicketType);
+        ticket.PsaIssueType = Level(incoming.IssueType);
+        ticket.PsaSubIssueType = Level(incoming.SubIssueType);
         ticket.QueueOrBoard = portalQueue;
         ticket.AssignedTechnicianExternalId = incoming.AssignedTechnicianExternalId;
         ticket.ResolvedAt = incoming.ResolvedAt;
@@ -163,6 +184,43 @@ public sealed class TicketSyncService(
 
         await activity.RecordManyAsync(observed, ct);
         return existing is null ? TicketSyncOutcome.Created : TicketSyncOutcome.Updated;
+    }
+
+    // A connection's classification rules, read once for each connection this instance syncs: a
+    // run holds one instance, so a page of tickets is one read and not one for each ticket. Not
+    // tracked, so letting go of a page's tickets does not let go of these.
+    private readonly Dictionary<Guid, IReadOnlyList<ClassificationMapping>> _classification = [];
+
+    private async Task<IReadOnlyList<ClassificationMapping>> ClassificationOfAsync(PsaConnection connection, CancellationToken ct)
+    {
+        if (_classification.TryGetValue(connection.Id, out var held)) return held;
+        // The organization is named, as it is for the field rules: the scheduled sync runs where
+        // the tenant filter is off, and a connection is only ever read by its own organization's rules.
+        var read = await db.ClassificationMappings.AsNoTracking()
+            .Where(m => m.MspOrganizationId == connection.MspOrganizationId && m.PsaConnectionId == connection.Id)
+            .ToListAsync(ct);
+        return _classification[connection.Id] = read;
+    }
+
+    // The custom fields chosen for import on a connection, read once for each connection this
+    // instance syncs, like the classification rules above and for the same reason.
+    private readonly Dictionary<Guid, IReadOnlySet<string>> _importedFields = [];
+
+    private async Task<IReadOnlySet<string>> ImportedFieldsAsync(PsaConnection connection, CancellationToken ct)
+    {
+        if (_importedFields.TryGetValue(connection.Id, out var held)) return held;
+        var keys = await db.PsaCustomFields.AsNoTracking()
+            .Where(f => f.MspOrganizationId == connection.MspOrganizationId && f.PsaConnectionId == connection.Id && f.Import)
+            .Select(f => f.ExternalKey)
+            .ToListAsync(ct);
+        return _importedFields[connection.Id] = keys.ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>One level of the PSA's classification as it is stored: trimmed, nothing for blank, and no longer than its column.</summary>
+    private static string? Level(string? value)
+    {
+        var v = value?.Trim();
+        return string.IsNullOrEmpty(v) ? null : v.Length <= 200 ? v : v[..200];
     }
 
     private string? Map(IReadOnlyList<FieldMapping> rules, MappingContext ctx, string field, string? value)

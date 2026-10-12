@@ -13,6 +13,11 @@ public enum PsaTechnicianLink
     MatchedByEmail = 1,
     /// <summary>Already mapped on this connection. Nothing to do.</summary>
     Linked = 2,
+    /// <summary>
+    /// An administrator has said this login is nobody the portal needs to know as one of its people
+    /// (an API or service account, someone who left). It is not counted as still to link.
+    /// </summary>
+    Ignored = 3,
 }
 
 /// <summary>
@@ -48,4 +53,11 @@ public interface ITechnicianProvisioningService
     /// Idempotent: running it again on someone already linked changes nothing.
     /// </summary>
     Task<UserSummary> ProvisionAsync(Guid psaConnectionId, string externalTechnicianId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Says a PSA login is to be left alone, or takes that back. Nothing about its tickets or time
+    /// changes: they are shown under the PSA's own name, as for any unlinked login. A login that is
+    /// linked to a portal user cannot be ignored. Audited.
+    /// </summary>
+    Task SetIgnoredAsync(Guid psaConnectionId, string externalTechnicianId, bool ignored, string? name, CancellationToken ct = default);
 }

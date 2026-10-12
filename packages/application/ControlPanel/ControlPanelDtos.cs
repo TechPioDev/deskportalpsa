@@ -28,7 +28,8 @@ public sealed record ClientUserDto(
     string DisplayName,
     bool IsCompanyAdministrator,
     bool IsActive,
-    IReadOnlyList<AccessGrantDto> Grants);
+    IReadOnlyList<AccessGrantDto> Grants,
+    bool SignInLinked = false);
 
 public sealed record InviteClientUserInput(
     string Email,

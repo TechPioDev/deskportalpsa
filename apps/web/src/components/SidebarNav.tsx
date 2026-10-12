@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, Ticket, Plug, Bell, User, BarChart3, Activity, ListChecks, ShieldCheck,
   SlidersHorizontal, HardDrive, Rocket, Users, Building2, KeyRound, type LucideIcon, Inbox, Sparkles, Clock, FileBarChart, ClipboardList, Smile, BookOpen, LifeBuoy, Briefcase, Scale,
-  CalendarClock,
+  CalendarClock, MailOpen,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { isStaffPermissions } from '@/lib/staff';
@@ -96,6 +96,8 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
       { href: '/dashboard/assistant', label: 'Assistant', icon: Sparkles, permissions: ['connections.manage'] },
       { href: '/dashboard/mappings', label: 'Field Mapping', icon: SlidersHorizontal, permissions: ['mappings.view'] },
       { href: '/dashboard/health', label: 'Integration Health', icon: Activity, permissions: ['integration.health.view'] },
+      { href: '/dashboard/outbound', label: 'Unsent changes', icon: Inbox, permissions: ['integration.health.view'] },
+      { href: '/dashboard/email-templates', label: 'E-mail wording', icon: MailOpen, permissions: ['org.manage', 'integration.health.view'], audience: 'staff' },
     ],
   },
   {
@@ -103,6 +105,7 @@ const NAV_GROUPS: { label: string | null; tone: Tone; items: NavItem[] }[] = [
     tone: 'sky',
     items: [
       { href: '/dashboard/users', label: 'Users', icon: Users, permissions: ['users.manage'] },
+      { href: '/dashboard/client-access', label: 'Client access', icon: Building2, permissions: ['users.manage'] },
       { href: '/dashboard/roles', label: 'Roles & Permissions', icon: ShieldCheck, permissions: ['roles.manage'] },
       { href: '/dashboard/permissions', label: 'Effective Permissions', icon: KeyRound, permissions: ['roles.manage'] },
       { href: '/dashboard/departments', label: 'Departments & Teams', icon: Building2, permissions: ['users.manage'] },

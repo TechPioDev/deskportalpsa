@@ -5,12 +5,24 @@ import {
   ConnectionSummarySchema, HealthSchema, JobSchema, AuditEntrySchema, AttachmentSchema,
   TechnicianDaySchema, type TechnicianDay,
   ConnectionFieldsSchema, FieldOptionSchema, type ConnectionFields,
+  ProviderCatalogEntrySchema, SyncStateSchema, SyncFailureSchema, SyncAnswerSchema,
+  type ProviderCatalogEntry, type SyncState, type SyncFailure,
+  ConnectionCheckReportSchema, ConnectionMappingCoverageSchema, ConnectionPreviewSchema, PreflightSchema,
+  ConnectionMappingHealthSchema, MappingPreviewRowSchema, MappingApplyResultSchema,
+  type ConnectionMappingHealth, type MappingPreviewRow, type MappingApplyResult,
+  MyCompanySchema, ClientUserAccessSchema, type MyCompany, type ClientUserAccess,
+  CustomFieldSettingsSchema, type CustomFieldSettings,
+  OutboundRowSchema, type OutboundRow,
+  ClassificationMappingSchema, ClassificationPreviewSchema, ClassificationApplyResultSchema,
+  type ClassificationMapping, type ClassificationPreview, type ClassificationApplyResult, type ClassificationRule,
+  type ConnectionCheckReport, type ConnectionMappingCoverage, type ConnectionPreview, type Preflight,
   MappingRuleSchema, type MappingRule, MappingSnapshotStatusSchema, type MappingSnapshotStatus,
   type TicketDetail, type TicketListItem, type Notification, type Profile,
   type TechnicianResponse, type TeamResponse, type TrendPoint,
   type ConnectionSummary, type Health, type Job, type AuditEntry,
   TicketFollowerSchema, type TicketFollower,
-  SavedViewSchema, type SavedView, type SavedViewFilters,
+  SavedViewSchema, type SavedView, type SavedViewFilters, InvitationLookupSchema, InvitationSchema, InvitationSentSchema, type Invitation,
+  EmailTemplateSchema, RenderedEmailSchema, EmailLogSchema, type EmailTemplate, type EmailLogEntry,
 } from './types';
 
 // All API calls go through the same-origin BFF proxy, which attaches the bearer token from the
@@ -359,6 +371,202 @@ export const TeamTodayPersonSchema = z.object({
 export const TeamTodaySchema = z.object({ date: z.string(), timeZone: z.string(), people: z.array(TeamTodayPersonSchema), plannedMinutes: z.number(), actualSeconds: z.number(), working: z.number(), paused: z.number() });
 export type TeamToday = z.infer<typeof TeamTodaySchema>;
 
+// ---- Workforce: analytics (Phase 7, internal only) ------------------------------------------------
+// Facts over a period for the people the viewer's schedule.view scope reaches. Minutes for capacity
+// and planned time, seconds for actual time (the screen rounds); a ratio with nothing to divide by is
+// null and shown as N/A. Nothing here is a score. Definitions: docs/workforce-scheduling/PHASE7_ANALYTICS_METRIC_SPEC.md.
+export const AnalyticsFiguresSchema = z.object({
+  capacityMinutes: z.number().nullable(), plannedMinutes: z.number(), plannedToDateMinutes: z.number(), tentativeMinutes: z.number(),
+  actualSeconds: z.number(), plannedActualSeconds: z.number(), reactiveActualSeconds: z.number(), liveSeconds: z.number(), billableSeconds: z.number(),
+  clientSeconds: z.number(), internalSeconds: z.number(), monitoringSeconds: z.number(),
+  scheduledUtilizationPercent: z.number().nullable(), capacityUtilizationPercent: z.number().nullable(), reactiveSharePercent: z.number().nullable(),
+  varianceMinutes: z.number().nullable(), variancePercent: z.number().nullable(),
+  absoluteVarianceMinutes: z.number(), estimateVariancePercent: z.number().nullable(), plannedItemsCompared: z.number(),
+  overCapacityMinutes: z.number(), overCapacityPersonDays: z.number(),
+  completedWork: z.number(), workItems: z.number(), reactiveWorkItems: z.number(),
+});
+export type AnalyticsFigures = z.infer<typeof AnalyticsFiguresSchema>;
+export const AnalyticsPeriodSchema = z.object({ key: z.string(), from: z.string(), to: z.string(), timeZone: z.string(), label: z.string(), days: z.number(), endsInFuture: z.boolean() });
+export type AnalyticsPeriod = z.infer<typeof AnalyticsPeriodSchema>;
+export const AnalyticsPersonSchema = z.object({
+  appUserId: z.string(), displayName: z.string(), teams: z.array(z.string()), isSchedulable: z.boolean(), hasSchedule: z.boolean(), timeZone: z.string(), figures: AnalyticsFiguresSchema,
+});
+export type AnalyticsPerson = z.infer<typeof AnalyticsPersonSchema>;
+export const AnalyticsGroupSchema = z.object({ key: z.string(), name: z.string(), people: z.number(), figures: AnalyticsFiguresSchema });
+export type AnalyticsGroup = z.infer<typeof AnalyticsGroupSchema>;
+export const AnalyticsDaySchema = z.object({ date: z.string(), figures: AnalyticsFiguresSchema });
+export type AnalyticsDay = z.infer<typeof AnalyticsDaySchema>;
+export const WorkNowSchema = z.object({ asOf: z.string(), open: z.number(), unscheduled: z.number(), overdue: z.number(), dueToday: z.number(), dueSoon: z.number(), unscheduledDue: z.number() });
+export const CapacityDemandSchema = z.object({ availableMinutes: z.number(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), projectedMinutes: z.number(), shortageMinutes: z.number(), remainingConfirmedMinutes: z.number() });
+export const HeatmapSchema = z.object({
+  dates: z.array(z.string()),
+  rows: z.array(z.object({ appUserId: z.string(), displayName: z.string(), cells: z.array(z.object({ capacityMinutes: z.number().nullable(), plannedMinutes: z.number(), actualSeconds: z.number() })) })),
+  peopleTotal: z.number(), truncated: z.boolean(), unavailable: z.string().nullable(),
+});
+export type Heatmap = z.infer<typeof HeatmapSchema>;
+export const AnalyticsOverviewSchema = z.object({
+  period: AnalyticsPeriodSchema, generatedAt: z.string(), totals: AnalyticsFiguresSchema, now: WorkNowSchema, demand: CapacityDemandSchema,
+  people: z.array(AnalyticsPersonSchema), teams: z.array(AnalyticsGroupSchema), clients: z.array(AnalyticsGroupSchema), sources: z.array(AnalyticsGroupSchema),
+  priorities: z.array(AnalyticsGroupSchema), workTypes: z.array(AnalyticsGroupSchema), daily: z.array(AnalyticsDaySchema), heatmap: HeatmapSchema,
+  sync: z.array(z.object({ connection: z.string(), lastSuccessfulSyncAt: z.string().nullable() })), notes: z.array(z.string()),
+  seesOthers: z.boolean(), canExport: z.boolean(),
+});
+export type AnalyticsOverview = z.infer<typeof AnalyticsOverviewSchema>;
+export const AnalyticsWorkItemSchema = z.object({
+  ticketId: z.string(), reference: z.string(), title: z.string().nullable(), clientName: z.string().nullable(), source: z.string(), priority: z.string().nullable(),
+  ticketVisible: z.boolean(), finished: z.boolean(), finishedAt: z.string().nullable(),
+  plannedMinutes: z.number(), tentativeMinutes: z.number(), actualSeconds: z.number(), reactiveActualSeconds: z.number(),
+  varianceMinutes: z.number().nullable(), variancePercent: z.number().nullable(), entries: z.number(), days: z.number(),
+});
+export type AnalyticsWorkItem = z.infer<typeof AnalyticsWorkItemSchema>;
+export const TechnicianAnalyticsSchema = z.object({
+  period: AnalyticsPeriodSchema, generatedAt: z.string(), person: AnalyticsPersonSchema,
+  clients: z.array(AnalyticsGroupSchema), sources: z.array(AnalyticsGroupSchema), workTypes: z.array(AnalyticsGroupSchema), priorities: z.array(AnalyticsGroupSchema),
+  daily: z.array(AnalyticsDaySchema), items: z.array(AnalyticsWorkItemSchema), itemsTruncated: z.boolean(), notes: z.array(z.string()),
+});
+export type TechnicianAnalytics = z.infer<typeof TechnicianAnalyticsSchema>;
+export const AnalyticsWorkRowSchema = z.object({
+  kind: z.string(), id: z.string().nullable(), date: z.string(), at: z.string().nullable(), appUserId: z.string().nullable(), personName: z.string().nullable(),
+  ticketId: z.string(), reference: z.string(), title: z.string().nullable(), clientName: z.string().nullable(), source: z.string(), priority: z.string().nullable(), ticketVisible: z.boolean(),
+  minutes: z.number().nullable(), seconds: z.number().nullable(), billable: z.boolean().nullable(), plannedWork: z.boolean().nullable(), status: z.string().nullable(),
+  dueAt: z.string().nullable(), finishedAt: z.string().nullable(),
+});
+export type AnalyticsWorkRow = z.infer<typeof AnalyticsWorkRowSchema>;
+export const AnalyticsWorkPageSchema = z.object({
+  kind: z.number(), period: AnalyticsPeriodSchema, total: z.number(), totalSeconds: z.number(), totalMinutes: z.number(), skip: z.number(), take: z.number(), rows: z.array(AnalyticsWorkRowSchema),
+});
+export type AnalyticsWorkPage = z.infer<typeof AnalyticsWorkPageSchema>;
+export const AnalyticsFilterOptionsSchema = z.object({
+  teams: z.array(WorkforceGroupSchema), departments: z.array(WorkforceGroupSchema),
+  people: z.array(z.object({ key: z.string(), name: z.string() })), clients: z.array(z.object({ key: z.string(), name: z.string() })),
+  sources: z.array(z.object({ key: z.string(), name: z.string() })), priorities: z.array(z.string()),
+  seesOthers: z.boolean(), canExport: z.boolean(), timeZone: z.string(),
+});
+export type AnalyticsFilterOptions = z.infer<typeof AnalyticsFilterOptionsSchema>;
+/** The dashboard's filter context, as the query string carries it; the server resolves the period in the organization's zone. */
+export type AnalyticsQuery = {
+  period?: string | null; from?: string | null; to?: string | null;
+  teamId?: string | null; departmentId?: string | null; appUserId?: string | null; clientId?: string | null; source?: string | null; priority?: string | null; kind?: string | null;
+};
+export type AnalyticsWorkKind = 'actual' | 'planned-actual' | 'reactive' | 'planned' | 'tentative' | 'completed' | 'open' | 'unscheduled' | 'overdue';
+export type AnalyticsExportReport = 'technicians' | 'teams' | 'clients' | 'sources' | 'daily' | 'work';
+function analyticsQs(q: Record<string, string | null | undefined>): URLSearchParams {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v) qs.set(k, v);
+  return qs;
+}
+
+// ---- Workforce: management insights and reports (Phase 8, internal only) --------------------------
+// What is ahead (capacity against confirmed, tentative and estimated unscheduled demand), what changed
+// against the period before, what the optional quality data supports, and what needs attention.
+// Deterministic sums over records. Definitions: docs/workforce-scheduling/PHASE8_MANAGEMENT_INSIGHTS_DESIGN.md.
+export const ForecastFiguresSchema = z.object({
+  capacityMinutes: z.number().nullable(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), unscheduledMinutes: z.number(), unscheduledItems: z.number(), unestimatedItems: z.number(),
+  projectedMinutes: z.number(), confirmedRemainingMinutes: z.number().nullable(), gapMinutes: z.number().nullable(), confirmedPercent: z.number().nullable(), projectedPercent: z.number().nullable(),
+});
+export type ForecastFigures = z.infer<typeof ForecastFiguresSchema>;
+/** Severity: 1 info, 2 watch, 3 attention, 4 critical. Set by fixed thresholds; every statement carries its rule and its numbers. */
+export const InsightSchema = z.object({
+  key: z.string(), severity: z.number(), title: z.string(), rule: z.string(), facts: z.array(z.object({ label: z.string(), value: z.string() })),
+  list: z.string().nullable(), targetKind: z.string().nullable(), targetId: z.string().nullable(),
+});
+export type Insight = z.infer<typeof InsightSchema>;
+export const ForecastGroupSchema = z.object({ key: z.string(), name: z.string(), people: z.number(), figures: ForecastFiguresSchema });
+export type ForecastGroup = z.infer<typeof ForecastGroupSchema>;
+export const ForecastPersonSchema = z.object({ appUserId: z.string(), displayName: z.string(), teams: z.array(z.string()), isSchedulable: z.boolean(), hasSchedule: z.boolean(), figures: ForecastFiguresSchema });
+export type ForecastPerson = z.infer<typeof ForecastPersonSchema>;
+export const SkillCapacitySchema = z.object({
+  skillId: z.string(), name: z.string(), demandMinutes: z.number(), demandItems: z.number(), skilledPeople: z.number(), capacityMinutes: z.number(), gapMinutes: z.number(), people: z.array(z.string()),
+});
+export type SkillCapacity = z.infer<typeof SkillCapacitySchema>;
+export const ForecastSchema = z.object({
+  window: AnalyticsPeriodSchema, generatedAt: z.string(), totals: ForecastFiguresSchema, unscheduledOverdueMinutes: z.number(), unscheduledNoDateMinutes: z.number(),
+  coverage: z.object({ openItems: z.number(), estimatedItems: z.number(), unestimatedOpenItems: z.number(), estimatedMinutes: z.number(), scheduledMinutes: z.number(), unscheduledMinutes: z.number(), coveragePercent: z.number().nullable() }),
+  dataQuality: z.object({ people: z.number(), peopleWithoutSchedule: z.number(), peopleNotOffered: z.number(), openHeldItems: z.number(), openWithoutHolder: z.number().nullable(), estimatedWithSkill: z.number(), finishedWithoutDate: z.number() }),
+  atRisk: z.object({ overdue: z.number(), capacityShortfall: z.number(), dueInWindow: z.number() }),
+  daily: z.array(z.object({ date: z.string(), capacityMinutes: z.number().nullable(), confirmedMinutes: z.number(), tentativeMinutes: z.number(), unscheduledDueMinutes: z.number() })),
+  teams: z.array(ForecastGroupSchema), people: z.array(ForecastPersonSchema), unassigned: ForecastFiguresSchema.nullable(),
+  clients: z.array(ForecastGroupSchema), sources: z.array(ForecastGroupSchema), skills: z.array(SkillCapacitySchema),
+  recurring: z.object({
+    definitions: z.number(), occurrences: z.number(),
+    items: z.array(z.object({ id: z.string(), title: z.string(), schedule: z.string(), assigneeName: z.string().nullable(), occurrences: z.number(), next: z.string().nullable() })),
+  }).nullable(),
+  attention: z.array(InsightSchema), notes: z.array(z.string()), seesOthers: z.boolean(), canExport: z.boolean(), canSeeHealth: z.boolean(),
+});
+export type Forecast = z.infer<typeof ForecastSchema>;
+export const ForecastWorkRowSchema = z.object({
+  kind: z.string(), id: z.string().nullable(), ticketId: z.string(), reference: z.string(), title: z.string().nullable(), clientName: z.string().nullable(), source: z.string(), priority: z.string().nullable(),
+  ticketVisible: z.boolean(), appUserId: z.string().nullable(), personName: z.string().nullable(), teamName: z.string().nullable(), date: z.string().nullable(), at: z.string().nullable(),
+  minutes: z.number().nullable(), requiredMinutes: z.number().nullable(), allocatedMinutes: z.number().nullable(), remainingMinutes: z.number().nullable(),
+  dueAt: z.string().nullable(), freeBeforeDueMinutes: z.number().nullable(), risk: z.string().nullable(), skillName: z.string().nullable(), status: z.string().nullable(),
+});
+export type ForecastWorkRow = z.infer<typeof ForecastWorkRowSchema>;
+export const ForecastWorkPageSchema = z.object({
+  kind: z.number(), window: AnalyticsPeriodSchema, total: z.number(), totalMinutes: z.number(), skip: z.number(), take: z.number(), rows: z.array(ForecastWorkRowSchema),
+});
+export type ForecastWorkPage = z.infer<typeof ForecastWorkPageSchema>;
+export type ForecastWorkList = 'confirmed' | 'tentative' | 'unscheduled' | 'unestimated' | 'at-risk' | 'overdue' | 'unassigned' | 'skill';
+export const ComparisonSchema = z.object({
+  key: z.string(), label: z.string(), unit: z.string(), current: z.number().nullable(), previous: z.number().nullable(), change: z.number().nullable(), changePercent: z.number().nullable(),
+});
+export type Comparison = z.infer<typeof ComparisonSchema>;
+export const GroupComparisonSchema = z.object({
+  key: z.string(), name: z.string(), currentSeconds: z.number(), previousSeconds: z.number(), changeSeconds: z.number(), changePercent: z.number().nullable(),
+  currentReactiveSeconds: z.number(), currentCompleted: z.number(), previousCompleted: z.number(), currentWorkItems: z.number(),
+});
+export type GroupComparison = z.infer<typeof GroupComparisonSchema>;
+export const EstimateVarianceRowSchema = z.object({
+  key: z.string(), name: z.string(), plannedMinutes: z.number(), actualMinutes: z.number(), varianceMinutes: z.number(), variancePercent: z.number().nullable(),
+  absoluteVarianceMinutes: z.number(), estimateVariancePercent: z.number().nullable(), ticketDays: z.number(),
+});
+export type EstimateVarianceRow = z.infer<typeof EstimateVarianceRowSchema>;
+/** Quality: 0 not available, 1 partial, 2 high: how complete the data behind the figure is, with the reason. */
+export const QualitySignalSchema = z.object({
+  key: z.string(), name: z.string(), definition: z.string(), quality: z.number(), qualityReason: z.string(),
+  met: z.number().nullable(), eligible: z.number().nullable(), percent: z.number().nullable(), population: z.number(),
+  previousMet: z.number().nullable(), previousEligible: z.number().nullable(), previousPercent: z.number().nullable(),
+});
+export type QualitySignal = z.infer<typeof QualitySignalSchema>;
+export const TrendsSchema = z.object({
+  current: AnalyticsPeriodSchema, previous: AnalyticsPeriodSchema, generatedAt: z.string(), totals: z.array(ComparisonSchema),
+  weeks: z.array(z.object({
+    from: z.string(), to: z.string(), partial: z.boolean(), actualSeconds: z.number(), plannedActualSeconds: z.number(), reactiveSeconds: z.number(),
+    reactiveSharePercent: z.number().nullable(), completed: z.number(), workItems: z.number(),
+  })),
+  clients: z.array(GroupComparisonSchema), sources: z.array(GroupComparisonSchema),
+  byCategory: z.array(EstimateVarianceRowSchema), byClient: z.array(EstimateVarianceRowSchema), bySource: z.array(EstimateVarianceRowSchema),
+  quality: z.array(QualitySignalSchema), attention: z.array(InsightSchema),
+  sync: z.array(z.object({ connection: z.string(), lastSuccessfulSyncAt: z.string().nullable() })), notes: z.array(z.string()),
+});
+export type Trends = z.infer<typeof TrendsSchema>;
+export const MappingCoverageSchema = z.object({ mapped: z.number(), total: z.number(), percent: z.number().nullable(), unmapped: z.array(z.string()) });
+export const ConnectionInsightSchema = z.object({
+  connectionId: z.string(), name: z.string(), provider: z.string(), status: z.string(), isEnabled: z.boolean(), lastSuccessfulSyncAt: z.string().nullable(), lastHealthCheckAt: z.string().nullable(),
+  hasError: z.boolean(), stale: z.boolean(), tickets: z.number(), statusMapping: MappingCoverageSchema, priorityMapping: MappingCoverageSchema, technicianLinks: MappingCoverageSchema,
+  placeholderClientTickets: z.number(), ticketsInSyncError: z.number(), timeEntriesFailed: z.number(), timeEntriesPending: z.number(),
+});
+export type ConnectionInsight = z.infer<typeof ConnectionInsightSchema>;
+export const IntegrationInsightsSchema = z.object({ generatedAt: z.string(), connections: z.array(ConnectionInsightSchema), attention: z.array(InsightSchema) });
+export type IntegrationInsights = z.infer<typeof IntegrationInsightsSchema>;
+export const WorkforceReportDefinitionSchema = z.object({
+  key: z.string(), category: z.string(), title: z.string(), description: z.string(), periodKind: z.string(), filters: z.array(z.string()), needsIntegrationHealth: z.boolean(),
+});
+export type WorkforceReportDefinition = z.infer<typeof WorkforceReportDefinitionSchema>;
+const ReportFactSchema = z.object({ label: z.string(), value: z.string() });
+/** A report as previewed. A cell is text, a number or null (not applicable); a column's kind says how to show it. */
+export const WorkforceReportSchema = z.object({
+  definition: WorkforceReportDefinitionSchema, period: AnalyticsPeriodSchema.nullable(), generatedAt: z.string(), applied: z.array(ReportFactSchema), summary: z.array(ReportFactSchema),
+  columns: z.array(z.object({ key: z.string(), label: z.string(), kind: z.string() })), rows: z.array(z.array(z.union([z.string(), z.number(), z.null()]))),
+  totalRows: z.number(), truncated: z.boolean(), notes: z.array(z.string()),
+  sync: z.array(z.object({ connection: z.string(), lastSuccessfulSyncAt: z.string().nullable() })), canExport: z.boolean(),
+});
+export type WorkforceReport = z.infer<typeof WorkforceReportSchema>;
+/** What insights and reports are asked for: a forecast window, a history period or a comparison, with the same people and work filters as the dashboard. */
+export type InsightsQuery = {
+  window?: string | null; from?: string | null; to?: string | null; compare?: string | null; period?: string | null; by?: string | null;
+  teamId?: string | null; departmentId?: string | null; appUserId?: string | null; clientId?: string | null; source?: string | null; priority?: string | null;
+};
+
 // ---- Workforce: advanced planning (internal only) ----------------------------------------------
 export const PlanningRequirementSchema = z.object({
   ticketId: z.string(), requiredMinutes: z.number().nullable(), earliestStart: z.string().nullable(), latestEnd: z.string().nullable(), splittable: z.boolean(),
@@ -546,8 +754,26 @@ export const api = {
         queueOrBoard: z.string().nullable(),
       }).passthrough(),
       { method: 'PUT', body: JSON.stringify(body) }),
+  /** Moves a ticket's due date later, with a reason. A PSA ticket's goes to the PSA first. */
+  extendDueDate: (id: string, dueAt: string, reason: string) =>
+    request(`/api/tickets/${id}/due-date`, z.object({
+      dueAt: z.string().nullable(), originalDueAt: z.string().nullable(), extensions: z.number(),
+      lastExtendedAt: z.string().nullable(), lastExtendedByName: z.string().nullable(), lastReason: z.string().nullable(),
+    }), { method: 'POST', body: JSON.stringify({ dueAt, reason }) }),
   updateTicketStatus: (id: string, status: string, resolution?: string | null) =>
-    request(`/api/tickets/${id}/status`, z.object({ portalStatus: z.string() }), { method: 'POST', body: JSON.stringify({ status, resolution: resolution || null }) }),
+    // `queued` when the PSA could not be reached: the ticket keeps the status it has, and what was
+    // asked for waits to be sent. `portalStatus` is then the status the ticket STILL has.
+    request(`/api/tickets/${id}/status`,
+      z.object({ portalStatus: z.string(), queued: z.boolean().default(false), requested: z.string().nullable().default(null) }),
+      { method: 'POST', body: JSON.stringify({ status, resolution: resolution || null }) }),
+  /** Sends a change that has not reached the PSA round again, or brings a waiting one forward to now. */
+  retryOutbound: (ticketId: string, operationId: string) =>
+    request(`/api/tickets/${ticketId}/outbound/${operationId}/retry`, z.object({ id: z.string(), state: z.string() }), { method: 'POST' }),
+  /** Lets go of a change that has not reached the PSA. It is not sent. */
+  discardOutbound: (ticketId: string, operationId: string) =>
+    request(`/api/tickets/${ticketId}/outbound/${operationId}`, z.void(), { method: 'DELETE' }),
+  /** Every change made here that a PSA does not have: failed first, then the longest waiting. */
+  outboundList: () => request('/api/admin/outbound', z.array(OutboundRowSchema)) as Promise<OutboundRow[]>,
   /** A board ticket's details, sent whole. */
   editBoardTicket: (id: string, body: BoardTicketEdit) =>
     request(`/api/boards/tickets/${id}`, z.unknown(), { method: 'PUT', body: JSON.stringify(body) }),
@@ -747,6 +973,44 @@ export const api = {
     if (q.matchAll === false) qs.set('matchAll', 'false');
     return request(`/api/workforce/team-today?${qs}`, TeamTodaySchema) as Promise<TeamToday>;
   },
+  // ── Workforce analytics (Phase 7) ── reads only; the export needs its own permission.
+  analyticsFilters: () => request('/api/workforce/analytics/filters', AnalyticsFilterOptionsSchema) as Promise<AnalyticsFilterOptions>,
+  analyticsOverview: (q: AnalyticsQuery) => request(`/api/workforce/analytics/overview?${analyticsQs(q)}`, AnalyticsOverviewSchema) as Promise<AnalyticsOverview>,
+  analyticsTechnician: (appUserId: string, q: AnalyticsQuery) =>
+    request(`/api/workforce/analytics/people/${appUserId}?${analyticsQs(q)}`, TechnicianAnalyticsSchema) as Promise<TechnicianAnalytics>,
+  analyticsWork: (q: AnalyticsQuery, kind: AnalyticsWorkKind, skip = 0, take = 50) => {
+    const qs = analyticsQs(q);
+    qs.set('list', kind);
+    qs.set('skip', String(skip));
+    qs.set('take', String(take));
+    return request(`/api/workforce/analytics/work?${qs}`, AnalyticsWorkPageSchema) as Promise<AnalyticsWorkPage>;
+  },
+  /** A CSV through the BFF (which attaches the session); fetched as a blob by the page. */
+  analyticsExportUrl: (q: AnalyticsQuery, report: AnalyticsExportReport) => {
+    const qs = analyticsQs(q);
+    qs.set('report', report);
+    return `${BFF_BASE}/api/workforce/analytics/export?${qs}`;
+  },
+  // ── Management insights and reports (Phase 8) ── reads only; an export needs its own permission.
+  insightsForecast: (q: InsightsQuery) => request(`/api/workforce/insights/forecast?${analyticsQs(q)}`, ForecastSchema) as Promise<Forecast>,
+  insightsForecastWork: (q: InsightsQuery, list: ForecastWorkList, skillId: string | null, skip = 0, take = 50) => {
+    const qs = analyticsQs(q);
+    qs.set('list', list);
+    if (skillId) qs.set('skillId', skillId);
+    qs.set('skip', String(skip));
+    qs.set('take', String(take));
+    return request(`/api/workforce/insights/forecast/work?${qs}`, ForecastWorkPageSchema) as Promise<ForecastWorkPage>;
+  },
+  insightsTrends: (q: InsightsQuery) => request(`/api/workforce/insights/trends?${analyticsQs(q)}`, TrendsSchema) as Promise<Trends>,
+  insightsHealth: () => request('/api/workforce/insights/health', IntegrationInsightsSchema) as Promise<IntegrationInsights>,
+  workforceReports: () => request('/api/workforce/reports', z.array(WorkforceReportDefinitionSchema)) as Promise<WorkforceReportDefinition[]>,
+  workforceReport: (key: string, q: InsightsQuery) => request(`/api/workforce/reports/${encodeURIComponent(key)}?${analyticsQs(q)}`, WorkforceReportSchema) as Promise<WorkforceReport>,
+  /** A report file through the BFF (which attaches the session); fetched as a blob by the page. */
+  workforceReportExportUrl: (key: string, q: InsightsQuery, format: 'csv' | 'xlsx') => {
+    const qs = analyticsQs(q);
+    qs.set('format', format);
+    return `${BFF_BASE}/api/workforce/reports/${encodeURIComponent(key)}/export?${qs}`;
+  },
   // ── Advanced planning ── tentative work, what the work needs, the queue, previews.
   confirmPlannedWork: (id: string, body: { version: number; overrideReason?: string | null }) =>
     request(`/api/workforce/plan/${id}/confirm`, WorkAllocationSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<WorkAllocation>,
@@ -793,6 +1057,21 @@ export const api = {
   storageUsage: () =>
     request('/api/admin/storage', z.object({ usedBytes: z.number(), fileCount: z.number(), ticketCount: z.number() })),
   profile: () => request('/api/profile', ProfileSchema) as Promise<Profile>,
+  /** The companies the signed-in client user can act in: their own first. Empty for staff. */
+  myCompanies: () => request('/api/my-companies', z.array(MyCompanySchema)) as Promise<MyCompany[]>,
+  /** Staff: client users with the further companies each has been given. */
+  clientAccessUsers: (search?: string) =>
+    request(`/api/admin/client-access/users${search && search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''}`,
+      z.array(ClientUserAccessSchema)) as Promise<ClientUserAccess[]>,
+  clientAccessCompanies: () =>
+    request('/api/admin/client-access/companies', z.array(z.object({ id: z.string(), name: z.string() }))),
+  /** Gives a client user a further company, or changes what the grant gives. */
+  setClientCompanyAccess: (clientUserId: string, companyId: string, grant: { seesAllTickets: boolean; canCreate: boolean }) =>
+    request(`/api/admin/client-access/users/${clientUserId}/companies/${companyId}`, ClientUserAccessSchema,
+      { method: 'PUT', body: JSON.stringify(grant) }) as Promise<ClientUserAccess>,
+  removeClientCompanyAccess: (clientUserId: string, companyId: string) =>
+    request(`/api/admin/client-access/users/${clientUserId}/companies/${companyId}`, ClientUserAccessSchema,
+      { method: 'DELETE' }) as Promise<ClientUserAccess>,
   updateProfile: (body: { displayName: string; email: string }) =>
     request('/api/profile', ProfileSchema, { method: 'PUT', body: JSON.stringify(body) }) as Promise<Profile>,
 
@@ -844,13 +1123,75 @@ export const api = {
       z.object({ success: z.boolean(), message: z.string().nullable(), latencyMs: z.number() }),
       { method: 'POST' }),
   syncConnection: (id: string, full = false) =>
-    request(`/api/admin/connections/${id}/sync${full ? '?full=true' : ''}`,
-      z.object({ fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number() }),
-      { method: 'POST' }),
+    request(`/api/admin/connections/${id}/sync${full ? '?full=true' : ''}`, SyncAnswerSchema, { method: 'POST' }),
   updateConnection: (id: string, body: {
     name: string; apiEndpoint: string; tenantIdentifier?: string; timeZone?: string;
     isEnabled: boolean; credentials?: Record<string, string>; logoUrl?: string;
   }) => request(`/api/admin/connections/${id}`, ConnectionSummarySchema, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Every PSA the portal names: what each needs to connect, and which have no connector yet. */
+  connectionProviders: () =>
+    request('/api/admin/connections/providers', z.array(ProviderCatalogEntrySchema)) as Promise<ProviderCatalogEntry[]>,
+  archivedConnections: () =>
+    request('/api/admin/connections/archived', z.array(ConnectionSummarySchema)) as Promise<ConnectionSummary[]>,
+  /** The test, line by line. It only reads: nothing is written to the PSA. */
+  checkConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/check`, ConnectionCheckReportSchema, { method: 'POST' }) as Promise<ConnectionCheckReport>,
+  connectionMappingCoverage: (id: string) =>
+    request(`/api/admin/connections/${id}/mapping-coverage`, ConnectionMappingCoverageSchema) as Promise<ConnectionMappingCoverage>,
+  /** How well the connection's mapping covers what its PSA sends, worked out from its tickets each time. */
+  connectionMappingHealth: (id: string) =>
+    request(`/api/admin/connections/${id}/mapping-health`, ConnectionMappingHealthSchema) as Promise<ConnectionMappingHealth>,
+  connectionMappingPreview: (id: string, take = 10) =>
+    request(`/api/admin/connections/${id}/mapping-preview?take=${take}`, z.array(MappingPreviewRowSchema)) as Promise<MappingPreviewRow[]>,
+  /** Re-maps imported tickets still showing the PSA's own word for a value a rule now maps. */
+  applyConnectionMapping: (id: string) =>
+    request(`/api/admin/connections/${id}/mapping-apply`, MappingApplyResultSchema, { method: 'POST' }) as Promise<MappingApplyResult>,
+  /** A connection's PSA custom fields and what has been decided about each. */
+  customFields: (id: string) =>
+    request(`/api/admin/connections/${id}/custom-fields`, CustomFieldSettingsSchema) as Promise<CustomFieldSettings>,
+  /** Saves decisions about some fields. A field left out keeps what was decided before. */
+  saveCustomFields: (id: string, changes: { key: string; import: boolean; portalLabel: string | null; clientVisible: boolean }[]) =>
+    request(`/api/admin/connections/${id}/custom-fields`, CustomFieldSettingsSchema,
+      { method: 'PUT', body: JSON.stringify(changes) }) as Promise<CustomFieldSettings>,
+  /** What a connection's PSA classification means in the portal's words: the rules, and what tickets are filed under. */
+  classificationMapping: (id: string) =>
+    request(`/api/admin/connections/${id}/classification`, ClassificationMappingSchema) as Promise<ClassificationMapping>,
+  /** Replaces the connection's rules. Tickets already here are not touched. */
+  saveClassificationMapping: (id: string, rules: ClassificationRule[]) =>
+    request(`/api/admin/connections/${id}/classification`, ClassificationMappingSchema,
+      { method: 'PUT', body: JSON.stringify(rules) }) as Promise<ClassificationMapping>,
+  /** What these rules would do. Nothing is saved and nothing is changed. */
+  previewClassificationMapping: (id: string, rules: ClassificationRule[]) =>
+    request(`/api/admin/connections/${id}/classification/preview`, ClassificationPreviewSchema,
+      { method: 'POST', body: JSON.stringify(rules) }) as Promise<ClassificationPreview>,
+  /** Gives the tickets already here what the saved rules say. */
+  applyClassificationMapping: (id: string) =>
+    request(`/api/admin/connections/${id}/classification/apply`, ClassificationApplyResultSchema, { method: 'POST' }) as Promise<ClassificationApplyResult>,
+  connectionPreview: (id: string) =>
+    request(`/api/admin/connections/${id}/preview`, ConnectionPreviewSchema) as Promise<ConnectionPreview>,
+  connectionPreflight: (id: string) =>
+    request(`/api/admin/connections/${id}/preflight`, PreflightSchema) as Promise<Preflight>,
+  /** Switches a new connection on for the first time. The server refuses until a test has passed. */
+  activateConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/activate`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  setConnectionEnabled: (id: string, enabled: boolean) =>
+    request(`/api/admin/connections/${id}/enabled`, z.void(), { method: 'POST', body: JSON.stringify(enabled) }),
+  pauseConnectionSync: (id: string) =>
+    request(`/api/admin/connections/${id}/pause-sync`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  resumeConnectionSync: (id: string) =>
+    request(`/api/admin/connections/${id}/resume-sync`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  archiveConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/archive`, z.void(), { method: 'POST' }),
+  restoreConnection: (id: string) =>
+    request(`/api/admin/connections/${id}/restore`, ConnectionSummarySchema, { method: 'POST' }) as Promise<ConnectionSummary>,
+  connectionSyncState: (id: string) =>
+    request(`/api/admin/connections/${id}/sync-state?runs=10`, SyncStateSchema) as Promise<SyncState>,
+  connectionSyncFailures: (id: string) =>
+    request(`/api/admin/connections/${id}/sync-failures`, z.array(SyncFailureSchema)) as Promise<SyncFailure[]>,
+  retrySyncFailure: (id: string, failureId: string) =>
+    request(`/api/admin/connections/${id}/sync-failures/${failureId}/retry`, z.void(), { method: 'POST' }),
+  dismissSyncFailure: (id: string, failureId: string) =>
+    request(`/api/admin/connections/${id}/sync-failures/${failureId}/dismiss`, z.void(), { method: 'POST' }),
   connectionFields: (id: string) =>
     request(`/api/admin/connections/${id}/fields`, ConnectionFieldsSchema) as Promise<ConnectionFields>,
   // Read-only pre-flight so a time-entry misconfiguration is found here, not when a technician's
@@ -879,6 +1220,17 @@ export const api = {
     note?: string,
   ) => request(`/api/admin/mappings${note ? `?note=${encodeURIComponent(note)}` : ''}`,
     MappingRuleSchema, { method: 'POST', body: JSON.stringify(body) }),
+  /** The portal's own statuses and priorities: what a PSA's values are mapped to. */
+  mappingVocabulary: () =>
+    request('/api/admin/mappings/vocabulary', z.object({ statuses: z.array(z.string()), priorities: z.array(z.string()) })),
+  /**
+   * What values a connection's PSA sends should become in the portal. Any number, checked and
+   * saved together; a null portal value takes the mapping away.
+   */
+  setInboundMappings: (connectionId: string, changes: { field: string; value: string; portalValue: string | null }[], note?: string) =>
+    request(`/api/admin/mappings/inbound/${connectionId}${note ? `?note=${encodeURIComponent(note)}` : ''}`,
+      z.object({ changed: z.number(), changes: z.array(z.string()).default([]) }),
+      { method: 'PUT', body: JSON.stringify(changes) }),
   deleteMapping: (ruleId: string) =>
     request(`/api/admin/mappings/${ruleId}`, z.unknown(), { method: 'DELETE' }),
   mappingSnapshotStatus: (provider: number, connectionId: string) =>
@@ -1106,6 +1458,34 @@ export const api = {
     method: 'POST', body: JSON.stringify(body),
   }) as Promise<ImportResult>,
 
+  // ---- sign-in invitations: the link a person sets their password through ----
+  /** The page at a link. 404 when the link is unknown or revoked, which read the same. */
+  invitationLookup: (token: string) => request(`/api/public/invitations/${encodeURIComponent(token)}`, InvitationLookupSchema),
+  invitationAccept: (token: string, password: string) =>
+    request(`/api/public/invitations/${encodeURIComponent(token)}/accept`, z.object({ email: z.string(), kind: z.string(), signInPath: z.string() }),
+      { method: 'POST', body: JSON.stringify({ password }) }),
+  /** Always accepted. A mail goes only where the address has a sign-in. */
+  passwordResetRequest: (email: string) =>
+    request('/api/public/password-reset', z.object({ message: z.string() }), { method: 'POST', body: JSON.stringify({ email }) }),
+  passwordResetLookup: (token: string) => request(`/api/public/password-reset/${encodeURIComponent(token)}`, InvitationLookupSchema),
+  passwordReset: (token: string, password: string) =>
+    request(`/api/public/password-reset/${encodeURIComponent(token)}`, z.object({ email: z.string(), kind: z.string(), signInPath: z.string() }),
+      { method: 'POST', body: JSON.stringify({ password }) }),
+  inviteStaffUser: (id: string) => request(`/api/admin/users/${id}/invite`, InvitationSentSchema, { method: 'POST' }),
+  inviteAllPendingStaff: () =>
+    request('/api/admin/users/invite-pending', z.object({ invited: z.number(), mailed: z.number(), failed: z.array(z.string()) }), { method: 'POST' }),
+  invitations: () => request('/api/admin/invitations', z.array(InvitationSchema)) as Promise<Invitation[]>,
+  revokeInvitation: (id: string) => request(`/api/admin/invitations/${id}`, z.void(), { method: 'DELETE' }),
+  inviteClientUser: (id: string) => request(`/api/admin/client-users/${id}/invite`, InvitationSentSchema, { method: 'POST' }),
+  // ---- the organization's e-mail wording ----
+  emailTemplates: () => request('/api/admin/email/templates', z.array(EmailTemplateSchema)) as Promise<EmailTemplate[]>,
+  emailTemplateSave: (key: string, body: { subject: string; body: string; buttonLabel: string | null }) =>
+    request(`/api/admin/email/templates/${key}`, EmailTemplateSchema, { method: 'PUT', body: JSON.stringify(body) }),
+  emailTemplateReset: (key: string) => request(`/api/admin/email/templates/${key}`, EmailTemplateSchema, { method: 'DELETE' }),
+  emailTemplatePreview: (key: string, unsaved: { subject: string; body: string; buttonLabel: string | null } | null) =>
+    request(`/api/admin/email/templates/${key}/preview`, RenderedEmailSchema, { method: 'POST', body: JSON.stringify(unsaved) }),
+  emailTemplateTest: (key: string) => request(`/api/admin/email/templates/${key}/test`, RenderedEmailSchema, { method: 'POST' }),
+  emailLog: () => request('/api/admin/email/templates/log?take=100', z.array(EmailLogSchema)) as Promise<EmailLogEntry[]>,
   createStaffUser: (body: { displayName: string; email: string; roleIds: string[] }) =>
     request('/api/admin/users', UserSummarySchema, { method: 'POST', body: JSON.stringify(body) }),
   updateStaffUser: (id: string, body: { displayName: string; email: string; phoneNumber?: string | null; location?: string | null; managerId?: string | null }) =>
@@ -1176,6 +1556,7 @@ export const api = {
     return request(`/api/dashboard/coverage${suffix}`, z.object({
       technicians: z.array(z.object({
         technicianExternalId: z.string(),
+        psaConnectionId: z.string().nullable().default(null),
         technicianName: z.string().nullable(),
         psaHours: z.number(),
         psaEntries: z.number(),
@@ -1197,11 +1578,15 @@ export const api = {
       name: z.string(),
       email: z.string(),
       isActive: z.boolean(),
-      link: z.number(),            // 0 not in portal, 1 matched by email, 2 linked
+      link: z.number(),            // 0 not in portal, 1 matched by email, 2 linked, 3 ignored (left alone on purpose)
       portalUserId: z.string().nullable(),
       canProvision: z.boolean(),
       blocker: z.string().nullable(),
     }))),
+  /** Says a PSA login is to be left alone (an API account, someone who left), or takes that back. */
+  setPsaTechnicianIgnored: (psaConnectionId: string, externalTechnicianId: string, ignored: boolean, name?: string | null) =>
+    request(`/api/admin/psa-technicians/${psaConnectionId}/${encodeURIComponent(externalTechnicianId)}/ignored`, z.void(),
+      { method: 'PUT', body: JSON.stringify({ ignored, name: name ?? null }) }),
   provisionTechnician: (psaConnectionId: string, externalTechnicianId: string) =>
     request(`/api/admin/psa-technicians/${psaConnectionId}/${encodeURIComponent(externalTechnicianId)}`,
       z.object({ id: z.string(), email: z.string(), displayName: z.string() }).passthrough(),
@@ -1267,7 +1652,10 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ clientCompanyId, body }) }) as Promise<Instruction>,
   cpUsers: () => request('/api/control-panel/users', z.array(ClientUserSchema)) as Promise<ClientUser[]>,
   cpInviteUser: (body: { email: string; displayName: string; isCompanyAdministrator: boolean }) =>
-    request('/api/control-panel/users', ClientUserSchema, { method: 'POST', body: JSON.stringify(body) }) as Promise<ClientUser>,
+    request('/api/control-panel/users', z.object({ user: ClientUserSchema, invitation: InvitationSentSchema }), { method: 'POST', body: JSON.stringify(body) }),
+  /** A fresh invitation link for a user of this company; the old one stops working. */
+  cpReinviteUser: (id: string) =>
+    request(`/api/control-panel/users/${id}/invite`, InvitationSentSchema, { method: 'POST' }),
   cpSetUserActive: (id: string, active: boolean) =>
     request(`/api/control-panel/users/${id}/active`, z.unknown(), { method: 'POST', body: JSON.stringify({ active }) }),
   cpSetUserAccess: (id: string, body: { isCompanyAdministrator: boolean; grants: { section: string; clientCompanyId: string | null }[] }) =>
@@ -1526,6 +1914,8 @@ const ClientUserSchema = z.object({
   isCompanyAdministrator: z.boolean(),
   isActive: z.boolean(),
   grants: z.array(AccessGrantSchema),
+  // False until the person has set a password through their invitation (or signed in once).
+  signInLinked: z.boolean().default(false),
 });
 export type ClientUser = z.infer<typeof ClientUserSchema>;
 

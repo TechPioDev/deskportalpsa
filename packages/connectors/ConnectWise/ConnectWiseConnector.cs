@@ -29,6 +29,13 @@ public sealed class ConnectWiseConnector(
     Action<string>? observeTicketClosure = null)
     : IServiceManagementConnector
 {
+    /// <summary>
+    /// The pace a connection to ConnectWise keeps when it has a lot to read. ConnectWise answers a
+    /// caller it wants to slow down with a 429 and a Retry-After, which is obeyed; this keeps a
+    /// large import from depending on being told.
+    /// </summary>
+    public const int RequestsPerMinute = 120;
+
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
     public ProviderType Provider => ProviderType.ConnectWisePsa;
@@ -41,7 +48,11 @@ public sealed class ConnectWiseConnector(
             SupportsAttachments = true, SupportsAttachmentDownload = true, SupportsAttachmentSweep = false,
             SupportsTimeEntries = true, SupportsAssets = true, SupportsContracts = true,
             SupportsHolidayCalendars = true,
-            SupportsSlaData = true, SupportsCustomFields = true, SupportsInboundWebhooks = true,
+            // Custom fields: read off each ticket, which carries every one of the tenant's own
+            // fields. Inbound webhooks: not yet - what this connector validates is the portal's own
+            // signed frame, which ConnectWise cannot send; its callbacks are not understood until
+            // the webhook slice.
+            SupportsSlaData = true, SupportsCustomFields = true, SupportsInboundWebhooks = false,
             SupportsOutboundWebhooks = true, SupportsIncrementalSync = true, SupportsBulkRead = true,
             SupportsBulkWrite = false, SupportsCompanies = true, SupportsContacts = true,
             SupportsTechnicians = true, SupportsTeams = true, SupportsQueues = true,
@@ -168,19 +179,18 @@ public sealed class ConnectWiseConnector(
         return rows;
     }
 
-    public async Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    public async Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default)
     {
-        // ConnectWise pages by number rather than by cursor, so the cursor carries the next page.
-        // Ordered by id: without an explicit order the provider is free to return rows in a
-        // different arrangement between requests, and page 2 of a shifting order silently skips
-        // tickets while repeating others.
-        var page = filter.Cursor is { Length: > 0 } c && int.TryParse(c, out var parsed) && parsed > 1 ? parsed : 1;
-        var query = new Dictionary<string, string>
-        {
-            ["pageSize"] = filter.PageSize.ToString(),
-            ["page"] = page.ToString(),
-            ["orderBy"] = "id asc",
-        };
+        var conditions = TicketConditions(filter);
+        var query = new Dictionary<string, string>();
+        if (conditions.Count > 0) query["conditions"] = string.Join(" and ", conditions);
+        var result = await SendAsync<CwCount>(HttpMethod.Get, BuildPath("service/tickets/count", query), null, ct);
+        return result?.Count;
+    }
+
+    /// <summary>The conditions a read and a count of the same tickets both send, so they cannot differ.</summary>
+    private List<string> TicketConditions(TicketFilter filter)
+    {
         var conditions = new List<string>();
         if (filter.ModifiedSince is { } since)
             conditions.Add($"lastUpdated>[{since.ToUniversalTime():yyyy-MM-ddTHH:mm:ssZ}]");
@@ -198,7 +208,23 @@ public sealed class ConnectWiseConnector(
             conditions.Add("closedFlag=false");
         if (filter.ActiveWithinDays is > 0 and { } days)
             conditions.Add($"lastUpdated>[{clock.GetUtcNow().AddDays(-days):yyyy-MM-ddTHH:mm:ssZ}]");
+        return conditions;
+    }
 
+    public async Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    {
+        // ConnectWise pages by number rather than by cursor, so the cursor carries the next page.
+        // Ordered by id: without an explicit order the provider is free to return rows in a
+        // different arrangement between requests, and page 2 of a shifting order silently skips
+        // tickets while repeating others.
+        var page = filter.Cursor is { Length: > 0 } c && int.TryParse(c, out var parsed) && parsed > 1 ? parsed : 1;
+        var query = new Dictionary<string, string>
+        {
+            ["pageSize"] = filter.PageSize.ToString(),
+            ["page"] = page.ToString(),
+            ["orderBy"] = "id asc",
+        };
+        var conditions = TicketConditions(filter);
         if (conditions.Count > 0)
             query["conditions"] = string.Join(" and ", conditions);
 
@@ -329,6 +355,8 @@ public sealed class ConnectWiseConnector(
         if (update.QueueOrBoard is not null) ops.Add(new { op = "replace", path = "board", value = Ref(update.QueueOrBoard) });
         if (update.AssignedTechnicianExternalId is not null)
             ops.Add(new { op = "replace", path = "owner", value = Ref(update.AssignedTechnicianExternalId) });
+        // requiredDate is the date somebody set on the ticket, which is what the portal reads as its due date.
+        if (update.DueDate is { } due) ops.Add(new { op = "replace", path = "requiredDate", value = due.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") });
 
         await SendAsync<CwTicket>(HttpMethod.Patch, $"service/tickets/{ticketId}", ops, ct);
         return new UpdateTicketResult(true, null);
@@ -396,8 +424,8 @@ public sealed class ConnectWiseConnector(
     /// query, so there is nothing to sweep. Inbound files are therefore read per ticket rather than
     /// in one dated pass — returning empty here keeps the runner from claiming a sweep happened.
     /// </summary>
-    public Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ProviderAttachmentRef>>([]);
+    public Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+        => Task.FromResult(ProviderAttachmentSweep.Unsupported);
 
     public async Task<DownloadedAttachment?> DownloadAttachmentAsync(string ticketId, string attachmentId, CancellationToken ct = default)
     {
@@ -515,6 +543,28 @@ public sealed class ConnectWiseConnector(
         return new CreateTimeEntryResult(true, created!.Id.ToString(), null);
     }
 
+    public async Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
+        IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default)
+    {
+        // Compared with what AddTimeEntryAsync sends: the hours, the charge option and the notes
+        // as given, started at the moment of the push. The member is sent by identifier and read
+        // back by id, so it is compared only when what was sent is an id.
+        var notes = (entry.Notes ?? "").Trim();
+        var earliest = since.AddMinutes(-5);
+
+        return (await GetTimeEntriesAsync(ticketId, ct))
+            .Where(e => !alreadyLinked.Contains(e.ExternalId)
+                        && e.Hours == entry.Hours
+                        && e.BillableOption == entry.Billable
+                        && string.Equals((e.Notes ?? "").Trim(), notes, StringComparison.Ordinal)
+                        && e.EntryDate >= earliest
+                        && (entry.MemberIdentifier is null || !long.TryParse(entry.MemberIdentifier, out _)
+                            || e.TechnicianExternalId == entry.MemberIdentifier))
+            .OrderBy(e => e.EntryDate)
+            .Select(e => e.ExternalId)
+            .FirstOrDefault();
+    }
+
     public async Task<UpdateTimeEntryResult> UpdateTimeEntryAsync(string entryId, UnifiedTimeEntryUpdate update, CancellationToken ct = default)
     {
         var ops = new List<object>();
@@ -609,23 +659,54 @@ public sealed class ConnectWiseConnector(
         return items.Select(w => new ExternalFieldOption(w.Id.ToString(), w.Name ?? "")).ToList();
     }
 
-    public Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ExternalFieldDefinition>>([]);
+    /// <summary>
+    /// The tenant's own ticket fields. ConnectWise sends every one of them on each ticket, with its
+    /// caption and kind, whether or not anything was entered: so the fields there are, are read off
+    /// a ticket, and a tenant with no ticket yet lists none. A field is known by its id, which is
+    /// also how a ticket carries its value; a caption can be changed and an id cannot.
+    /// </summary>
+    public async Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
+    {
+        var sample = await GetListAsync<CwTicket>("service/tickets", new() { ["pageSize"] = "1", ["orderBy"] = "id desc" }, ct);
+        return (sample.FirstOrDefault()?.CustomFields ?? [])
+            .Where(f => f.Id > 0)
+            .GroupBy(f => f.Id).Select(g => g.First())
+            .Select(f => new ExternalFieldDefinition(
+                f.Id.ToString(), string.IsNullOrWhiteSpace(f.Caption) ? $"Field {f.Id}" : f.Caption.Trim(), CustomFieldTypeOf(f), false))
+            .ToList();
+    }
+
+    private static string CustomFieldTypeOf(CwCustomField field)
+        => (field.EntryMethod ?? "").ToLowerInvariant() is "list" or "option" ? CustomFieldTypes.List
+            : (field.Type ?? "").ToLowerInvariant() switch
+            {
+                "number" or "percent" => CustomFieldTypes.Number,
+                "date" => CustomFieldTypes.Date,
+                "checkbox" => CustomFieldTypes.Boolean,
+                _ => CustomFieldTypes.Text,
+            };
+
+    /// <summary>A ticket's custom fields by id. A field nothing was entered in is there, with no value.</summary>
+    private static IReadOnlyDictionary<string, string?> CustomFieldsOf(CwTicket t)
+    {
+        if (t.CustomFields is not { Count: > 0 } fields) return NoCustomFields;
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var field in fields.Where(f => f.Id > 0))
+            values[field.Id.ToString()] = field.Value is not { } v ? null : v.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => string.IsNullOrWhiteSpace(v.GetString()) ? null : v.GetString(),
+                System.Text.Json.JsonValueKind.Number => v.GetRawText(),
+                System.Text.Json.JsonValueKind.True => "true",
+                System.Text.Json.JsonValueKind.False => "false",
+                _ => null,
+            };
+        return values;
+    }
+
+    private static readonly IReadOnlyDictionary<string, string?> NoCustomFields = new Dictionary<string, string?>();
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
-    {
-        if (!request.Headers.TryGetValue("X-Timestamp", out var tsRaw) || !DateTimeOffset.TryParse(tsRaw, out var ts))
-            return Task.FromResult(new WebhookValidationResult(false, "Missing or invalid timestamp."));
-        if (Math.Abs((request.ReceivedAt - ts).TotalSeconds) > config.WebhookMaxSkew.TotalSeconds)
-            return Task.FromResult(new WebhookValidationResult(false, "Timestamp outside allowed skew."));
-
-        var expected = Hmac(request.Body, config.WebhookSecret);
-        var ok = CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(request.RawSignature ?? ""));
-        return Task.FromResult(ok
-            ? new WebhookValidationResult(true, null)
-            : new WebhookValidationResult(false, "Signature mismatch."));
-    }
+        => Task.FromResult(WebhookSignature.Validate(request, config.WebhookSecret, config.WebhookMaxSkew));
 
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default)
     {
@@ -755,8 +836,33 @@ public sealed class ConnectWiseConnector(
         }
     }
 
+    /// <summary>
+    /// A list, every page of it. Each of these used to be one request - the first 1,000 boards,
+    /// members or notes, or the first 100 - and nothing said when there were more.
+    ///
+    /// A list too long to finish is an error, not a shorter list: a caller handed part of a
+    /// ticket's notes as though it were all of them deletes the ones it was not shown.
+    /// </summary>
     private async Task<List<T>> GetListAsync<T>(string path, Dictionary<string, string> query, CancellationToken ct)
-        => await SendAsync<List<T>>(HttpMethod.Get, BuildPath(path, query), null, ct) ?? [];
+    {
+        var size = query.TryGetValue("pageSize", out var raw) && int.TryParse(raw, out var asked) ? asked : 25;
+        // A page size of one is a probe - does the call work, is there anything - and wants one row.
+        if (size <= 1) return await SendAsync<List<T>>(HttpMethod.Get, BuildPath(path, query), null, ct) ?? [];
+
+        var all = new List<T>();
+        for (var page = 1; ; page++)
+        {
+            if (page > config.MaxListPages)
+                throw new ConnectorException(ConnectorFailureKind.ProviderError,
+                    $"ConnectWise holds more than {all.Count} records at {path}; the list was not read in full.");
+            // In a fixed order, or a record that moves between two requests is read twice or not at all.
+            var paged = new Dictionary<string, string>(query) { ["page"] = page.ToString() };
+            paged.TryAdd("orderBy", "id");
+            var items = await SendAsync<List<T>>(HttpMethod.Get, BuildPath(path, paged), null, ct) ?? [];
+            all.AddRange(items);
+            if (items.Count < size) return all;
+        }
+    }
 
     private async Task<T?> GetOneAsync<T>(string path, CancellationToken ct) where T : class
     {
@@ -913,13 +1019,16 @@ public sealed class ConnectWiseConnector(
         HttpStatusCode.NotFound => new(ConnectorFailureKind.NotFound, "ConnectWise entity not found."),
         HttpStatusCode.TooManyRequests => new(ConnectorFailureKind.RateLimited, "ConnectWise rate limit hit.")
         {
-            RetryAfter = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(10),
+            RetryAfter = ProviderRequest.Wait(resp.Headers.RetryAfter, DateTimeOffset.UtcNow) ?? TimeSpan.FromSeconds(10),
         },
         >= HttpStatusCode.InternalServerError => new(ConnectorFailureKind.ProviderError,
             detail is null ? $"ConnectWise server error ({(int)resp.StatusCode})." : $"ConnectWise server error ({(int)resp.StatusCode}): {detail}"),
         _ => new(ConnectorFailureKind.InvalidRequest,
             detail is null ? $"ConnectWise rejected the request ({(int)resp.StatusCode})." : $"ConnectWise rejected the request: {detail}"),
     };
+
+    /// <summary>A reference's name, or nothing: ConnectWise sends an empty name for a level that is not set.</summary>
+    private static string? Name(CwRef? reference) => string.IsNullOrWhiteSpace(reference?.Name) ? null : reference.Name.Trim();
 
     private UnifiedTicket ToUnified(CwTicket t) => new()
     {
@@ -929,7 +1038,13 @@ public sealed class ConnectWiseConnector(
         Status = t.Status?.Name,
         Priority = t.Priority?.Name,
         Category = t.Type?.Name,
+        // The type again, with the two levels under it, as the three a ticket is created with.
+        TicketType = Name(t.Type),
+        IssueType = Name(t.SubType),
+        SubIssueType = Name(t.Item),
+        CustomFields = CustomFieldsOf(t),
         QueueOrBoard = t.Board?.Name,          // Service Board → portal Queue
+        QueueOrBoardId = t.Board is { Id: > 0 } board ? board.Id.ToString() : null,
         AssignedTechnicianExternalId = t.Owner?.Id.ToString(),
         RequesterExternalId = t.Company?.Id.ToString(),
         CompanyName = t.Company?.Name,

@@ -30,6 +30,10 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             ["dateWorked"] = clock.GetUtcNow().ToString("o"),
         });
 
+    /// <summary>Marks a ticket completed, as closing it in Autotask does: it gains a completed date.</summary>
+    public void CompleteTicket(long ticketId)
+        => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["completedDate"] = clock.GetUtcNow().ToString("o");
+
     public HttpStatusCode? ForceStatus { get; set; }
 
     private long _seq = 100;
@@ -51,6 +55,16 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
                 ["configurationItemType"] = 99L, ["isActive"] = false },
         new() { ["id"] = 72L, ["companyID"] = 2L, ["referenceTitle"] = "GLOBEX-FW", ["isActive"] = true },
     ];
+
+    /// <summary>
+    /// Files a ticket under a type, an issue and a sub-issue, as a technician would in Autotask. Ids,
+    /// as Autotask holds them: 1 Service Request, 2 Incident; 10 Hardware, 11 Software; 100 Printer, 101 Email.
+    /// </summary>
+    public void FileTicketUnder(long ticketId, string? ticketType, string? issueType, string? subIssueType)
+    {
+        var ticket = _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId);
+        (ticket["ticketType"], ticket["issueType"], ticket["subIssueType"]) = (ticketType, issueType, subIssueType);
+    }
 
     /// <summary>Puts a configuration item on a ticket, as a technician picking the device in Autotask would.</summary>
     public void SetTicketConfigurationItem(long ticketId, long configurationItemId)
@@ -100,7 +114,9 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         if (path.EndsWith("ConfigurationItems/entityInformation/fields", StringComparison.OrdinalIgnoreCase))
             return Json("{\"fields\":[{\"name\":\"configurationItemType\",\"picklistValues\":[{\"value\":\"3\",\"label\":\"Server\",\"isActive\":true}]}]}");
         if (path.EndsWith("entityInformation/userDefinedFields", StringComparison.OrdinalIgnoreCase))
-            return Json("{\"fields\":[{\"name\":\"cf_site\",\"picklistValues\":[]}]}");
+            return UserDefinedFieldInfoFails
+                ? Resp(HttpStatusCode.InternalServerError, "{\"errors\":[\"the field list is unavailable\"]}")
+                : Json(UserDefinedFieldInfoJson);
 
         // Query endpoints
         if (path.EndsWith("Companies/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_companies, body));
@@ -127,8 +143,12 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             if (string.IsNullOrWhiteSpace(input.GetValueOrDefault("summaryNotes")?.ToString()))
                 return Resp(HttpStatusCode.InternalServerError,
                     "{\"errors\":[\"TimeEntry.summaryNotes can not be blank.\"]}");
+            // Stored under the id it answers with, as the real API does. It used to hand back an id
+            // and keep the entry without one, so an entry read back could not be told from another.
+            var entryId = ++_seq;
+            input["id"] = entryId;
             TimeEntries.Add(input);
-            return Json($"{{\"itemId\":{++_seq}}}");
+            return Json($"{{\"itemId\":{entryId}}}");
         }
         // The real API serves time entries back; this fake only ever accepted them. Without this a
         // ticket's time could be written and never read, so nothing exercised the per-ticket name
@@ -148,6 +168,8 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
                     "{\"Message\":\"The requested resource does not support http method 'GET'.\"}");
             return Json(NextPageJson(QueryValue(request.RequestUri.Query, "nextPage")!));
         }
+        if (path.EndsWith("Tickets/query/count", StringComparison.OrdinalIgnoreCase))
+            return Json($"{{\"queryCount\":{Matching(_tickets, body).Count}}}");
         if (path.EndsWith("Tickets/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_tickets, body));
         if (path.EndsWith("TicketNotes/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(_notes, body));
         if (path.EndsWith("TicketAttachments/query", StringComparison.OrdinalIgnoreCase)) return Json(QueryJson(StripData(_attachments), body));
@@ -192,7 +214,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
     /// HTTP 500 "Could not convert string to integer", so the fake must too — the connector shipped
     /// sending "In Progress" for months because this fake accepted anything.
     /// </summary>
-    private static readonly string[] NumericFields = ["status", "priority", "queueID", "ticketCategory"];
+    private static readonly string[] NumericFields = ["status", "priority", "queueID", "ticketCategory", "ticketType", "issueType", "subIssueType"];
 
     private HttpResponseMessage? RejectNonNumericPicklists(Dictionary<string, object?> input)
     {
@@ -207,6 +229,27 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
     }
 
     /// <summary>Points a ticket at a contact, as a ticket raised by that customer carries contactID.</summary>
+    /// <summary>
+    /// The tenant's own ticket fields, as Autotask describes them: a name, the label on the
+    /// screen, a data type, and for a list its values by id. A list's value rides on a ticket as
+    /// the id, like every other picklist.
+    /// </summary>
+    public string UserDefinedFieldInfoJson { get; set; } =
+        "{\"fields\":[" +
+        "{\"name\":\"cf_site\",\"label\":\"Site\",\"dataType\":\"string\",\"isPickList\":false,\"picklistValues\":[]}," +
+        "{\"name\":\"Cost Centre\",\"label\":\"Cost centre\",\"dataType\":\"integer\",\"isPickList\":true,\"picklistValues\":[" +
+            "{\"value\":\"7\",\"label\":\"Finance\",\"isActive\":true},{\"value\":\"8\",\"label\":\"Operations\",\"isActive\":false}]}," +
+        "{\"name\":\"Warranty Until\",\"dataType\":\"datetime\",\"isPickList\":false,\"picklistValues\":[]}," +
+        "{\"name\":\"Seats\",\"label\":\"Seats\",\"dataType\":\"double\",\"isPickList\":false,\"picklistValues\":[]}]}";
+
+    /// <summary>The field list cannot be read. Tickets still can.</summary>
+    public bool UserDefinedFieldInfoFails { get; set; }
+
+    /// <summary>Puts custom field values on a ticket, as Autotask sends them: a list of name and value.</summary>
+    public void SetTicketUserDefinedFields(long ticketId, params (string Name, object? Value)[] fields)
+        => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["userDefinedFields"] =
+            fields.Select(f => new Dictionary<string, object?> { ["name"] = f.Name, ["value"] = f.Value }).ToList();
+
     public void SetTicketContact(long ticketId, long contactId)
         => _tickets.Single(t => Convert.ToInt64(t["id"]) == ticketId)["contactID"] = contactId;
 
@@ -229,6 +272,9 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             ["priority"] = input.GetValueOrDefault("priority"),
             ["queueID"] = input.GetValueOrDefault("queueID"),
             ["ticketCategory"] = input.GetValueOrDefault("ticketCategory"),
+            ["ticketType"] = input.GetValueOrDefault("ticketType"),
+            ["issueType"] = input.GetValueOrDefault("issueType"),
+            ["subIssueType"] = input.GetValueOrDefault("subIssueType"),
             ["companyID"] = input.GetValueOrDefault("companyID"),
             ["configurationItemID"] = input.GetValueOrDefault("configurationItemID"),
             ["createDate"] = now,
@@ -311,6 +357,14 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
     // are extracted eagerly so no JsonElement is read after the JsonDocument is disposed.
     private string QueryJson(List<Dictionary<string, object?>> rows, string body)
     {
+        // MaxRecords is a LIMIT, and the rows past it are offered through a next-page URL rather
+        // than thrown away. The fake used to return every row and no URL, so a connector that never
+        // paginated looked complete here while silently truncating against the real API.
+        return Page(Matching(rows, body), MaxRecords(body));
+    }
+
+    private static List<Dictionary<string, object?>> Matching(List<Dictionary<string, object?>> rows, string body)
+    {
         var clauses = new List<FilterClause>();
         if (!string.IsNullOrEmpty(body))
         {
@@ -319,7 +373,8 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             {
                 foreach (var f in filters.EnumerateArray())
                 {
-                    var val = f.GetProperty("value");
+                    // "exist" and "notExist" carry no value.
+                    var val = f.TryGetProperty("value", out var given) ? given : default;
                     clauses.Add(new FilterClause(
                         f.GetProperty("field").GetString()!,
                         f.GetProperty("op").GetString()!,
@@ -343,13 +398,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
             }
         }
 
-        var result = rows.Where(r => clauses.All(c => Matches(r, c))).ToList();
-
-        // MaxRecords is a LIMIT, and the rows past it are offered through a next-page URL rather
-        // than thrown away. The fake used to return every row and no URL, so a connector that never
-        // paginated looked complete here while silently truncating against the real API.
-        var max = MaxRecords(body);
-        return Page(result, max);
+        return rows.Where(r => clauses.All(c => Matches(r, c))).ToList();
     }
 
     private static string? QueryValue(string query, string key)
@@ -400,6 +449,7 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         // row, so a filter test could not fail — the fake was more permissive than Autotask, which
         // is how several defects reached production already.
         "in" => FieldIn(row, c),
+        "notExist" => !row.TryGetValue(c.Field, out var absent) || absent is null,
         _ => true,
     };
 
@@ -431,7 +481,11 @@ public sealed class FakeAutotaskServer(TimeProvider clock) : HttpMessageHandler
         "{\"fields\":[" +
         "{\"name\":\"status\",\"picklistValues\":[{\"value\":\"1\",\"label\":\"New\",\"isActive\":true},{\"value\":\"5\",\"label\":\"Complete\",\"isActive\":true},{\"value\":\"7\",\"label\":\"Resolved\",\"isActive\":true}]}," +
         "{\"name\":\"priority\",\"picklistValues\":[{\"value\":\"1\",\"label\":\"High\",\"isActive\":true}]}," +
-        "{\"name\":\"queueID\",\"picklistValues\":[{\"value\":\"8\",\"label\":\"Service Desk\",\"isActive\":true}]}]}";
+        "{\"name\":\"queueID\",\"picklistValues\":[{\"value\":\"8\",\"label\":\"Service Desk\",\"isActive\":true}]}," +
+        "{\"name\":\"ticketType\",\"picklistValues\":[{\"value\":\"1\",\"label\":\"Service Request\",\"isActive\":true},{\"value\":\"2\",\"label\":\"Incident\",\"isActive\":true}]}," +
+        "{\"name\":\"issueType\",\"picklistValues\":[{\"value\":\"10\",\"label\":\"Hardware\",\"isActive\":true},{\"value\":\"11\",\"label\":\"Software\",\"isActive\":true}]}," +
+        // A sub-issue belongs to an issue, and the same word turns up under more than one.
+        "{\"name\":\"subIssueType\",\"picklistValues\":[{\"value\":\"100\",\"label\":\"Printer\",\"parentValue\":\"10\",\"isActive\":true},{\"value\":\"101\",\"label\":\"Email\",\"parentValue\":\"11\",\"isActive\":true},{\"value\":\"102\",\"label\":\"Other\",\"parentValue\":\"10\",\"isActive\":true},{\"value\":\"103\",\"label\":\"Other\",\"parentValue\":\"11\",\"isActive\":true}]}]}";
 
     private static Dictionary<string, object?> Parse(string body) =>
         string.IsNullOrEmpty(body) ? [] :

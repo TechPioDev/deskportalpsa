@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const doc = findFeature((await params).slug);
   if (!doc) return {};
   return {
-    title: `${doc.name} — Desk Portal`,
+    title: `${doc.name} — PioManage`,
     description: doc.summary,
     alternates: { canonical: featureHref(doc) },
   };

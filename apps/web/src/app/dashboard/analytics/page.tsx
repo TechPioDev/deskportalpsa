@@ -284,7 +284,7 @@ export default function Analytics() {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.technicianExternalId} className="border-b border-[var(--border)] last:border-0">
+                  <tr key={r.key ?? r.technicianExternalId} className="border-b border-[var(--border)] last:border-0">
                     <td className="px-4 py-2.5"><span className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg)] text-[9px] font-semibold">{(r.technicianName ?? r.technicianExternalId).split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>{r.technicianName ?? r.technicianExternalId}</span></td>
                     <td className="px-2 py-2.5 tabular-nums">{r.resolved}</td>
                     <td className="px-2 py-2.5 tabular-nums text-[var(--muted)]">{r.slaCompliancePct.toFixed(0)}%</td>

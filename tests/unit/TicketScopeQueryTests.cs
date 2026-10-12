@@ -24,6 +24,9 @@ public class TicketScopeQueryTests
 {
     private static readonly Guid Org = Guid.NewGuid();
 
+    /// <summary>The PSA account every ticket and link here belongs to unless a test names another.</summary>
+    private static readonly Guid Conn = Guid.NewGuid();
+
     private static DeskDbContext NewDb()
     {
         var tenant = new TenantContext();
@@ -37,20 +40,31 @@ public class TicketScopeQueryTests
     private static Ticket NewTicket(string title, string? assignedTo = null, Guid? connectionId = null,
         string? board = null, Guid? assignedUser = null) => new()
     {
-        MspOrganizationId = Org, PsaConnectionId = connectionId ?? Guid.NewGuid(), Provider = ProviderType.ConnectWisePsa,
+        MspOrganizationId = Org, PsaConnectionId = connectionId ?? Conn, Provider = ProviderType.ConnectWisePsa,
         ClientCompanyId = Guid.NewGuid(), RequesterName = "r", RequesterEmail = "r@test",
         Title = title, PortalStatus = "NEW", PortalPriority = "NORMAL",
         AssignedTechnicianExternalId = assignedTo, QueueOrBoard = board, AssignedAppUserId = assignedUser,
     };
 
-    private static async Task<Guid> SeedUserAsync(DeskDbContext db, string? externalTechnicianId = null)
+    /// <summary>
+    /// A person, linked to a PSA login the way the product links them: a row per connection in
+    /// UserPsaIdentity. These tests used to set an id on the person instead - a column nothing in the
+    /// product writes - so they passed while a linked technician in production was shown none of
+    /// the tickets the PSA had assigned them.
+    /// </summary>
+    private static async Task<Guid> SeedUserAsync(DeskDbContext db, string? externalTechnicianId = null, Guid? connectionId = null)
     {
         var user = new Desk.Domain.Identity.AppUser
         {
             MspOrganizationId = Org, Email = $"{Guid.NewGuid()}@test", DisplayName = "T",
-            ExternalTechnicianId = externalTechnicianId,
         };
         db.AppUsers.Add(user);
+        if (externalTechnicianId is not null)
+            db.UserPsaIdentities.Add(new UserPsaIdentity
+            {
+                MspOrganizationId = Org, AppUserId = user.Id, PsaConnectionId = connectionId ?? Conn,
+                ExternalTechnicianId = externalTechnicianId,
+            });
         await db.SaveChangesAsync();
         return user.Id;
     }
@@ -112,6 +126,125 @@ public class TicketScopeQueryTests
 
         (await visible.Select(t => t.Title).ToListAsync())
             .Should().BeEquivalentTo(["assigned in the PSA", "assigned in the portal"]);
+    }
+
+    [Fact]
+    public async Task The_same_login_id_on_another_PSA_account_is_somebody_else()
+    {
+        // Two accounts of one PSA number their people independently: member 5 here and member 5
+        // there are different people. A link says which account it is for, and only that account's
+        // tickets follow it.
+        var db = NewDb();
+        var otherAccount = Guid.NewGuid();
+        var meId = await SeedUserAsync(db, "5");
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Assigned);
+
+        db.Tickets.AddRange(
+            NewTicket("mine, on my account", assignedTo: "5"),
+            NewTicket("member 5 of the other account", assignedTo: "5", connectionId: otherAccount));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.Select(t => t.Title).ToListAsync()).Should().BeEquivalentTo(["mine, on my account"]);
+        (await Query(db).FindAsync(db.Tickets, db.Tickets.Single(t => t.PsaConnectionId == otherAccount).Id, meId, Permissions.TicketsUpdate))
+            .Should().BeNull("opening it by id is held to the same rule as listing it");
+    }
+
+    [Fact]
+    public async Task Someone_linked_on_two_accounts_sees_their_work_on_both()
+    {
+        var db = NewDb();
+        var second = Guid.NewGuid();
+        var meId = await SeedUserAsync(db, "5");
+        db.UserPsaIdentities.Add(new UserPsaIdentity
+        {
+            MspOrganizationId = Org, AppUserId = meId, PsaConnectionId = second, ExternalTechnicianId = "812",
+        });
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Assigned);
+
+        db.Tickets.AddRange(
+            NewTicket("first account", assignedTo: "5"),
+            NewTicket("second account", assignedTo: "812", connectionId: second),
+            NewTicket("my first-account id, on the second account", assignedTo: "5", connectionId: second),
+            NewTicket("my second-account id, on the first account", assignedTo: "812"));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.Select(t => t.Title).ToListAsync()).Should().BeEquivalentTo(["first account", "second account"]);
+    }
+
+    [Fact]
+    public async Task A_link_to_the_account_the_integration_writes_as_is_nobodys_login()
+    {
+        // The whole portal team's work reaches the PSA under that account, and tickets the
+        // integration touched sit assigned to it. Linked to it by mistake - it has happened - one
+        // technician would be handed everybody's tickets.
+        var db = NewDb();
+        db.PsaConnections.Add(new PsaConnection
+        {
+            Id = Conn, MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://x", CredentialSecretRef = "r", DefaultTimeEntryResourceId = "api-user",
+        });
+        var meId = await SeedUserAsync(db, "api-user");
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Assigned);
+
+        db.Tickets.AddRange(
+            NewTicket("held by the integration", assignedTo: "api-user"),
+            NewTicket("given to me in the portal", assignedTo: "api-user", assignedUser: meId));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.Select(t => t.Title).ToListAsync()).Should().BeEquivalentTo(["given to me in the portal"]);
+    }
+
+    [Fact]
+    public async Task An_id_kept_on_the_person_alone_assigns_them_nothing()
+    {
+        // The old single id per person. It cannot say which PSA account it is for, so it is no
+        // longer consulted: only a link that names its connection counts.
+        var db = NewDb();
+        var user = new Desk.Domain.Identity.AppUser
+        {
+            MspOrganizationId = Org, Email = $"{Guid.NewGuid()}@test", DisplayName = "T", ExternalTechnicianId = "5",
+        };
+        db.AppUsers.Add(user);
+        await db.SaveChangesAsync();
+        await GrantAsync(db, user.Id, Permissions.TicketsUpdate, PermissionScope.Assigned);
+        db.Tickets.Add(NewTicket("assigned to 5 on some account", assignedTo: "5"));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, user.Id, Permissions.TicketsUpdate);
+
+        (await visible.ToListAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Department_scope_follows_each_members_login_on_its_own_account_only()
+    {
+        var db = NewDb();
+        var otherAccount = Guid.NewGuid();
+        var dept = new Department { MspOrganizationId = Org, Name = "IT Support" };
+        db.Departments.Add(dept);
+        await db.SaveChangesAsync();
+
+        var meId = await SeedUserAsync(db);
+        var teammateId = await SeedUserAsync(db, "7");
+        db.UserDepartments.AddRange(
+            new UserDepartment { MspOrganizationId = Org, AppUserId = meId, DepartmentId = dept.Id, IsPrimary = true },
+            new UserDepartment { MspOrganizationId = Org, AppUserId = teammateId, DepartmentId = dept.Id, IsPrimary = true });
+        await GrantAsync(db, meId, Permissions.TicketsUpdate, PermissionScope.Department);
+
+        db.Tickets.AddRange(
+            NewTicket("my teammate's", assignedTo: "7"),
+            NewTicket("member 7 of the other account", assignedTo: "7", connectionId: otherAccount));
+        await db.SaveChangesAsync();
+
+        var visible = await Query(db).VisibleAsync(db.Tickets, meId, Permissions.TicketsUpdate);
+
+        (await visible.Select(t => t.Title).ToListAsync()).Should().BeEquivalentTo(["my teammate's"]);
     }
 
     [Fact]

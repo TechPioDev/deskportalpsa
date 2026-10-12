@@ -62,6 +62,13 @@ public interface IServiceManagementConnector
     // Tickets
     Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default);
     Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default);
+
+    /// <summary>
+    /// How many tickets a filter matches, where the provider can say so without handing them over.
+    /// Null where it cannot: the caller then says "not known", never a number of its own making.
+    /// The filter's paging fields are ignored. Used before an import, to say how much it would bring.
+    /// </summary>
+    Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default) => Task.FromResult<int?>(null);
     Task<CreateTicketResult> CreateTicketAsync(UnifiedTicketCreateRequest ticket, CancellationToken ct = default);
     Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default);
 
@@ -77,9 +84,11 @@ public interface IServiceManagementConnector
     /// Every attachment added across the tenant since <paramref name="since"/> (all of them when
     /// null). Needed because providers do not necessarily touch a ticket's modified timestamp when a
     /// file is attached to it — Autotask does not — so a ticket-driven incremental sync would never
-    /// notice new files. Returns empty for providers that cannot query attachments by date.
+    /// notice new files. Returns <see cref="ProviderAttachmentSweep.Unsupported"/> for providers that
+    /// cannot query attachments by date. <see cref="ProviderAttachmentSweep.Complete"/> must be false
+    /// whenever anything asked for may be missing from the answer.
     /// </summary>
-    Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default);
+    Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default);
 
     /// <summary>Pulls an attachment's bytes back from the provider. Null when the provider cannot
     /// serve the content (unsupported, deleted, or too large to inline). The parent ticket is
@@ -102,6 +111,21 @@ public interface IServiceManagementConnector
     Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default);
 
     // Webhooks
+    /// <summary>
+    /// The PSA's id for a time entry that an earlier, unanswered <see cref="AddTimeEntryAsync"/> of
+    /// this same request already created on the ticket, or null when there is none.
+    ///
+    /// A push whose answer was lost may have been carried out. Sent again blind it is a second
+    /// entry, and the customer is billed the hour twice. Only the connector can say whether it is
+    /// there: it knows what it would have sent - which technician stands in when none is named,
+    /// what it writes for empty notes, how it dates an entry.
+    /// </summary>
+    /// <param name="since">When the portal first tried. Nothing created before it can be this entry.</param>
+    /// <param name="alreadyLinked">Entries on the ticket that already belong to another portal entry.</param>
+    /// <remarks>The default is "cannot tell": a connector that has not implemented this is retried as before.</remarks>
+    Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
+        IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default) => Task.FromResult<string?>(null);
+
     Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default);
     Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default);
 }
@@ -116,4 +140,24 @@ public interface IConnectorFactory
 
     /// <summary>Build a connector bound to the given connection id (credentials resolved internally).</summary>
     Task<IServiceManagementConnector> CreateAsync(Guid psaConnectionId, CancellationToken ct = default);
+
+    /// <summary>What an administrator needs to know to connect this PSA. Null for a factory that is not offered.</summary>
+    ProviderDescriptor? Descriptor => null;
+
+    /// <summary>
+    /// A connector for a connection as GIVEN: the address on <paramref name="connection"/> as it
+    /// stands, saved or not, and these credentials rather than any that are stored. Nothing is
+    /// read from the secret store and nothing is written. It exists so that an address or a set
+    /// of credentials can be tried against the PSA before either replaces one that works.
+    /// </summary>
+    Task<IServiceManagementConnector> CreateWithAsync(
+        Desk.Domain.Tenancy.PsaConnection connection, IReadOnlyDictionary<string, string> credentials, CancellationToken ct = default)
+        => throw new NotSupportedException($"{Provider} cannot build a connector from credentials that are not stored.");
+
+    /// <summary>
+    /// A name for the PSA ACCOUNT a connection reaches - its address and whichever credential
+    /// names the account - so that the same account connected twice can be recognised. Null when
+    /// the provider cannot say. Never a secret: a key or a password is not part of it.
+    /// </summary>
+    string? AccountKey(string apiEndpoint, IReadOnlyDictionary<string, string> credentials) => null;
 }

@@ -4,7 +4,10 @@ ConnectWise Manage integration over REST API 3.0. Wave-1 reference connector (wi
 
 ## Connection setup
 A `PsaConnection` with `Provider = ConnectWisePsa` and `ApiEndpoint` set to the instance API base
-(e.g. `https://api-na.myconnectwise.net/v4_6_release/apis/3.0/`). The credential fields required are:
+(e.g. `https://api-na.myconnectwise.net/v4_6_release/apis/3.0/`). The address is checked when it is
+saved: `https`, and not a private address unless the operator has allowed the host
+(`Connectors:AllowedHosts`), which is how a self-hosted instance on a private network is connected.
+The credential fields required are:
 
 | Key | Value |
 |---|---|
@@ -12,7 +15,7 @@ A `PsaConnection` with `Provider = ConnectWisePsa` and `ApiEndpoint` set to the 
 | `PublicKey` | API member public key |
 | `PrivateKey` | API member private key |
 | `ClientId` | Developer `clientId` GUID |
-| `WebhookSecret` | (optional) HMAC secret for callback validation |
+| `WebhookSecret` | HMAC secret for inbound deliveries. Without one, no delivery is accepted |
 
 Auth is HTTP Basic (`base64(CompanyId+PublicKey:PrivateKey)`) plus the `clientId` header.
 
@@ -23,6 +26,7 @@ Auth is HTTP Basic (`base64(CompanyId+PublicKey:PrivateKey)`) plus the `clientId
 | Queue / Board | **Service Board** |
 | Technician | **Member** |
 | Category | **Type** |
+| Ticket type / issue type / sub-issue type | **Type** / **Subtype** / **Item** |
 | Ticket title | **summary** (capped at 100 chars) |
 | Status / Priority | nested `{id, name}` references |
 
@@ -34,11 +38,26 @@ Auth is HTTP Basic (`base64(CompanyId+PublicKey:PrivateKey)`) plus the `clientId
   internal notes are never mirrored to the portal.
 - List endpoints return **bare JSON arrays** (no envelope) — different from Autotask.
 - Supports **outbound webhooks (callbacks)**, which Autotask does not — captured in the capability
-  matrix so the UI/sync treat the providers differently rather than assuming parity.
+  matrix so the UI/sync treat the providers differently rather than assuming parity. Inbound
+  deliveries currently use the portal's own signed format (`X-Timestamp`, and `X-Signature` = hex
+  HMAC-SHA256 of `"{timestamp}.{body}"`), not ConnectWise's callback format: polling is how changes
+  arrive today, and native callbacks are a later Phase 9 slice.
+- **What a ticket is filed under is read by name**: `type`, `subType` and `item`. A level that is
+  not set arrives as a reference with an empty name, or not at all; either is no level. The type
+  is also still the category, as it was.
+- **A ticket carries its board's id beside the name** (`QueueOrBoardId`). A connection's board
+  limit holds ids, and is checked against the id.
 
 ## Error mapping
 401 → Authentication · 403 → PermissionDenied · 404 → NotFound · 429 → RateLimited (honours
-`Retry-After`) · 5xx → ProviderError · timeout → Timeout · other 4xx → InvalidRequest.
+`Retry-After`, as seconds or as a time) · 5xx → ProviderError · timeout → Timeout · other 4xx → InvalidRequest.
+
+## Calls
+Paced at 120 requests a minute once a burst is spent; each attempt bounded at 60 seconds; a GET
+repeated on a passing fault, a write never. Every list is read page by page (ordered by id) to its
+end. A retried time entry is first looked for in ConnectWise, matched on hours, charge option,
+notes and a start no earlier than the first attempt; the member is compared only when it was sent
+as an id. See [provider-calls.md](../provider-calls.md).
 
 ## Certification
 Passes the shared `ConnectorCertificationSuite` end-to-end against an in-memory `FakeConnectWiseServer`,

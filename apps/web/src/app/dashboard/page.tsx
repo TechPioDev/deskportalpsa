@@ -221,7 +221,7 @@ export default function Overview() {
                 {teamRows.slice(0, 5).map((r) => {
                   const who = r.technicianName ?? r.technicianExternalId;
                   return (
-                  <tr key={r.technicianExternalId} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)]">
+                  <tr key={r.key ?? r.technicianExternalId} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)]">
                     <td className="px-5 py-2.5">
                       <Link href="/dashboard/analytics/technicians" className="flex items-center gap-2 hover:text-brand">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg)] text-[9px] font-semibold">{who.split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>{who}

@@ -23,6 +23,8 @@ export function TasksPanel({ ticketId, canUpdate, people, onNeedPeople }: {
   const [title, setTitle] = useState('');
   const [assignee, setAssignee] = useState('');
   const { data: tasks } = useQuery({ queryKey: ['ticket-tasks', ticketId], queryFn: () => api.ticketTasks(ticketId), retry: false });
+  // Who is ticking, for the "Done by" line written with the tick (see the checkbox below).
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
 
   // Every change answers with the whole list, so the answer replaces the cache rather than
   // triggering a refetch; the list and board rows show progress, so those are refreshed too.
@@ -92,8 +94,15 @@ export function TasksPanel({ ticketId, canUpdate, people, onNeedPeople }: {
             <li key={t.id} className="flex items-start gap-3 px-5 py-2.5">
               <input type="checkbox" checked={t.isDone} disabled={!canUpdate}
                 onChange={() => {
+                  // The "Done by" line is written in the same change as the tick. Left for the
+                  // server's answer, it appeared a moment later and pushed every step below down
+                  // by a line, the height of a checkbox: a second step ticked straight after the
+                  // first was clicked where its box had just been, and nothing was saved.
+                  const now = new Date().toISOString();
                   qc.setQueryData<TicketTask[]>(['ticket-tasks', ticketId],
-                    (rows) => rows?.map((x) => (x.id === t.id ? { ...x, isDone: !x.isDone } : x)));
+                    (rows) => rows?.map((x) => (x.id !== t.id ? x : x.isDone
+                      ? { ...x, isDone: false, doneAt: null, doneByName: null }
+                      : { ...x, isDone: true, doneAt: now, doneByName: me?.displayName ?? x.doneByName })));
                   change.mutate({ kind: 'done', task: t });
                 }}
                 // Named by the task alone: the checked state already says whether it is done, and a

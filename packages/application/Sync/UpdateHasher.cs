@@ -39,7 +39,9 @@ public static class UpdateHasher
         string? status, string? priority, string? category, string? title, string? description,
         DateTimeOffset? resolvedAt, DateTimeOffset? closedAt, DateTimeOffset? slaDueAt,
         DateTimeOffset? psaCreatedAt = null, string? queueOrBoard = null,
-        string? contactName = null, string? contactEmail = null, string? deviceExternalId = null)
+        string? contactName = null, string? contactEmail = null, string? deviceExternalId = null,
+        string? ticketType = null, string? issueType = null, string? subIssueType = null,
+        string? workType = null, string? subcategory = null, string? customFields = null)
     {
         var fields = new Dictionary<string, string?>
         {
@@ -72,6 +74,22 @@ public static class UpdateHasher
         // would change at once and the next sync would rewrite the whole import for nothing; this way
         // only the tickets that carry a device are re-read - which is exactly the backfill wanted.
         if (!string.IsNullOrEmpty(deviceExternalId)) fields["deviceExternalId"] = deviceExternalId;
+        // The PSA's own classification, on the same terms: each level joins only where the ticket
+        // has one. A ticket filed under nothing keeps the hash it had and is not rewritten; one
+        // that has a subtype is read once more, which is how the tickets already here get theirs.
+        if (!string.IsNullOrEmpty(ticketType)) fields["ticketType"] = ticketType;
+        if (!string.IsNullOrEmpty(issueType)) fields["issueType"] = issueType;
+        if (!string.IsNullOrEmpty(subIssueType)) fields["subIssueType"] = subIssueType;
+        // What a classification rule makes of those levels, on the same terms again. A rule written
+        // or changed after a ticket arrived changes the hash of the tickets it speaks for, so the
+        // next time one is read it is given what the rule says; a connection with no rules has the
+        // hashes it had. (The category a rule gives is in "category" above.)
+        if (!string.IsNullOrEmpty(workType)) fields["workType"] = workType;
+        if (!string.IsNullOrEmpty(subcategory)) fields["subcategory"] = subcategory;
+        // The custom field values kept for the ticket, on the same terms once more: a field chosen
+        // for import after a ticket arrived changes the hash of the tickets that carry it, and so
+        // reaches them the next time each is read. A connection that imports none is untouched.
+        if (!string.IsNullOrEmpty(customFields)) fields["customFields"] = customFields;
         return Compute(fields);
     }
 }

@@ -63,6 +63,8 @@ export const TicketNoteSchema = z.object({
   // without waiting on the live entry list. Null for provider-side te- notes.
   timeEntryHours: z.number().nullable().default(null),
   timeEntryBillable: z.boolean().nullable().default(null),
+  // "Pending Sync" or "Sync Failed" for a note the PSA does not have yet; null for every note it has.
+  syncState: z.string().nullable().default(null),
 });
 
 export const AttachmentSchema = z.object({
@@ -147,6 +149,22 @@ export const TicketDetailSchema = z.object({
   assignedAppUserId: z.string().nullable().default(null),
   // Who resolved it in the portal: the person productivity credits it to. Staff only.
   resolvedByName: z.string().nullable().default(null),
+  // What the PSA files the ticket under, in its own three levels and its own words. Staff only,
+  // and null when it has none (or from an older API).
+  classification: z.object({
+    ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+    // What a rule of the connection makes of those levels, in the portal's words. `mapped` false is
+    // UNMAPPED (the connection has rules and none names this); null is a connection with no rules.
+    workType: z.string().nullable().default(null), subcategory: z.string().nullable().default(null),
+    mapped: z.boolean().nullable().default(null),
+  }).nullable().default(null),
+  // Changes made here that the PSA does not have yet, or refused. Staff only; null where there are none.
+  outbound: z.array(z.lazy(() => TicketOutboundSchema)).nullable().default(null),
+  // The PSA's custom fields an administrator chose to bring in. For a client, only the ones marked
+  // as theirs to see are sent at all. Null when there are none (or from an older API).
+  customFields: z.array(z.object({
+    label: z.string(), value: z.string(), dataType: z.string().default('text'), clientVisible: z.boolean().default(false),
+  })).nullable().default(null),
   assignedAppUserName: z.string().nullable().default(null),
   externalTicketUrl: z.string().nullable().default(null),
   contactName: z.string().nullable().default(null),
@@ -158,6 +176,11 @@ export const TicketDetailSchema = z.object({
   // The SLA plan the due dates came from, and its reply promise. Staff only; null otherwise.
   slaPlanName: z.string().nullable().default(null),
   slaDueAt: z.string().nullable().default(null),
+  // How the due date was moved, where it was. Null when never moved, and always for a client.
+  dueDate: z.object({
+    dueAt: z.string().nullable(), originalDueAt: z.string().nullable(), extensions: z.number(),
+    lastExtendedAt: z.string().nullable(), lastExtendedByName: z.string().nullable(), lastReason: z.string().nullable(),
+  }).nullable().default(null),
   firstResponseDueAt: z.string().nullable().default(null),
   firstRespondedAt: z.string().nullable().default(null),
   slaPausedAt: z.string().nullable().default(null),
@@ -250,6 +273,8 @@ export const TeamRowSchema = z.object({
   // neither field, and throwing the whole team table away over a missing label helps nobody.
   technicianName: z.string().nullable().default(null),
   appUserId: z.string().nullable().default(null),
+  // One per person. technicianExternalId is not: two PSA accounts can each have a resource 42.
+  key: z.string().nullable().default(null),
 });
 export const TeamResponseSchema = z.object({
   team: z.array(TeamRowSchema),
@@ -268,6 +293,8 @@ export const TechnicianDaySchema = z.object({
   date: z.string(),
   appUserId: z.string().nullable(),
   technicianExternalId: z.string().nullable(),
+  // The PSA account a login belongs to, for someone with no portal account: part of who they are.
+  psaConnectionId: z.string().nullable().default(null),
   name: z.string(),
   hours: z.number(),
   billableHours: z.number(),
@@ -304,8 +331,250 @@ export const ConnectionSummarySchema = z.object({
   // stay write-only). null = the endpoint didn't say (older responses), which is different from
   // [] = it said "nothing is stored".
   storedCredentialKeys: z.array(z.string()).nullable().default(null),
+  // What the connection is doing now, worked out by the server from everything it knows (set up
+  // or not, switched on, paused, rejected by the PSA, syncing). null = an older response.
+  state: z.union([z.string(), z.number()]).nullable().default(null),
+  syncPausedAt: z.string().nullable().default(null),
+  // A sync someone asked for that has not finished: waiting for the worker, or being run by it.
+  syncRequestedAt: z.string().nullable().default(null),
 });
 export type ConnectionSummary = z.infer<typeof ConnectionSummarySchema>;
+
+/** A PSA the portal names. `available` false = named, with no connector in this build. */
+export const ProviderCatalogEntrySchema = z.object({
+  provider: z.union([z.string(), z.number()]),
+  name: z.string(),
+  available: z.boolean(),
+  endpointExample: z.string().nullable().default(null),
+  endpointHint: z.string().nullable().default(null),
+  tenantIdentifierLabel: z.string().nullable().default(null),
+  credentials: z.array(z.object({
+    key: z.string(), label: z.string(), secret: z.boolean(), hint: z.string().nullable().default(null),
+  })).default([]),
+  // Two letters for a connection's tile where no logo has been uploaded. From the server, so a new
+  // connector needs no entry here.
+  mark: z.string().default(''),
+});
+export type ProviderCatalogEntry = z.infer<typeof ProviderCatalogEntrySchema>;
+
+export const SyncRunSchema = z.object({
+  id: z.string(), trigger: z.string(), status: z.string(), startedAt: z.string(), finishedAt: z.string().nullable(),
+  fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number(),
+  notes: z.number().default(0), attachments: z.number().default(0),
+  failedRecords: z.number().default(0), retried: z.number().default(0), recovered: z.number().default(0),
+  error: z.string().nullable().default(null), notice: z.string().nullable().default(null),
+  requestedBy: z.string().nullable().default(null),
+});
+export type SyncRun = z.infer<typeof SyncRunSchema>;
+
+export const SyncStateSchema = z.object({
+  connectionId: z.string(),
+  // Everything changed in the PSA before this moment has been read.
+  watermark: z.string().nullable(),
+  // A read that ran out of pages and is being carried on run by run.
+  readInProgress: z.boolean(), pagesReadSoFar: z.number(),
+  running: z.boolean(), openFailures: z.number(), needsReview: z.number(),
+  runs: z.array(SyncRunSchema),
+  // A sync someone asked for that has not finished.
+  requestedAt: z.string().nullable().default(null), requestedFull: z.boolean().default(false),
+});
+export type SyncState = z.infer<typeof SyncStateSchema>;
+
+/**
+ * What "Sync now" answers. Where a worker runs syncs, only that the sync has been asked for: it
+ * starts within seconds and the page follows it. In one process with no worker (local mode) the
+ * sync has just run, and this is what it did.
+ */
+export const SyncAnswerSchema = z.union([
+  z.object({ queued: z.literal(true), requestedAt: z.string(), full: z.boolean().default(false) }),
+  z.object({
+    fetched: z.number(), created: z.number(), updated: z.number(), skipped: z.number(), pages: z.number(),
+    // A run reads a bounded number of pages; when there is more, later runs carry on by themselves.
+    moreToRead: z.boolean().default(false),
+    // Records it could not read or apply. They are kept and tried again.
+    failed: z.number().default(0),
+    recovered: z.number().default(0),
+  }),
+]);
+export type SyncAnswer = z.infer<typeof SyncAnswerSchema>;
+
+/**
+ * One line of a connection's test. `outcome` is Pass, Fail, Warn, NotTested (nothing to try it on,
+ * or a write, which a test never makes), Available or Unavailable.
+ */
+export const ConnectionCheckSchema = z.object({
+  key: z.string(), name: z.string(), outcome: z.string(), detail: z.string().nullable().default(null), required: z.boolean().default(false),
+});
+export const ConnectionCheckReportSchema = z.object({
+  passed: z.boolean(), checkedAt: z.string(), checks: z.array(ConnectionCheckSchema),
+});
+export type ConnectionCheckReport = z.infer<typeof ConnectionCheckReportSchema>;
+
+/** A value the PSA lists and what it becomes in the portal. `mapsTo` null = nothing maps it. */
+const MappedValueSchema = z.object({
+  value: z.string(), label: z.string(), mapsTo: z.string().nullable(), byFallbackRule: z.boolean().default(false),
+});
+export const ConnectionMappingCoverageSchema = z.object({
+  statuses: z.array(MappedValueSchema), priorities: z.array(MappedValueSchema), unmapped: z.number(),
+});
+export type ConnectionMappingCoverage = z.infer<typeof ConnectionMappingCoverageSchema>;
+
+/** How much an import would bring in. A null is "the PSA could not say", never zero. */
+export const ConnectionPreviewSchema = z.object({
+  clients: z.number().nullable(), technicians: z.number().nullable(),
+  openTickets: z.number().nullable(), allTickets: z.number().nullable(), ticketsToImport: z.number().nullable(),
+  unmapped: z.number(), notes: z.array(z.string()).default([]),
+});
+export type ConnectionPreview = z.infer<typeof ConnectionPreviewSchema>;
+
+/** What stands between a connection and being switched on. A Fail blocks; a Warn is only said. */
+export const PreflightSchema = z.object({
+  canEnable: z.boolean(),
+  items: z.array(z.object({ key: z.string(), name: z.string(), outcome: z.string(), detail: z.string() })),
+});
+export type Preflight = z.infer<typeof PreflightSchema>;
+
+/**
+ * One value a PSA uses for a field and what the portal makes of it. `mapsTo` null = nothing maps
+ * it. `treatedAs` says how the portal counts tickets in a status nothing maps: "Open" or "Finished".
+ */
+const MappingValueSchema = z.object({
+  value: z.string(), mapsTo: z.string().nullable(), byFallbackRule: z.boolean().default(false),
+  tickets: z.number(), unmappedTickets: z.number(), listedByPsa: z.boolean(), treatedAs: z.string().nullable().default(null),
+});
+const MappingFieldHealthSchema = z.object({
+  field: z.string(), name: z.string(), values: z.number(), mapped: z.number(), mappedPct: z.number().nullable(),
+  unmappedTickets: z.number(), items: z.array(MappingValueSchema),
+});
+export type MappingFieldHealth = z.infer<typeof MappingFieldHealthSchema>;
+
+/** A change to a ticket that its PSA does not have: `state` is "Pending Sync" or "Sync Failed". */
+export const TicketOutboundSchema = z.object({
+  id: z.string(), kind: z.string(), summary: z.string(), state: z.string(), attempts: z.number(), maxAttempts: z.number(),
+  requestedAt: z.string(), requestedBy: z.string().nullable(), nextAttemptAt: z.string().nullable(), lastError: z.string().nullable(),
+});
+export type TicketOutbound = z.infer<typeof TicketOutboundSchema>;
+
+/** The same, in the list of every unsent change, with the ticket it is on. */
+export const OutboundRowSchema = TicketOutboundSchema.extend({
+  ticketId: z.string(), ticketReference: z.string().nullable(), ticketTitle: z.string(), connectionName: z.string(),
+});
+export type OutboundRow = z.infer<typeof OutboundRowSchema>;
+
+/** One of a PSA's custom fields, with what has been decided about it on a connection. */
+export const CustomFieldSchema = z.object({
+  key: z.string(), label: z.string(), dataType: z.string(), listedByPsa: z.boolean(),
+  import: z.boolean(), portalLabel: z.string(), clientVisible: z.boolean(),
+  editable: z.boolean().default(false), editableReason: z.string().default(''),
+});
+export type CustomField = z.infer<typeof CustomFieldSchema>;
+
+export const CustomFieldSettingsSchema = z.object({
+  connectionId: z.string(), connectionName: z.string(), provider: z.string(), supported: z.boolean(),
+  fields: z.array(CustomFieldSchema), imported: z.number(), clientVisible: z.number(), notes: z.array(z.string()).default([]),
+});
+export type CustomFieldSettings = z.infer<typeof CustomFieldSettingsSchema>;
+
+/** A company a client user can act in: their own, or one they were given. */
+export const MyCompanySchema = z.object({
+  id: z.string(), name: z.string(), isOwn: z.boolean(), seesAllTickets: z.boolean(), canCreate: z.boolean(),
+});
+export type MyCompany = z.infer<typeof MyCompanySchema>;
+
+/** A client user and the further companies the desk has given them. */
+export const ClientUserAccessSchema = z.object({
+  id: z.string(), displayName: z.string(), email: z.string(), isActive: z.boolean(), hasSignedIn: z.boolean(),
+  homeCompanyId: z.string(), homeCompanyName: z.string(),
+  grants: z.array(z.object({
+    companyId: z.string(), companyName: z.string(), seesAllTickets: z.boolean(), canCreate: z.boolean(), grantedAt: z.string(),
+  })),
+});
+export type ClientUserAccess = z.infer<typeof ClientUserAccessSchema>;
+
+/** How far a connection's classification rules reach, counted from its tickets and the rules as they are. */
+export const ClassificationHealthSchema = z.object({
+  rules: z.number(), classifiedTickets: z.number(), unmappedTickets: z.number(),
+  classifications: z.number(), mappedClassifications: z.number(), coverage: z.number().nullable(),
+  rulesMatchingNothing: z.number(), ticketsOutOfStep: z.number(),
+});
+export type ClassificationHealth = z.infer<typeof ClassificationHealthSchema>;
+
+/** One rule: tickets the PSA files under these levels are this in the portal. A null level is "whatever it is". */
+export const ClassificationRuleSchema = z.object({
+  id: z.string().nullable().default(null),
+  ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+  category: z.string().nullable(), workType: z.string().nullable(), subcategory: z.string().nullable(),
+});
+export type ClassificationRule = z.infer<typeof ClassificationRuleSchema>;
+
+/** One classification the connection's tickets are filed under. `mapped` false is UNMAPPED. */
+export const ClassificationSeenSchema = z.object({
+  ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+  tickets: z.number(), mapped: z.boolean(),
+  category: z.string().nullable(), workType: z.string().nullable(), subcategory: z.string().nullable(),
+});
+export type ClassificationSeen = z.infer<typeof ClassificationSeenSchema>;
+
+export const ClassificationMappingSchema = z.object({
+  connectionId: z.string(), connectionName: z.string(), provider: z.string(),
+  rules: z.array(ClassificationRuleSchema), seen: z.array(ClassificationSeenSchema), seenShown: z.number(),
+  health: ClassificationHealthSchema,
+  categories: z.array(z.string()).default([]), workTypes: z.array(z.string()).default([]), subcategories: z.array(z.string()).default([]),
+});
+export type ClassificationMapping = z.infer<typeof ClassificationMappingSchema>;
+
+/** What a set of rules would do to the tickets already here. Nothing has been saved or changed. */
+export const ClassificationPreviewSchema = z.object({
+  seen: z.array(ClassificationSeenSchema), health: ClassificationHealthSchema, ticketsThatWouldChange: z.number(),
+  sample: z.array(z.object({
+    reference: z.string(), title: z.string(),
+    ticketType: z.string().nullable(), issueType: z.string().nullable(), subIssueType: z.string().nullable(),
+    categoryNow: z.string().nullable(), categoryThen: z.string().nullable(),
+    workTypeNow: z.string().nullable(), workTypeThen: z.string().nullable(),
+    subcategoryNow: z.string().nullable(), subcategoryThen: z.string().nullable(),
+  })),
+});
+export type ClassificationPreview = z.infer<typeof ClassificationPreviewSchema>;
+
+export const ClassificationApplyResultSchema = z.object({ ticketsChanged: z.number(), changes: z.array(z.string()).default([]) });
+export type ClassificationApplyResult = z.infer<typeof ClassificationApplyResultSchema>;
+
+/** How well a connection's mapping covers what its PSA sends. `level`: Pass, Optional, Warning or Blocking. */
+export const ConnectionMappingHealthSchema = z.object({
+  connectionId: z.string(), connectionName: z.string(), checkedAt: z.string(), level: z.string(),
+  fields: z.array(MappingFieldHealthSchema),
+  outboundStatuses: z.array(z.object({ portalValue: z.string(), sendsAs: z.string().nullable(), problem: z.string().nullable() })),
+  technicians: z.object({
+    technicians: z.number(), linked: z.number(), linkedPct: z.number().nullable(),
+    unlinked: z.array(z.object({ externalId: z.string(), name: z.string().nullable(), tickets: z.number() })),
+    // Logins an administrator has said to leave alone. Not counted in the figures above.
+    ignored: z.number().default(0),
+  }),
+  tickets: z.number(), unmappedTickets: z.number(), ticketsWithoutClient: z.number(), notes: z.array(z.string()).default([]),
+  // Null from an API that does not count it yet.
+  classification: ClassificationHealthSchema.nullable().default(null),
+});
+export type ConnectionMappingHealth = z.infer<typeof ConnectionMappingHealthSchema>;
+
+/** A sample ticket: what it arrived with and what the rules make of it. A null mapped value = nothing maps it. */
+export const MappingPreviewRowSchema = z.object({
+  reference: z.string(), title: z.string(), sourceStatus: z.string().nullable(), mappedStatus: z.string().nullable(),
+  sourcePriority: z.string().nullable(), mappedPriority: z.string().nullable(), readFromPsa: z.boolean().default(false),
+});
+export type MappingPreviewRow = z.infer<typeof MappingPreviewRowSchema>;
+
+export const MappingApplyResultSchema = z.object({
+  statusesChanged: z.number(), prioritiesChanged: z.number(), changes: z.array(z.string()).default([]),
+});
+export type MappingApplyResult = z.infer<typeof MappingApplyResultSchema>;
+
+/** A record the sync could not read or apply. Kept, and tried again until it goes through. */
+export const SyncFailureSchema = z.object({
+  id: z.string(), entity: z.string(), externalId: z.string(), operation: z.string(), category: z.string(),
+  message: z.string(), attempts: z.number(), firstFailedAt: z.string(), lastFailedAt: z.string(),
+  nextAttemptAt: z.string().nullable(), status: z.string(),
+});
+export type SyncFailure = z.infer<typeof SyncFailureSchema>;
 
 export const MappingRuleSchema = z.object({
   id: z.string(),
@@ -411,3 +680,38 @@ export const ProfileSchema = z.object({
   signInManaged: z.boolean(),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
+
+/** What the page at an invitation or password-reset link shows before anything is typed. */
+export const InvitationLookupSchema = z.object({
+  purpose: z.string(), kind: z.string(), displayName: z.string(), email: z.string(), organizationName: z.string(),
+  expiresAt: z.string(), state: z.string(), canBeAccepted: z.boolean(),
+});
+export type InvitationLookup = z.infer<typeof InvitationLookupSchema>;
+
+/** One invitation as an administrator sees it. `state`: Sent, Accepted, Expired or Revoked. */
+export const InvitationSchema = z.object({
+  id: z.string(), kind: z.string(), purpose: z.string(), appUserId: z.string().nullable(), clientUserId: z.string().nullable(), email: z.string(),
+  createdAt: z.string(), expiresAt: z.string(), lastSentAt: z.string().nullable(), sentCount: z.number(), remindersSent: z.number(),
+  consumedAt: z.string().nullable(), revokedAt: z.string().nullable(), createdByName: z.string().nullable(), state: z.string(),
+});
+export type Invitation = z.infer<typeof InvitationSchema>;
+
+/** An invitation just made. The link is here once, for copying where mail does not reach. */
+export const InvitationSentSchema = z.object({
+  invitation: InvitationSchema, link: z.string(), mailed: z.boolean(), mailError: z.string().nullable(),
+});
+export type InvitationSent = z.infer<typeof InvitationSentSchema>;
+
+export const EmailTemplateSchema = z.object({
+  key: z.string(), name: z.string(), description: z.string(), subject: z.string(), body: z.string(), buttonLabel: z.string().nullable(),
+  hasLink: z.boolean(), placeholders: z.array(z.string()), isDefault: z.boolean(), updatedByName: z.string().nullable(), updatedAt: z.string().nullable(),
+});
+export type EmailTemplate = z.infer<typeof EmailTemplateSchema>;
+
+export const RenderedEmailSchema = z.object({ to: z.string(), subject: z.string(), textBody: z.string(), htmlBody: z.string() });
+export type RenderedEmail = z.infer<typeof RenderedEmailSchema>;
+
+export const EmailLogSchema = z.object({
+  id: z.string(), templateKey: z.string(), to: z.string(), subject: z.string(), sentAt: z.string(), succeeded: z.boolean(), error: z.string().nullable(),
+});
+export type EmailLogEntry = z.infer<typeof EmailLogSchema>;

@@ -81,6 +81,43 @@ public class AttachmentDeletionTests
     }
 
     [Fact]
+    public async Task A_full_sweep_that_stopped_early_deletes_nothing()
+    {
+        // The provider read part of its list and stopped - a page limit. Every file past that point
+        // is missing from the answer and still exists. Autotask's sweep was exactly this, one page
+        // of 500 reported as the whole tenant, and "Re-sync all" would have deleted the rest.
+        var f = await SetupAsync();
+        await using var _ = f.Db;
+        var now = f.Clock.GetUtcNow();
+        f.Connector.Attachments["7810"] = [File("38", "first.png", now), File("39", "second.png", now), File("40", "third.png", now)];
+        (await Runner(f).RunAsync(Conn, full: true)).Attachments.Should().Be(3);
+
+        f.Connector.SweepStopsAfter = 2;
+        var run = await Runner(f).RunAsync(Conn, full: true);
+
+        run.AttachmentsRemoved.Should().Be(0);
+        (await f.Db.TicketAttachments.Select(a => a.OriginalFileName).ToListAsync())
+            .Should().BeEquivalentTo(["first.png", "second.png", "third.png"]);
+        foreach (var key in await f.Db.TicketAttachments.Select(a => a.StorageObjectKey).ToListAsync())
+            (await f.Storage.GetAsync(key)).Should().NotBeNull("the stored bytes are untouched too");
+    }
+
+    [Fact]
+    public async Task A_full_sweep_that_stopped_early_still_imports_what_it_read()
+    {
+        var f = await SetupAsync();
+        await using var _ = f.Db;
+        var now = f.Clock.GetUtcNow();
+        f.Connector.Attachments["7810"] = [File("38", "first.png", now), File("39", "second.png", now), File("40", "third.png", now)];
+        f.Connector.SweepStopsAfter = 2;
+
+        var run = await Runner(f).RunAsync(Conn, full: true);
+
+        run.Attachments.Should().Be(2);
+        (await f.Db.TicketAttachments.CountAsync()).Should().Be(2);
+    }
+
+    [Fact]
     public async Task An_incremental_sweep_never_deletes_anything()
     {
         var f = await SetupAsync();

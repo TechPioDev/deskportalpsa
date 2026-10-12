@@ -42,6 +42,60 @@ public class TicketSyncTests
     };
 
     [Fact]
+    public async Task What_the_PSA_files_a_ticket_under_is_kept_as_sent_and_follows_the_PSA()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var clock = new TestClock();
+        await using var db = await SeedConnectionAsync(dbName);
+        var sync = Service(db, clock);
+        async Task<(string?, string?, string?)> KeptAsync()
+        {
+            var t = await db.Tickets.AsNoTracking().SingleAsync();
+            return (t.PsaTicketType, t.PsaIssueType, t.PsaSubIssueType);
+        }
+        var filed = Incoming("500", "Printer", "5") with { TicketType = "Incident", IssueType = " Hardware ", SubIssueType = "Printer" };
+
+        (await sync.UpsertFromProviderAsync(Conn, filed, [])).Should().Be(TicketSyncOutcome.Created);
+        (await KeptAsync()).Should().Be(("Incident", "Hardware", "Printer"));
+        (await sync.UpsertFromProviderAsync(Conn, filed, [])).Should().Be(TicketSyncOutcome.SkippedUnchanged, "read again as it was");
+
+        // Moved under another sub-issue in the PSA, with nothing else about it changed.
+        (await sync.UpsertFromProviderAsync(Conn, filed with { SubIssueType = "Scanner" }, [])).Should().Be(TicketSyncOutcome.Updated);
+        (await KeptAsync()).Should().Be(("Incident", "Hardware", "Scanner"));
+
+        // And taken out from under it: what the ticket has lost is not kept on.
+        (await sync.UpsertFromProviderAsync(Conn, filed with { SubIssueType = null, IssueType = "" }, [])).Should().Be(TicketSyncOutcome.Updated);
+        (await KeptAsync()).Should().Be(("Incident", null, null));
+
+        // A name longer than the column is kept as far as it goes, and does not stop the ticket.
+        (await sync.UpsertFromProviderAsync(Conn, filed with { TicketType = new string('x', 300) }, [])).Should().Be(TicketSyncOutcome.Updated);
+        (await KeptAsync()).Item1.Should().HaveLength(200);
+    }
+
+    [Fact]
+    public async Task A_ticket_already_here_is_given_what_it_is_filed_under_and_one_filed_under_nothing_is_not_rewritten()
+    {
+        // Both were imported before the portal read any of this, so neither has it. The next time
+        // each is read, the one the PSA files under something is brought up to date - and the one
+        // it files under nothing is left exactly as it is: its hash has not moved, so the whole
+        // import is not rewritten for a column most of it does not have.
+        var dbName = Guid.NewGuid().ToString();
+        var clock = new TestClock();
+        await using var db = await SeedConnectionAsync(dbName);
+        var sync = Service(db, clock);
+        await sync.UpsertFromProviderAsync(Conn, Incoming("1", "Filed", "5"), []);
+        await sync.UpsertFromProviderAsync(Conn, Incoming("2", "Bare", "5"), []);
+        var before = await db.Tickets.AsNoTracking().ToDictionaryAsync(t => t.ExternalTicketId!, t => t.UpdateHash);
+
+        (await sync.UpsertFromProviderAsync(Conn, Incoming("1", "Filed", "5") with { IssueType = "Hardware" }, [])).Should().Be(TicketSyncOutcome.Updated);
+        (await sync.UpsertFromProviderAsync(Conn, Incoming("2", "Bare", "5"), [])).Should().Be(TicketSyncOutcome.SkippedUnchanged);
+
+        var after = await db.Tickets.AsNoTracking().ToDictionaryAsync(t => t.ExternalTicketId!);
+        after["1"].PsaIssueType.Should().Be("Hardware");
+        after["2"].UpdateHash.Should().Be(before["2"], "nothing about it changed, so nothing about it was written");
+    }
+
+    [Fact]
     public async Task First_sync_creates_the_ticket_and_the_client_company()
     {
         var dbName = Guid.NewGuid().ToString();

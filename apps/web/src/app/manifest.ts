@@ -6,9 +6,9 @@ import type { MetadataRoute } from 'next';
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'piomanage Desk',
-    short_name: 'Desk',
-    description: 'Your tickets, boards and alerts from piomanage, on your phone.',
+    name: 'PioManage',
+    short_name: 'PioManage',
+    description: 'Your tickets, boards and alerts from PioManage, on your phone.',
     start_url: '/dashboard',
     scope: '/',
     display: 'standalone',

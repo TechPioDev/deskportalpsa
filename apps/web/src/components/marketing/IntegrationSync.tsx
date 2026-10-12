@@ -27,7 +27,7 @@ export function SyncLanes() {
       <div className="mb-5 flex items-center justify-between gap-4 text-[13px] font-semibold">
         <span className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-brand" aria-hidden="true" />
-          Desk Portal
+          PioManage
         </span>
         <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--muted)]">
           <ArrowLeftRight size={13} className="text-brand-mid" aria-hidden="true" />

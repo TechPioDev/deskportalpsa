@@ -86,5 +86,7 @@ DAST/ZAP and a penetration test run against `http://localhost:5080` once the sta
 - Run migrations as an explicit deploy step (or set `RunMigrationsOnStartup=true`).
 - Set `SECRET_ENCRYPTION_KEY` (`Secrets:EncryptionKey`) to a real 32-byte base64 key — generate with
   `openssl rand -base64 32` and back it up like the database; startup refuses to run without one.
-- Turn on the SSRF guard: `Connectors:BlockPrivateEgress=true` (+ allowlist for self-hosted PSA).
+- The SSRF guard is on by default outside local mode (`Connectors:BlockPrivateEgress`, API and
+  worker). Name a self-hosted PSA on a private network in `Connectors:AllowedHosts`; do not switch
+  the guard off for it.
 - Set `KEYCLOAK_CLIENT_SECRET` only if you switch `desk-web` to a confidential client.

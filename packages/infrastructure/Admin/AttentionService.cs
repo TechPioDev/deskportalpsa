@@ -34,6 +34,12 @@ public sealed class AttentionService(
     /// <summary>Two-way connections poll every five minutes; an hour without a completed run is a stall, not a quiet period.</summary>
     public static readonly TimeSpan StaleSyncAfter = TimeSpan.FromHours(1);
 
+    /// <summary>
+    /// How long a sync someone asked for may wait before it is worth saying. The worker takes a
+    /// request within seconds, so ten minutes of nothing is a worker that is not running.
+    /// </summary>
+    public static readonly TimeSpan SyncRequestWaitingAfter = TimeSpan.FromMinutes(10);
+
     /// <summary>A report that failed to send stops being news after this long.</summary>
     public static readonly TimeSpan UndeliveredReportWindow = TimeSpan.FromDays(14);
 
@@ -48,10 +54,70 @@ public sealed class AttentionService(
 
         // ── Connections ───────────────────────────────────────────────────────
         var connections = await db.PsaConnections.AsNoTracking()
-            .Select(c => new { c.Id, c.Name, c.Provider, c.Status, c.TwoWaySync, c.LastSuccessfulSyncAt, c.LastError })
+            .Select(c => new
+            {
+                c.Id, c.Name, c.Provider, c.Status, c.TwoWaySync, c.LastSuccessfulSyncAt, c.LastError,
+                c.IsEnabled, c.InSetup, c.ArchivedAt, c.SyncPausedAt, c.LastErrorKind, c.SyncRequestedAt,
+            })
             .ToListAsync(ct);
+
+        // Syncs asked for long enough ago to wonder about, and whether anything has run for them
+        // since. A long first import keeps its request standing while it works through it: that
+        // is a sync being run, not one being ignored.
+        var waiting = connections
+            .Where(c => c.ArchivedAt is null && c.SyncPausedAt is null && c.SyncRequestedAt is { } at && now - at > SyncRequestWaitingAfter)
+            .Select(c => c.Id)
+            .ToList();
+        var lastRun = waiting.Count == 0
+            ? []
+            : (await db.SyncRuns.AsNoTracking()
+                    .Where(r => waiting.Contains(r.PsaConnectionId))
+                    .GroupBy(r => r.PsaConnectionId)
+                    .Select(g => new { g.Key, Last = g.Max(r => r.StartedAt) })
+                    .ToListAsync(ct))
+                .ToDictionary(x => x.Key, x => x.Last);
+
         foreach (var c in connections)
         {
+            // Put away. It is meant to be silent.
+            if (c.ArchivedAt is not null) continue;
+
+            if (waiting.Contains(c.Id) && !(lastRun.TryGetValue(c.Id, out var started) && started >= c.SyncRequestedAt))
+                items.Add(new AttentionItem(
+                    "sync-request-waiting", "warning",
+                    $"A sync asked for on \"{c.Name}\" has not started after {Age(now - c.SyncRequestedAt!.Value)}",
+                    "The worker that runs syncs has not taken it. Nothing is lost: it starts when the worker is running again. " +
+                    "If this does not clear, the worker needs looking at.",
+                    1, "/dashboard/connections"));
+
+            // Never been live. Nothing is broken, so it is not reported as broken - a failed first
+            // test used to read "connection is failed, critical". A connection someone started and
+            // did not finish is still worth one line.
+            if (c.InSetup)
+            {
+                items.Add(new AttentionItem(
+                    "connection-setup", "warning",
+                    $"{ProviderName(c.Provider)} connection \"{c.Name}\" is not switched on yet",
+                    string.IsNullOrWhiteSpace(c.LastError)
+                        ? "It was added and has not passed a test. Open the connection and choose Test and switch on."
+                        : $"Its last test did not pass: {c.LastError.Trim()} Open the connection, choose Edit to correct it, then Test and switch on.",
+                    1, "/dashboard/connections"));
+                continue;
+            }
+
+            // The PSA rejected the credentials. Automatic sync stops in this state, so this is the
+            // whole story: "degraded" and "has not synced" would both be this, told less usefully.
+            if (c.IsEnabled && c.LastErrorKind == ConnectionStates.Authentication)
+            {
+                items.Add(new AttentionItem(
+                    "connection-credentials", "critical",
+                    $"{ProviderName(c.Provider)} connection \"{c.Name}\" needs new credentials",
+                    "The PSA rejected the stored credentials, so automatic sync has stopped rather than lock the API account out. " +
+                    "Open the connection, choose Edit and enter credentials the PSA accepts.",
+                    1, "/dashboard/connections"));
+                continue;
+            }
+
             if (c.Status is ConnectionStatus.Failed or ConnectionStatus.Degraded)
             {
                 items.Add(new AttentionItem(
@@ -62,6 +128,20 @@ public sealed class AttentionService(
                         ? "The last sync or health check did not succeed. Open the connection and run Test connection."
                         : $"Last error: {c.LastError.Trim()}",
                     1, "/dashboard/connections"));
+            }
+
+            // Paused by an administrator: not a fault, and easy to forget. Said as what it is, not
+            // as a sync that stopped for no reason - "run Sync now to see the error" would be wrong.
+            if (c.IsEnabled && c.SyncPausedAt is { } pausedAt)
+            {
+                if (now - pausedAt > StaleSyncAfter)
+                    items.Add(new AttentionItem(
+                        "sync-paused", "warning",
+                        $"Sync for \"{c.Name}\" has been paused for {Age(now - pausedAt)}",
+                        "Nothing changed in the PSA since then has reached the portal. " +
+                        "Resume sync on the connection when it should carry on; it picks up from where it stopped.",
+                        1, "/dashboard/connections"));
+                continue;
             }
 
             if (c.TwoWaySync && c.Status is not ConnectionStatus.Disabled
@@ -93,6 +173,30 @@ public sealed class AttentionService(
             .OrderBy(t => t.SlaDueAt)
             .Select(t => new { Ref = t.Number ?? t.ExternalTicketId, t.Title, Due = t.SlaDueAt!.Value })
             .ToListAsync(ct);
+        // Changes made here that a PSA does not have. A failed one is somebody's work that was not
+        // delivered and will not be tried again by itself. A waiting one is said only once it has
+        // waited long enough to wonder about: a minute's wait while a PSA restarts is not news.
+        var undelivered = await db.OutboundOperations.AsNoTracking()
+            .Where(o => o.State != Desk.Domain.Sync.OutboundState.Synced)
+            .Select(o => new { o.State, o.CreatedAt })
+            .ToListAsync(ct);
+        var refused = undelivered.Count(o => o.State == Desk.Domain.Sync.OutboundState.Failed);
+        if (refused > 0)
+            items.Add(new AttentionItem(
+                "outbound-failed", "critical",
+                $"{Plural(refused, "change")} made here did not reach the PSA",
+                "A reply, a status, an hour or a ticket that the PSA refused, or could not be given after every try. " +
+                "Each is kept, marked Sync Failed, for somebody to send again or let go of.",
+                refused, "/dashboard/outbound"));
+        var longWaiting = undelivered.Count(o => o.State == Desk.Domain.Sync.OutboundState.Pending && now - o.CreatedAt > TimeSpan.FromHours(1));
+        if (longWaiting > 0)
+            items.Add(new AttentionItem(
+                "outbound-waiting", "warning",
+                $"{Plural(longWaiting, "change")} {(longWaiting == 1 ? "has" : "have")} waited over an hour to reach the PSA",
+                "They are tried again by themselves, less often as time goes on. If the PSA is up, look at its connection; " +
+                "if nothing is being tried at all, the worker that sends them needs looking at.",
+                longWaiting, "/dashboard/outbound"));
+
         if (breached.Count > 0)
         {
             var oldest = breached[0];
@@ -354,8 +458,8 @@ public sealed class AttentionService(
     {
         var critical = items.Count(i => i.Severity == "critical");
         var subject = items.Count == 0
-            ? $"Desk Portal: all clear — {orgName}"
-            : $"Desk Portal: {Plural(items.Count, "item")} need{(items.Count == 1 ? "s" : "")} attention — {orgName}"
+            ? $"PioManage: all clear — {orgName}"
+            : $"PioManage: {Plural(items.Count, "item")} need{(items.Count == 1 ? "s" : "")} attention — {orgName}"
               + (critical > 0 ? $" ({critical} critical)" : "");
 
         var text = new StringBuilder();
@@ -396,13 +500,7 @@ public sealed class AttentionService(
     private static string PortalBase()
         => Environment.GetEnvironmentVariable("PORTAL_PUBLIC_URL")?.TrimEnd('/') is { Length: > 0 } u ? u : "https://piomanage.com";
 
-    private static string ProviderName(ProviderType p) => p switch
-    {
-        ProviderType.ConnectWisePsa => "ConnectWise",
-        ProviderType.AutotaskPsa => "Autotask",
-        ProviderType.HaloPsa => "HaloPSA",
-        _ => p.ToString(),
-    };
+    private static string ProviderName(ProviderType p) => Desk.PsaCore.Contracts.ProviderNames.Short(p);
 
     private static string Plural(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
 

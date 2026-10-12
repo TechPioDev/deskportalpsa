@@ -31,11 +31,13 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<PsaConnection> PsaConnections => Set<PsaConnection>();
     public DbSet<ClientCompany> ClientCompanies => Set<ClientCompany>();
     public DbSet<ClientUser> ClientUsers => Set<ClientUser>();
+    public DbSet<ClientCompanyAccess> ClientCompanyAccess => Set<ClientCompanyAccess>();
     public DbSet<AppUser> AppUsers => Set<AppUser>();
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<Desk.Domain.Identity.UserPsaIdentity> UserPsaIdentities => Set<Desk.Domain.Identity.UserPsaIdentity>();
+    public DbSet<Desk.Domain.Identity.PsaTechnicianIgnore> PsaTechnicianIgnores => Set<Desk.Domain.Identity.PsaTechnicianIgnore>();
     public DbSet<Desk.Domain.Analytics.ActivityEvent> ActivityEvents => Set<Desk.Domain.Analytics.ActivityEvent>();
     public DbSet<Desk.Domain.Analytics.ActivityDailyFact> ActivityDailyFacts => Set<Desk.Domain.Analytics.ActivityDailyFact>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
@@ -61,6 +63,9 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<CannedResponse> CannedResponses => Set<CannedResponse>();
     public DbSet<DeskHoliday> DeskHolidays => Set<DeskHoliday>();
     public DbSet<TicketSatisfaction> TicketSatisfactions => Set<TicketSatisfaction>();
+    public DbSet<Desk.Domain.Identity.SignInInvitation> SignInInvitations => Set<Desk.Domain.Identity.SignInInvitation>();
+    public DbSet<Desk.Domain.Identity.EmailTemplate> EmailTemplates => Set<Desk.Domain.Identity.EmailTemplate>();
+    public DbSet<Desk.Domain.Identity.EmailLogEntry> EmailLog => Set<Desk.Domain.Identity.EmailLogEntry>();
     public DbSet<TicketApproval> TicketApprovals => Set<TicketApproval>();
     public DbSet<Desk.Domain.Knowledge.KbArticle> KbArticles => Set<Desk.Domain.Knowledge.KbArticle>();
     public DbSet<Desk.Domain.Knowledge.KbArticleClient> KbArticleClients => Set<Desk.Domain.Knowledge.KbArticleClient>();
@@ -76,9 +81,15 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     public DbSet<TicketAttachment> TicketAttachments => Set<TicketAttachment>();
     public DbSet<TicketTimeEntry> TicketTimeEntries => Set<TicketTimeEntry>();
     public DbSet<FieldMapping> FieldMappings => Set<FieldMapping>();
+    public DbSet<ClassificationMapping> ClassificationMappings => Set<ClassificationMapping>();
+    public DbSet<PsaCustomField> PsaCustomFields => Set<PsaCustomField>();
     public DbSet<FieldMappingVersion> FieldMappingVersions => Set<FieldMappingVersion>();
     public DbSet<SyncEvent> SyncEvents => Set<SyncEvent>();
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
+    public DbSet<SyncCursor> SyncCursors => Set<SyncCursor>();
+    public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
+    public DbSet<OutboundOperation> OutboundOperations => Set<OutboundOperation>();
+    public DbSet<SyncFailure> SyncFailures => Set<SyncFailure>();
     public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
     public DbSet<TicketInstruction> TicketInstructions => Set<TicketInstruction>();
     public DbSet<ClientAccessGrant> ClientAccessGrants => Set<ClientAccessGrant>();
@@ -185,6 +196,7 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
     private void ApplyInvariants()
     {
         var now = clock.GetUtcNow();
+        List<Desk.Domain.Tickets.TicketTimeEntry>? unplaced = null;
 
         foreach (var entry in ChangeTracker.Entries())
         {
@@ -198,6 +210,12 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
             {
                 ue.UpdatedAt = now;
             }
+
+            // A time entry carries the PSA account of its ticket. Noted here and given it below, all
+            // of them together: asked for one at a time, a thousand entries saved at once was a
+            // thousand looks through everything this unit of work holds.
+            if (entry is { Entity: Desk.Domain.Tickets.TicketTimeEntry time, State: EntityState.Added } && time.PsaConnectionId is null)
+                (unplaced ??= []).Add(time);
 
             // Audit log is append-only.
             if (entry.Entity is AuditLogEntry && entry.State is EntityState.Modified or EntityState.Deleted)
@@ -226,5 +244,34 @@ public class DeskDbContext(DbContextOptions<DeskDbContext> options, ITenantConte
                 }
             }
         }
+
+        if (unplaced is not null) PlaceTimeEntries(unplaced);
+    }
+
+    /// <summary>
+    /// Gives each new time entry the PSA account of its ticket, where whoever made the entry did not.
+    /// "Who has logged time" is read off the entry, and an entry without its account would simply
+    /// not be in the answer - so this is not left to each place that writes one.
+    ///
+    /// The ticket is nearly always in hand: time is logged on a ticket that was just read. Those
+    /// that are not are asked for together, once. A ticket with no PSA is an answer, not a miss.
+    /// </summary>
+    private void PlaceTimeEntries(List<Desk.Domain.Tickets.TicketTimeEntry> entries)
+    {
+        var wanted = entries.Where(e => e.Ticket is null).Select(e => e.TicketId).ToHashSet();
+        var account = new Dictionary<Guid, Guid?>();
+        if (wanted.Count > 0)
+        {
+            foreach (var ticket in ChangeTracker.Entries<Desk.Domain.Tickets.Ticket>())
+                if (wanted.Remove(ticket.Entity.Id)) account[ticket.Entity.Id] = ticket.Entity.PsaConnectionId;
+        }
+        if (wanted.Count > 0)
+        {
+            var ids = wanted.ToList();
+            foreach (var ticket in Tickets.IgnoreQueryFilters().AsNoTracking().Where(t => ids.Contains(t.Id)).Select(t => new { t.Id, t.PsaConnectionId }).ToList())
+                account[ticket.Id] = ticket.PsaConnectionId;
+        }
+        foreach (var entry in entries)
+            entry.PsaConnectionId = entry.Ticket is { } own ? own.PsaConnectionId : account.GetValueOrDefault(entry.TicketId);
     }
 }

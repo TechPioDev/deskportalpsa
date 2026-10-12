@@ -43,7 +43,8 @@ public sealed class IntegrationHealthService(DeskDbContext db) : IIntegrationHea
 {
     public async Task<IReadOnlyList<ConnectionHealthDto>> SnapshotAsync(CancellationToken ct = default)
     {
-        var connections = await db.PsaConnections.AsNoTracking().ToListAsync(ct);
+        // Not the ones put away: they are no part of how the integration is doing.
+        var connections = await db.PsaConnections.AsNoTracking().Where(c => c.ArchivedAt == null).ToListAsync(ct);
         var result = new List<ConnectionHealthDto>(connections.Count);
 
         foreach (var c in connections)
@@ -125,6 +126,7 @@ public sealed class UserAdminService(
             // The caller resolves the label from the provider's own discovery; only the ID is
             // ever written to the PSA, so a missing or stale label is cosmetic.
             var name = string.IsNullOrWhiteSpace(externalTechnicianName) ? null : externalTechnicianName.Trim();
+            await PsaIdentityRules.EnsureLoginIsFreeAsync(db, psaConnectionId, id, userId, ct);
 
             if (row is null)
             {
@@ -142,6 +144,8 @@ public sealed class UserAdminService(
                 row.ExternalTechnicianId = id;
                 row.ExternalTechnicianName = name;
             }
+            // Linked now, so no longer "nobody": an earlier decision to leave the login alone is taken back.
+            await PsaIdentityRules.StopIgnoringAsync(db, psaConnectionId, id, ct);
         }
 
         await db.SaveChangesAsync(ct);

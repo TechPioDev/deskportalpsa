@@ -16,19 +16,56 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
 {
     private const string Secret = "cw-webhook-secret";
 
-    private ConnectWiseConnector Build(FakeConnectWiseServer server)
+    private ConnectWiseConnector Build(FakeConnectWiseServer server, string webhookSecret = Secret)
     {
         var http = new HttpClient(server) { BaseAddress = new Uri("https://cw.local/v4_6_release/apis/3.0/") };
         var config = new ConnectWiseConnectorConfig
         {
             BaseUrl = "https://cw.local/v4_6_release/apis/3.0/",
             Credentials = new ConnectWiseCredentials("acme", "pub", "priv", "client-guid"),
-            WebhookSecret = Secret,
+            WebhookSecret = webhookSecret,
         };
         return new ConnectWiseConnector(http, config, Clock);
     }
 
     protected override IServiceManagementConnector CreateConnector() => Build(new FakeConnectWiseServer(Clock));
+
+    protected override IServiceManagementConnector CreateConnectorWithoutWebhookSecret() => Build(new FakeConnectWiseServer(Clock), "");
+
+    [Fact]
+    public async Task A_tickets_own_fields_are_read_by_id_as_ConnectWise_sends_them_on_every_ticket()
+    {
+        // ConnectWise sends each of the tenant's own fields on every ticket, with its caption and
+        // kind, whether or not anything was entered. None of it was read.
+        List<Dictionary<string, object?>> Fields(object? asset, object? contract, object? site, object? seats) =>
+        [
+            new() { ["id"] = 12, ["caption"] = "Asset tag", ["type"] = "Text", ["entryMethod"] = "EntryField", ["value"] = asset },
+            new() { ["id"] = 13, ["caption"] = "Under contract", ["type"] = "Checkbox", ["entryMethod"] = "EntryField", ["value"] = contract },
+            new() { ["id"] = 14, ["caption"] = "Site", ["type"] = "Text", ["entryMethod"] = "List", ["value"] = site },
+            new() { ["id"] = 15, ["caption"] = "Seats", ["type"] = "Number", ["entryMethod"] = "EntryField", ["value"] = seats },
+        ];
+        var server = new FakeConnectWiseServer(Clock);
+        var c = Build(server);
+        (await c.GetCustomFieldsAsync()).Should().BeEmpty("the fields there are, are read off a ticket, and there is none yet");
+
+        server.SeedTicket(new Dictionary<string, object?> { ["id"] = 601L, ["summary"] = "Laptop will not charge", ["company"] = new Dictionary<string, object?> { ["id"] = 1, ["name"] = "Acme" }, ["customFields"] = Fields("LT-0042", true, "Mohali", 12) });
+        server.SeedTicket(new Dictionary<string, object?> { ["id"] = 602L, ["summary"] = "Nothing entered", ["company"] = new Dictionary<string, object?> { ["id"] = 1, ["name"] = "Acme" }, ["customFields"] = Fields(null, false, "", null) });
+        server.SeedTicket(new Dictionary<string, object?> { ["id"] = 603L, ["summary"] = "An older API", ["company"] = new Dictionary<string, object?> { ["id"] = 1, ["name"] = "Acme" } });
+
+        (await c.GetCustomFieldsAsync()).Select(f => (f.Key, f.Label, f.DataType)).Should().BeEquivalentTo(new[]
+        {
+            ("12", "Asset tag", CustomFieldTypes.Text), ("13", "Under contract", CustomFieldTypes.Boolean),
+            ("14", "Site", CustomFieldTypes.List), ("15", "Seats", CustomFieldTypes.Number),
+        });
+
+        var listed = (await c.GetTicketsAsync(new TicketFilter())).Items;
+        var expected = new Dictionary<string, string?> { ["12"] = "LT-0042", ["13"] = "true", ["14"] = "Mohali", ["15"] = "12" };
+        (await c.GetTicketAsync("601"))!.CustomFields.Should().BeEquivalentTo(expected);
+        listed.Single(t => t.ExternalId == "601").CustomFields.Should().BeEquivalentTo(expected, "a ticket in a list says what the same ticket says by itself");
+        listed.Single(t => t.ExternalId == "602").CustomFields.Should().BeEquivalentTo(
+            new Dictionary<string, string?> { ["12"] = null, ["13"] = "false", ["14"] = null, ["15"] = null }, "nothing entered is no value; an unticked box is an answer");
+        listed.Single(t => t.ExternalId == "603").CustomFields.Should().BeEmpty();
+    }
 
     [Fact]
     public async Task A_ticket_carries_its_contact_as_ConnectWise_sends_it_inline()
@@ -105,6 +142,35 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
     }
 
     [Fact]
+    public async Task What_a_ticket_is_filed_under_is_read_in_ConnectWises_own_words()
+    {
+        // ConnectWise files a ticket under a type, a subtype and an item. Only the type was read.
+        var server = new FakeConnectWiseServer(Clock);
+        Dictionary<string, object?> Named(long id, string name) => new() { ["id"] = id, ["name"] = name };
+        Dictionary<string, object?> Ticket(string summary) => new()
+        {
+            ["summary"] = summary,
+            ["status"] = Named(1, "New"), ["priority"] = Named(3, "High"), ["board"] = Named(1, "Service Desk"),
+        };
+        var filed = Ticket("Printer offline");
+        (filed["type"], filed["subType"], filed["item"]) = (Named(7, "Hardware"), Named(71, "Printer"), Named(712, "Toner"));
+        var partly = Ticket("New starter");
+        // A level that is not set comes as a reference with nothing in it, or does not come at all.
+        (partly["type"], partly["subType"]) = (Named(8, "Request"), new Dictionary<string, object?> { ["id"] = 0L, ["name"] = "" });
+        server.SeedTicket(filed);
+        server.SeedTicket(partly);
+        server.SeedTicket(Ticket("Unsorted"));
+        var c = Build(server);
+
+        var page = (await c.GetTicketsAsync(new TicketFilter())).Items.ToDictionary(t => t.Title);
+
+        (page["Printer offline"].TicketType, page["Printer offline"].IssueType, page["Printer offline"].SubIssueType).Should().Be(("Hardware", "Printer", "Toner"));
+        page["Printer offline"].Category.Should().Be("Hardware", "the type is still the category, as it was");
+        (page["New starter"].TicketType, page["New starter"].IssueType, page["New starter"].SubIssueType).Should().Be(("Request", null, null));
+        (page["Unsorted"].TicketType, page["Unsorted"].IssueType, page["Unsorted"].SubIssueType).Should().Be((null, null, null));
+    }
+
+    [Fact]
     public async Task A_rule_saved_from_discovery_can_match_an_incoming_ticket()
     {
         var connector = Build(WithExistingTicket(Clock));
@@ -129,6 +195,33 @@ public sealed class ConnectWiseConnectorCertificationTests : ConnectorCertificat
 
         boards.Should().OnlyContain(o => o.Value.All(char.IsDigit), "the filter sends board/id");
         boards.Should().OnlyContain(o => !o.SyncValue.All(char.IsDigit), "a ticket carries the name");
+    }
+
+    [Fact]
+    public async Task A_count_asks_how_many_tickets_a_filter_matches_without_reading_them()
+    {
+        var server = new FakeConnectWiseServer(Clock);
+        server.SeedTicket(new() { ["summary"] = "open one", ["closedFlag"] = false });
+        server.SeedTicket(new() { ["summary"] = "open two", ["closedFlag"] = false });
+        server.SeedTicket(new() { ["summary"] = "done", ["closedFlag"] = true });
+        var connector = Build(server);
+
+        (await connector.CountTicketsAsync(new TicketFilter())).Should().Be(3);
+        (await connector.CountTicketsAsync(new TicketFilter { IncludeClosed = false })).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task A_synced_ticket_carries_its_boards_id_as_well_as_its_name()
+    {
+        // The other half of the test above. A connection limited to certain boards holds their ids;
+        // with only the name on the ticket, the limit could not be checked against what came back.
+        var connector = Build(WithExistingTicket(Clock));
+
+        var ticket = (await connector.GetTicketsAsync(new TicketFilter())).Items.Single();
+
+        (ticket.QueueOrBoard, ticket.QueueOrBoardId).Should().Be(("Service Desk", "1"));
+        (await connector.GetQueuesOrBoardsAsync()).Select(o => o.Value).Should().Contain(ticket.QueueOrBoardId,
+            "the id on the ticket is the id the board list offers for the limit");
     }
 
     [Fact]

@@ -18,8 +18,12 @@ namespace Desk.Api.Controllers;
 public sealed class AdminConnectionsController(
     IConnectionAdminService svc,
     IConnectionSyncRunner syncRunner,
+    ISyncRequestService syncRequests,
     DeskDbContext db,
-    IConfiguration config) : ControllerBase
+    IConfiguration config,
+    ISyncHealthService syncHealth,
+    Desk.Application.Abstractions.ICurrentUser user,
+    Desk.Application.Admin.IAuditWriter audit) : ControllerBase
 {
     [HttpGet]
     [RequirePermission(Permissions.ConnectionsView)]
@@ -95,9 +99,140 @@ public sealed class AdminConnectionsController(
     [RequirePermission(Permissions.ConnectionsManage)]
     public async Task<IActionResult> Sync(Guid id, [FromQuery] bool full, CancellationToken ct)
     {
-        var result = await syncRunner.RunAsync(id, full, ct);
+        // Under the caller's tenant: another organization's connection is not found, before
+        // anything is recorded about it.
+        var paused = await db.PsaConnections.AsNoTracking()
+            .Where(c => c.Id == id)
+            .Select(c => new { Paused = c.SyncPausedAt != null })
+            .FirstOrDefaultAsync(ct);
+        if (paused is null) return NotFound();
+        // Said in words. A run on a paused connection reads nothing, and "0 fetched" would look
+        // like a sync that found nothing new.
+        if (paused.Paused)
+            throw new Desk.Application.Common.ValidationFailedException("Sync is paused for this connection. Resume it to read from the PSA again.");
+        // Recorded as asked for, before it runs: a run that then fails was still requested.
+        await audit.WriteAsync("connection.sync.requested", "PsaConnection", id.ToString(), new { full }, ct);
+
+        var by = user.DisplayName ?? user.Email ?? user.Subject;
+        // Where there is a worker the sync is the worker's to run, and this only asks for it. A
+        // first import of a large PSA takes minutes; run inside this request it was cut off by
+        // whatever stands in front of the API, and went on unseen behind an error message.
+        if (!config.GetValue("LocalMode:Enabled", false))
+        {
+            var asked = await syncRequests.RequestAsync(id, full, by, ct);
+            return Accepted(new { queued = true, requestedAt = asked.RequestedAt, full = asked.Full });
+        }
+
+        // Local mode is one process with no worker beside it, so the sync runs here as it always
+        // did. One run per connection: while another has it this answers 409 and starts nothing.
+        var result = await syncRunner.RunAsync(id, new SyncRunRequest(full, Manual: true, RequestedBy: by), ct);
         await EnsureLocalClientIdentityAsync(id, ct);
         return Ok(result);
+    }
+
+    /// <summary>Every PSA the portal names: those that can be connected, with what each needs, and those that are planned.</summary>
+    [HttpGet("providers")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public IActionResult Providers() => Ok(svc.Providers());
+
+    /// <summary>What this connection's PSA can and cannot do, so a screen offers only what will work.</summary>
+    [HttpGet("{id:guid}/capabilities")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Capabilities(Guid id, CancellationToken ct) => Ok(await svc.CapabilitiesAsync(id, ct));
+
+    /// <summary>The test, line by line. Reads only: nothing is written to the PSA.</summary>
+    [HttpPost("{id:guid}/check")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Check(Guid id, CancellationToken ct) => Ok(await svc.CheckAsync(id, ct));
+
+    /// <summary>Each status and priority the PSA lists, and what this connection's rules make of it.</summary>
+    [HttpGet("{id:guid}/mapping-coverage")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingCoverage(Guid id, CancellationToken ct) => Ok(await svc.MappingCoverageAsync(id, ct));
+
+    /// <summary>How well this connection's mapping covers what its PSA sends.</summary>
+    [HttpGet("{id:guid}/mapping-health")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingHealth(Guid id, CancellationToken ct) => Ok(await svc.MappingHealthAsync(id, ct));
+
+    /// <summary>Sample tickets and what the rules make of each.</summary>
+    [HttpGet("{id:guid}/mapping-preview")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingPreview(Guid id, [FromQuery] int take = 10, CancellationToken ct = default)
+        => Ok(await svc.MappingPreviewAsync(id, take, ct));
+
+    /// <summary>Re-maps imported tickets still showing the PSA's own word for a value a rule now maps.</summary>
+    [HttpPost("{id:guid}/mapping-apply")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> MappingApply(Guid id, CancellationToken ct) => Ok(await svc.ApplyMappingAsync(id, ct));
+
+    /// <summary>How much an import would bring in, asked of the PSA before anything is imported.</summary>
+    [HttpGet("{id:guid}/preview")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Preview(Guid id, CancellationToken ct) => Ok(await svc.PreviewAsync(id, ct));
+
+    /// <summary>What stands between this connection and being switched on.</summary>
+    [HttpGet("{id:guid}/preflight")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Preflight(Guid id, CancellationToken ct) => Ok(await svc.PreflightAsync(id, ct));
+
+    /// <summary>Switches a new connection on for the first time. Refused until a test has passed.</summary>
+    [HttpPost("{id:guid}/activate")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Activate(Guid id, CancellationToken ct) => Ok(await svc.ActivateAsync(id, ct));
+
+    [HttpPost("{id:guid}/pause-sync")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> PauseSync(Guid id, CancellationToken ct) => Ok(await svc.PauseSyncAsync(id, ct));
+
+    [HttpPost("{id:guid}/resume-sync")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> ResumeSync(Guid id, CancellationToken ct) => Ok(await svc.ResumeSyncAsync(id, ct));
+
+    /// <summary>The connections that have been put away, so that one can be restored.</summary>
+    [HttpGet("archived")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Archived(CancellationToken ct) => Ok(await svc.ArchivedAsync(ct));
+
+    /// <summary>Puts a connection away. Nothing it imported is removed, and it can be restored.</summary>
+    [HttpPost("{id:guid}/archive")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Archive(Guid id, CancellationToken ct)
+    {
+        await svc.ArchiveAsync(id, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:guid}/restore")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> Restore(Guid id, CancellationToken ct) => Ok(await svc.RestoreAsync(id, ct));
+
+    /// <summary>Where the connection's sync stands: its cursor, its recent runs, what it still owes.</summary>
+    [HttpGet("{id:guid}/sync-state")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> SyncState(Guid id, [FromQuery] int runs = 20, CancellationToken ct = default)
+        => Ok(await syncHealth.StateAsync(id, runs, ct));
+
+    /// <summary>The records the sync could not read or apply and has not yet got through.</summary>
+    [HttpGet("{id:guid}/sync-failures")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> SyncFailures(Guid id, CancellationToken ct)
+        => Ok(await syncHealth.FailuresAsync(id, ct));
+
+    [HttpPost("{id:guid}/sync-failures/{failureId:guid}/retry")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> RetrySyncFailure(Guid id, Guid failureId, CancellationToken ct)
+    {
+        await syncHealth.RetryAsync(id, failureId, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:guid}/sync-failures/{failureId:guid}/dismiss")]
+    [RequirePermission(Permissions.ConnectionsManage)]
+    public async Task<IActionResult> DismissSyncFailure(Guid id, Guid failureId, CancellationToken ct)
+    {
+        await syncHealth.DismissAsync(id, failureId, ct);
+        return NoContent();
     }
 
     [HttpPut("{id:guid}")]
@@ -176,6 +311,19 @@ public sealed class AdminMappingsController(IMappingAdminService svc) : Controll
     public async Task<IActionResult> Upsert([FromBody] UpsertMappingInput input, [FromQuery] string? note, CancellationToken ct)
         => Ok(await svc.UpsertAsync(input, note, ct));
 
+    /// <summary>The portal's own statuses and priorities: what a PSA's values are mapped to.</summary>
+    [HttpGet("vocabulary")]
+    [RequirePermission(Permissions.MappingsView)]
+    public IActionResult Vocabulary()
+        => Ok(new PortalVocabularyDto(Desk.Domain.Tickets.PortalVocabulary.Statuses, Desk.Domain.Tickets.PortalVocabulary.Priorities));
+
+    /// <summary>What values a connection's PSA sends should become in the portal. Any number, saved together.</summary>
+    [HttpPut("inbound/{connectionId:guid}")]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> SetInbound(
+        Guid connectionId, [FromBody] IReadOnlyList<SetInboundMappingInput> changes, [FromQuery] string? note, CancellationToken ct)
+        => Ok(await svc.SetInboundAsync(connectionId, changes, note, ct));
+
     [HttpDelete("{ruleId:guid}")]
     [RequirePermission(Permissions.MappingsManage)]
     public async Task<IActionResult> Delete(Guid ruleId, CancellationToken ct)
@@ -203,6 +351,129 @@ public sealed class AdminMappingsController(IMappingAdminService svc) : Controll
     [RequirePermission(Permissions.MappingsManage)]
     public async Task<IActionResult> SaveSnapshot([FromQuery] ProviderType provider, [FromQuery] Guid? connectionId, [FromQuery] string? note, CancellationToken ct)
         => Ok(await svc.SaveSnapshotAsync(provider, connectionId, note, ct));
+}
+
+/// <summary>
+/// What a connection's PSA classification means in the portal's words. Each connection has its own
+/// rules; a connection of another organization is not found. Every change is audited.
+/// </summary>
+[ApiController]
+[Route("api/admin/connections/{connectionId:guid}/classification")]
+public sealed class AdminClassificationController(IClassificationMappingService svc) : ControllerBase
+{
+    /// <summary>The rules, what tickets are filed under, and how far the rules reach.</summary>
+    [HttpGet]
+    [RequirePermission(Permissions.MappingsView)]
+    public async Task<IActionResult> Get(Guid connectionId, CancellationToken ct) => Ok(await svc.GetAsync(connectionId, ct));
+
+    /// <summary>Replaces the rules. Tickets already here are not touched.</summary>
+    [HttpPut]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> Save(Guid connectionId, [FromBody] IReadOnlyList<ClassificationRuleDto> rules, CancellationToken ct)
+        => Ok(await svc.SaveAsync(connectionId, rules, ct));
+
+    /// <summary>What these rules would do. Nothing is saved and nothing is changed.</summary>
+    [HttpPost("preview")]
+    [RequirePermission(Permissions.MappingsView)]
+    public async Task<IActionResult> Preview(Guid connectionId, [FromBody] IReadOnlyList<ClassificationRuleDto> rules, CancellationToken ct)
+        => Ok(await svc.PreviewAsync(connectionId, rules, ct));
+
+    /// <summary>Gives the tickets already here what the saved rules say.</summary>
+    [HttpPost("apply")]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> Apply(Guid connectionId, CancellationToken ct) => Ok(await svc.ApplyAsync(connectionId, ct));
+}
+
+/// <summary>
+/// Every change made in the portal that a PSA does not have yet: waiting to be sent, or failed.
+/// A list to find them by; sending one again or letting go of it is done on its ticket, by whoever
+/// may change that ticket (<see cref="TicketOutboundController"/>).
+/// </summary>
+[ApiController]
+[Route("api/admin/outbound")]
+public sealed class AdminOutboundController(Desk.Infrastructure.Persistence.DeskDbContext db) : ControllerBase
+{
+    public sealed record OutboundRow(
+        Guid Id, Guid TicketId, string? TicketReference, string TicketTitle, string ConnectionName,
+        string Kind, string Summary, string State, int Attempts, int MaxAttempts,
+        DateTimeOffset RequestedAt, string? RequestedBy, DateTimeOffset? NextAttemptAt, string? LastError);
+
+    [HttpGet]
+    [RequirePermission(Permissions.IntegrationHealthView)]
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        var rows = await (
+                from o in db.OutboundOperations.AsNoTracking()
+                where o.State != Desk.Domain.Sync.OutboundState.Synced
+                join t in db.Tickets.AsNoTracking() on o.TicketId equals t.Id
+                join c in db.PsaConnections.AsNoTracking() on o.PsaConnectionId equals c.Id
+                // What has failed first, then the longest waiting.
+                orderby o.State descending, o.CreatedAt
+                select new { o, Reference = t.ExternalTicketId ?? t.Number, t.Title, Connection = c.Name })
+            .Take(500)
+            .ToListAsync(ct);
+        return Ok(rows.Select(r => new OutboundRow(
+            r.o.Id, r.o.TicketId, r.Reference, r.Title, r.Connection, r.o.Kind.ToString(), r.o.Summary,
+            Desk.Infrastructure.Sync.OutboundQueue.Label(r.o.State), r.o.Attempts, r.o.MaxAttempts,
+            r.o.CreatedAt, r.o.RequestedByName, r.o.NextAttemptAt, r.o.LastError)));
+    }
+}
+
+/// <summary>
+/// Which of a connection's PSA custom fields are brought in, what each is called here, and whether
+/// the client may see it. Nothing is brought in until chosen; a chosen field is staff only until
+/// said otherwise. A connection of another organization is not found. Every change is audited.
+/// </summary>
+[ApiController]
+[Route("api/admin/connections/{connectionId:guid}/custom-fields")]
+public sealed class AdminCustomFieldsController(ICustomFieldService svc) : ControllerBase
+{
+    [HttpGet]
+    [RequirePermission(Permissions.MappingsView)]
+    public async Task<IActionResult> Get(Guid connectionId, CancellationToken ct) => Ok(await svc.GetAsync(connectionId, ct));
+
+    /// <summary>Saves decisions about some fields. A field left out keeps what was decided before.</summary>
+    [HttpPut]
+    [RequirePermission(Permissions.MappingsManage)]
+    public async Task<IActionResult> Save(Guid connectionId, [FromBody] IReadOnlyList<SetCustomFieldInput> changes, CancellationToken ct)
+        => Ok(await svc.SaveAsync(connectionId, changes, ct));
+}
+
+/// <summary>
+/// Which companies a client user can see into besides their own. Each is given here, one person
+/// and one company at a time; nothing else creates one.
+///
+/// Held to users.manage, the permission of the desk's own user administration, and deliberately
+/// not to clientusers.manage: that one is in the built-in client administrator role, and a
+/// client must never be able to give a company to anyone, themselves least of all.
+/// </summary>
+[ApiController]
+[Route("api/admin/client-access")]
+public sealed class AdminClientAccessController(IClientCompanyAccessService svc) : ControllerBase
+{
+    [HttpGet("users")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> ListUsers([FromQuery] string? search, [FromQuery] int take = 50, CancellationToken ct = default)
+        => Ok(await svc.ListUsersAsync(search, take, ct));
+
+    [HttpGet("users/{clientUserId:guid}")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> OneUser(Guid clientUserId, CancellationToken ct) => Ok(await svc.GetUserAsync(clientUserId, ct));
+
+    [HttpGet("companies")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> Companies(CancellationToken ct) => Ok(await svc.CompaniesAsync(ct));
+
+    /// <summary>Gives the person the company, or changes what the grant gives.</summary>
+    [HttpPut("users/{clientUserId:guid}/companies/{clientCompanyId:guid}")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> Grant(Guid clientUserId, Guid clientCompanyId, [FromBody] SetCompanyGrantInput input, CancellationToken ct)
+        => Ok(await svc.GrantAsync(clientUserId, clientCompanyId, input, ct));
+
+    [HttpDelete("users/{clientUserId:guid}/companies/{clientCompanyId:guid}")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> Revoke(Guid clientUserId, Guid clientCompanyId, CancellationToken ct)
+        => Ok(await svc.RevokeAsync(clientUserId, clientCompanyId, ct));
 }
 
 /// <summary>Background job monitor with dead-letter reprocessing.</summary>
@@ -465,6 +736,18 @@ public sealed class AdminReadController(
     [RequirePermission(Permissions.UsersManage)]
     public async Task<IActionResult> PsaTechnicians(Guid psaConnectionId, CancellationToken ct)
         => Ok(await provisioning.ListAsync(psaConnectionId, ct));
+
+    /// <summary>Says a PSA login is to be left alone (an API account, someone who left), or takes that back.</summary>
+    [HttpPut("psa-technicians/{psaConnectionId:guid}/{externalTechnicianId}/ignored")]
+    [RequirePermission(Permissions.UsersManage)]
+    public async Task<IActionResult> IgnoreTechnician(
+        Guid psaConnectionId, string externalTechnicianId, [FromBody] IgnoreTechnicianRequest request, CancellationToken ct)
+    {
+        await provisioning.SetIgnoredAsync(psaConnectionId, externalTechnicianId, request.Ignored, request.Name, ct);
+        return NoContent();
+    }
+
+    public sealed record IgnoreTechnicianRequest(bool Ignored, [System.ComponentModel.DataAnnotations.StringLength(200)] string? Name);
 
     /// <summary>Creates (or links) the portal user for one PSA technician and maps them.</summary>
     [HttpPost("psa-technicians/{psaConnectionId:guid}/{externalTechnicianId}")]

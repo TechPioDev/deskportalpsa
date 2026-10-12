@@ -148,6 +148,33 @@ Phase 6 (`WorkforceTimeController`; details in [work-execution.md](work-executio
 `POST plan/{id}/reassign`; a `PUT` that keeps the start and changes only the end is audited as
 `workforce.allocation.resized`.
 
+Phase 7 (`WorkforceAnalyticsController`; details in [analytics.md](analytics.md#api)):
+
+| Route | Permission | Notes |
+|---|---|---|
+| `GET analytics/filters` | schedule.view | The filter lists the caller may use |
+| `GET analytics/overview?period&from&to&teamId&departmentId&appUserId&clientId&source&priority&kind` | schedule.view | The dashboard: totals, open work now, capacity against demand, people, teams, clients, sources, priorities, work types, daily, heatmap, freshness, notes; one filter context |
+| `GET analytics/people/{id}?…` | schedule.view | One person's figures, breakdowns, days and work items |
+| `GET analytics/work?list=…&skip&take&…` | schedule.view | The records behind a card, paged, with the whole set's totals |
+| `GET analytics/export?report=…&…` | workforce.analytics.export | A CSV of one table under the same filters; audited |
+
+Every analytics action is a GET; no table and no cache were added.
+
+Phase 8 (`WorkforceInsightsController`, `WorkforceReportsController`; details in
+[insights.md](insights.md#api) and [reports.md](reports.md#api)):
+
+| Route | Permission | Notes |
+|---|---|---|
+| `GET insights/forecast?window&from&to&teamId&departmentId&appUserId&clientId&source&priority` | schedule.view | Capacity ahead against confirmed, tentative and estimated unscheduled demand; by day, team, person, client, source, skill; work at risk; recurring work; the attention list |
+| `GET insights/forecast/work?list=…&skillId&skip&take&…` | schedule.view | The records behind a forecast figure (confirmed, tentative, unscheduled, unestimated, at-risk, overdue, unassigned, skill), paged, with the whole set's totals |
+| `GET insights/trends?compare=…&…` | schedule.view | A period against the one before, eight weeks, clients, sources, estimate variance, quality signals |
+| `GET insights/health` | integration.health.view | Per PSA connection: sync state and mapping coverage; no secret |
+| `GET reports` | schedule.view | The reports the caller may run |
+| `GET reports/{key}?…` | schedule.view | A report previewed: applied filters, summary, columns, the first 500 rows |
+| `GET reports/{key}/export?format=csv\|xlsx&…` | workforce.analytics.export | The same rows as a file; audited |
+
+Every Phase 8 action is a GET; no table, cache, background job, permission key or package was added.
+
 `/api/me` carries `features.workforce`.
 
 ## Engine
@@ -163,6 +190,18 @@ infra       WorkforceCalendar    reads schedules, exceptions, planned work and h
                                  also team over a run of dates (ForTeamRangeAsync, TeamRangeQuery -> TeamRangeDto,
                                  MaxTeamRangeDays = 14): the scheduler's rows and their days
             CapacityExceptionService
+            WorkforceAnalyticsService   Phase 7: one load per request (people in scope, the capacity calendar, allocations, entries,
+                                 live clocks, finished and open work, the tickets behind them, visibility) in a fixed number
+                                 of queries, then every figure, breakdown, drill-down and export tallied from those rows in
+                                 memory (Tallies.Over); periods resolved in the organization's zone (ResolvePeriod, pure)
+                                 Phase 8, as two more files of the same partial class, so there is one load and one set of
+                                 definitions: .Insights.cs (the forecast over a window with today from now, the open work
+                                 behind it, skills, work at risk, the attention rules and InsightThresholds; the comparison
+                                 as sub-range tallies of one load; quality signals; mapping and integration health) and
+                                 .Reports.cs (twelve report definitions, one builder each, preview and export from the
+                                 same rows). It implements IWorkforceInsightsService and IWorkforceReportService
+            XlsxWriter           one sheet as an .xlsx on System.IO.Compression: text as inline strings, numbers as numbers,
+                                 never a formula (Reporting)
             WorkTimeService      the clock (start / pause / resume / stop under the person's gate), a day as planned against
                                  actual, team today; writes time through Tickets.TicketTimeWriter (Phase 6)
             WorkforceAccess      who the caller may see (schedule.view scope) and plan for (schedule.manage scope),
@@ -205,6 +244,23 @@ web         lib/timeline.ts      the scheduler's arithmetic (Phase 4): a wall ti
   panel on a ticket for staff with `schedule.view`, with **Plan this work**. The Users → person page
   does not carry the Plan tab. Components: `WorkforcePlan.tsx` (`PlanAgenda`, `UnscheduledWorkList`,
   `TicketPlanPanel`, the dialogs).
+- Phase 7: **Workforce analytics** under Workforce (`/dashboard/workforce/analytics`, for someone
+  who can see more than themselves) with the filter bar in the query string, the cards, capacity
+  against demand, the daily trend, the technician / team / client / source / priority / work-type
+  tables, the heatmap and the drill-down dialog; **Technician work analytics**
+  (`/dashboard/workforce/analytics/{id}`); **My analytics** (`/dashboard/workforce/my-analytics`,
+  everyone). Components: `WorkforceAnalytics.tsx` (`WorkforceAnalyticsView`, `TechnicianAnalyticsView`,
+  `AnalyticsFilterBar`, `useAnalyticsFilters`, `DrillDown`, `GroupedBars`, `HeatmapGrid`, `FigureTable`).
+  No dependency was added: the charts are inline SVG with a table alternative each.
+- Phase 8: **Management insights** under Workforce (`/dashboard/workforce/insights`, in the
+  sub-navigation for someone who can see more than themselves): the filter bar and the open tab in
+  the query string, the attention list, the forecast summary, and four tabs (Forecast, What changed,
+  Quality signals, Data and integrations) with the forecast drill-down dialog. **Reports**
+  (`/dashboard/workforce/reports`, `/dashboard/workforce/reports/{key}`): the catalogue, a report's
+  filters, preview and exports. Components: `WorkforceInsights.tsx` (`WorkforceInsightsView`,
+  `useInsightsFilters`, `WorkFilterSelects`, `AttentionList`, `ForecastDrillDown`) and
+  `WorkforceReports.tsx` (`ReportCatalogue`, `ReportView`). They reuse the Phase 7 panel, figure,
+  sortable table, bar chart and dialog focus handling (`useDialogFocus`), which became exports.
 - Phase 4: **Team schedule** under Workforce (`/dashboard/workforce/schedule?date=&view=`, shown in
   the sub-navigation only to someone who can see more than themselves, beside Team capacity and
   Find): the day board (people down the side, the organization's day across the top, free windows,

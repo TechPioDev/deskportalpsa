@@ -6,9 +6,9 @@ import { Reveal } from '@/components/marketing/Reveal';
 import { FEATURE_DOCS, featureHref } from '@/lib/featureDocs';
 
 export const metadata: Metadata = {
-  title: 'Features — Desk Portal',
+  title: 'Features — PioManage',
   description:
-    'Full documentation of every Desk Portal feature: two-way PSA sync, conversation threads, time tracking, client logins, the client control panel, users and access management, PSA connections, attachments, analytics, and security.',
+    'Full documentation of every PioManage feature: two-way PSA sync, conversation threads, time tracking, client logins, the client control panel, users and access management, PSA connections, attachments, analytics, and security.',
   alternates: { canonical: '/features' },
 };
 

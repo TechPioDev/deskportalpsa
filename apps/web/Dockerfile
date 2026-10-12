@@ -1,4 +1,4 @@
-# Desk Portal web (Next.js, standalone output).
+# PioManage web (Next.js, standalone output).
 # Build from the REPO ROOT: docker build -f apps/web/Dockerfile -t desk-web .
 FROM node:22-alpine AS build
 WORKDIR /src

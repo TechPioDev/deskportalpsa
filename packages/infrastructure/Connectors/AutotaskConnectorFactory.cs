@@ -17,11 +17,21 @@ namespace Desk.Infrastructure.Connectors;
 public sealed class AutotaskConnectorFactory(
     DeskDbContext db,
     ISecretStore secrets,
-    IHttpClientFactory httpFactory,
+    ProviderHttpClients clients,
     TimeProvider clock,
     ILogger<AutotaskConnectorFactory> logger) : IConnectorFactory
 {
     public ProviderType Provider => ProviderType.AutotaskPsa;
+
+    public ProviderDescriptor Descriptor { get; } = new(
+        ProviderType.AutotaskPsa, "Datto Autotask PSA",
+        EndpointExample: "https://webservices5.autotask.net/ATServicesRest/",
+        EndpointHint: "Your Autotask zone URL: https, on autotask.net. The version segment is optional — /ATServicesRest/ and /ATServicesRest/v1.0/ both work.",
+        [
+            new CredentialField("ApiIntegrationCode", "API integration code", Secret: true, "The tracking identifier of the API integration."),
+            new CredentialField("UserName", "API user name", Secret: false),
+            new CredentialField("Secret", "API user secret", Secret: true),
+        ]);
 
     public async Task<IServiceManagementConnector> CreateAsync(Guid psaConnectionId, CancellationToken ct = default)
     {
@@ -30,8 +40,21 @@ public sealed class AutotaskConnectorFactory(
             .FirstOrDefaultAsync(c => c.Id == psaConnectionId, ct)
             ?? throw new NotFoundException("PSA connection");
 
-        var secret = await secrets.ReadAsync(connection.CredentialSecretRef, ct);
+        return Build(connection, await secrets.ReadAsync(connection.CredentialSecretRef, ct));
+    }
 
+    public Task<IServiceManagementConnector> CreateWithAsync(
+        Desk.Domain.Tenancy.PsaConnection connection, IReadOnlyDictionary<string, string> credentials, CancellationToken ct = default)
+        => Task.FromResult(Build(connection, credentials));
+
+    /// <summary>The zone and the API user: two connections with both in common reach the same Autotask account.</summary>
+    public string? AccountKey(string apiEndpoint, IReadOnlyDictionary<string, string> credentials)
+        => Uri.TryCreate(apiEndpoint, UriKind.Absolute, out var uri) && credentials.TryGetValue("UserName", out var user) && !string.IsNullOrWhiteSpace(user)
+            ? $"{uri.IdnHost}|{user.Trim()}".ToLowerInvariant()
+            : null;
+
+    private IServiceManagementConnector Build(Desk.Domain.Tenancy.PsaConnection connection, IReadOnlyDictionary<string, string> secret)
+    {
         var config = new AutotaskConnectorConfig
         {
             BaseUrl = EnsureTrailingSlash(connection.ApiEndpoint),
@@ -46,8 +69,8 @@ public sealed class AutotaskConnectorFactory(
             DefaultTimeEntryRoleId = ParseId(connection.DefaultTimeEntryRoleId),
         };
 
-        var http = httpFactory.CreateClient("autotask");
-        http.BaseAddress = new Uri(config.BaseUrl);
+        // This connection's own client: its own pace, its own retries, the shared guarded transport.
+        var http = clients.For("autotask", connection.Id, config.BaseUrl, AutotaskConnector.RequestsPerMinute);
 
         return new AutotaskConnector(http, config, clock,
             // Field names and their option labels only — configuration, never customer content.

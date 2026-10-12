@@ -12,6 +12,9 @@ public sealed class ConnectWiseConnectorConfig
     public required ConnectWiseCredentials Credentials { get; init; }
     public string WebhookSecret { get; init; } = "";
     public TimeSpan WebhookMaxSkew { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Pages of one list read before it is refused as too long to finish.</summary>
+    public int MaxListPages { get; init; } = 50;
 }
 
 // ---- wire DTOs (subset of the ConnectWise Manage schema). CW nests references as {id, name}. ----
@@ -20,6 +23,12 @@ internal sealed class CwRef
 {
     [JsonPropertyName("id")] public long Id { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
+}
+
+/// <summary>The answer to <c>{resource}/count</c>.</summary>
+internal sealed class CwCount
+{
+    [JsonPropertyName("count")] public int Count { get; set; }
 }
 
 internal sealed class CwCompany
@@ -47,15 +56,30 @@ internal sealed class CwMember
     [JsonPropertyName("inactiveFlag")] public bool InactiveFlag { get; set; }
 }
 
+/// <summary>One of the tenant's own fields as a ticket carries it: its id, what the screen calls it, its kind and its value.</summary>
+internal sealed class CwCustomField
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("caption")] public string? Caption { get; set; }
+    [JsonPropertyName("type")] public string? Type { get; set; }
+    [JsonPropertyName("entryMethod")] public string? EntryMethod { get; set; }
+    // A string, a number or a checkbox's true and false, and absent where nothing was entered.
+    [JsonPropertyName("value")] public System.Text.Json.JsonElement? Value { get; set; }
+}
+
 internal sealed class CwTicket
 {
     [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("customFields")] public List<CwCustomField>? CustomFields { get; set; }
     [JsonPropertyName("summary")] public string? Summary { get; set; }
     [JsonPropertyName("initialDescription")] public string? InitialDescription { get; set; }
     [JsonPropertyName("board")] public CwRef? Board { get; set; }
     [JsonPropertyName("status")] public CwRef? Status { get; set; }
     [JsonPropertyName("priority")] public CwRef? Priority { get; set; }
     [JsonPropertyName("type")] public CwRef? Type { get; set; }
+    // The two levels under the type.
+    [JsonPropertyName("subType")] public CwRef? SubType { get; set; }
+    [JsonPropertyName("item")] public CwRef? Item { get; set; }
     [JsonPropertyName("company")] public CwRef? Company { get; set; }
     [JsonPropertyName("owner")] public CwRef? Owner { get; set; }
     // The customer contact the ticket is for. CW sends the name and address inline beside the ref.

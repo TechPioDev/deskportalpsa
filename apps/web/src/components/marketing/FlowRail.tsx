@@ -1,7 +1,7 @@
 import { User, LayoutDashboard, Database, Wrench, ArrowDown } from 'lucide-react';
 
 /**
- * Client → Desk Portal → PSA → Technician, with packets travelling the wire.
+ * Client → PioManage → PSA → Technician, with packets travelling the wire.
  *
  * Desktop draws it as one SVG so the rail, the nodes and the packets scale as a single unit —
  * `offset-path` follows the drawn curve exactly, so a packet can never drift off the line it is
@@ -11,7 +11,7 @@ import { User, LayoutDashboard, Database, Wrench, ArrowDown } from 'lucide-react
 
 const NODES = [
   { x: 95, label: 'Client', sub: 'Submits a request' },
-  { x: 365, label: 'Desk Portal', sub: 'Client experience' },
+  { x: 365, label: 'PioManage', sub: 'Client experience' },
   { x: 635, label: 'Your PSA', sub: 'System of record' },
   { x: 905, label: 'Technician', sub: 'Works where they always have' },
 ];
@@ -26,7 +26,7 @@ const PACKETS = [
 
 const MOBILE = [
   { icon: User, label: 'Client', sub: 'Submits a request, adds a screenshot, follows progress.' },
-  { icon: LayoutDashboard, label: 'Desk Portal', sub: 'Receives it, shows status, keeps the conversation in one place.' },
+  { icon: LayoutDashboard, label: 'PioManage', sub: 'Receives it, shows status, keeps the conversation in one place.' },
   { icon: Database, label: 'Your PSA', sub: 'The ticket is created and updated. Your PSA stays the system of record.' },
   { icon: Wrench, label: 'Technician', sub: 'Replies from the PSA. The answer appears back in the portal.' },
 ];
@@ -38,7 +38,7 @@ export function FlowRail() {
         viewBox="0 0 1000 236"
         className="hidden h-auto w-full md:block"
         role="img"
-        aria-label="A request travels from the client into Desk Portal, on to whichever PSA the provider runs, and to the technician — with replies, attachments and status flowing back the same way."
+        aria-label="A request travels from the client into PioManage, on to whichever PSA the provider runs, and to the technician — with replies, attachments and status flowing back the same way."
       >
         <defs>
           <linearGradient id="railGrad" x1="0" x2="1">

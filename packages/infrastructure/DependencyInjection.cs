@@ -74,24 +74,39 @@ public static class DependencyInjection
         services.AddScoped<ISyncEventStore, SyncEventStore>();
         services.AddScoped<IConnectorResolver, ConnectorResolver>();
         services.AddScoped<IConnectionSyncRunner, ConnectionSyncRunner>();
+        services.AddScoped<ISyncRequestService, Desk.Infrastructure.Sync.SyncRequestService>();
+        services.AddScoped<Desk.Infrastructure.Sync.RequestedSyncRunner>();
+        services.AddScoped<Desk.Application.Admin.ISyncHealthService, Desk.Infrastructure.Admin.SyncHealthService>();
 
         // Sync engine + real connectors (Phases 4-5)
         services.AddScoped<ITicketSyncService, TicketSyncService>();
         services.AddHttpClient();
         // Microsoft 365 mail (token + sendMail). Fixed Microsoft hosts, so no egress guard is needed.
         services.AddHttpClient(Email.GraphMailSender.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
+        // One budget of provider calls per connection, shared by everything in this process that
+        // talks to that connection.
+        services.AddSingleton(sp => new ConnectionThrottle(sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new ProviderHttpClients(
+            sp.GetRequiredService<IHttpMessageHandlerFactory>(),
+            sp.GetRequiredService<ConnectionThrottle>(),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance));
         services.AddScoped<IConnectorFactory, AutotaskConnectorFactory>();
         services.AddScoped<IConnectorFactory, ConnectWiseConnectorFactory>();
 
-        // Optional SSRF egress guard on connector HttpClients (blocks private/reserved hosts).
-        if (config.GetValue("Connectors:BlockPrivateEgress", false))
+        services.AddSingleton(Security.ConnectorEndpointPolicy.From(config));
+
+        // SSRF egress guard on connector HttpClients (blocks private/reserved hosts). On unless this
+        // is local mode or the operator says otherwise - see EgressGuard.IsEnabled. The API and the
+        // worker both come through here, so neither can be left out by a missing setting.
+        if (EgressGuard.IsEnabled(config))
         {
-            var allowed = new HashSet<string>(
-                config.GetSection("Connectors:AllowedHosts").Get<string[]>() ?? [],
-                StringComparer.OrdinalIgnoreCase);
+            var allowed = EgressGuard.AllowedHosts(config);
             services.AddTransient(_ => new EgressGuard(allowed));
-            services.AddHttpClient("autotask").AddHttpMessageHandler(sp => sp.GetRequiredService<EgressGuard>());
-            services.AddHttpClient("connectwise").AddHttpMessageHandler(sp => sp.GetRequiredService<EgressGuard>());
+            foreach (var client in new[] { "autotask", "connectwise" })
+                services.AddHttpClient(client)
+                    .ConfigurePrimaryHttpMessageHandler(() => EgressGuard.PinnedHandler(allowed))
+                    .AddHttpMessageHandler(sp => sp.GetRequiredService<EgressGuard>());
         }
 
         // Assistant. The HttpClient is named and its base address fixed here, so the service can
@@ -110,6 +125,7 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Tickets.ITicketFollowerService, Tickets.TicketFollowerService>();
         services.AddScoped<Desk.Application.Tickets.ISatisfactionService, Tickets.SatisfactionService>();
         services.AddScoped<Tickets.TicketStatusWriter>();
+        services.AddScoped<Desk.Application.Tickets.ITicketDueDateService, Tickets.TicketDueDateService>();
         services.AddScoped<Desk.Application.Tickets.IApprovalService, Tickets.ApprovalService>();
         services.AddScoped<Desk.Application.Tickets.ITicketDeviceService, Tickets.TicketDeviceService>();
         services.AddScoped<Desk.Application.Knowledge.IKnowledgeBaseService, Knowledge.KnowledgeBaseService>();
@@ -139,6 +155,10 @@ public static class DependencyInjection
         services.AddScoped<Workforce.PlanningGate>();
         services.AddScoped<Desk.Application.Workforce.IWorkPlanService, Workforce.WorkPlanService>();
         services.AddScoped<Desk.Application.Workforce.IWorkTimeService, Workforce.WorkTimeService>();
+        services.AddScoped<Desk.Application.Workforce.IWorkforceAnalyticsService, Workforce.WorkforceAnalyticsService>();
+        // Management insights and the report center are the same service: one load, one set of definitions.
+        services.AddScoped<Desk.Application.Workforce.IWorkforceInsightsService, Workforce.WorkforceAnalyticsService>();
+        services.AddScoped<Desk.Application.Workforce.IWorkforceReportService, Workforce.WorkforceAnalyticsService>();
         services.AddScoped<Tickets.TicketTimeWriter>();
         services.AddScoped<Desk.Application.Workforce.IWorkAllocationReleaser, Workforce.WorkAllocationReleaser>();
         services.AddSingleton<Desk.Application.Workforce.IWorkAllocationReleaseRunner, Workforce.WorkAllocationReleaseRunner>();
@@ -158,11 +178,32 @@ public static class DependencyInjection
         {
             Host = config["Email:Smtp:Host"], Port = config.GetValue("Email:Smtp:Port", 587),
             Username = config["Email:Smtp:Username"], Password = config["Email:Smtp:Password"],
-            From = config["Email:Smtp:From"], FromName = config["Email:Smtp:FromName"] is { Length: > 0 } n ? n : "Desk Portal",
+            From = config["Email:Smtp:From"], FromName = config["Email:Smtp:FromName"] is { Length: > 0 } n ? n : "PioManage",
             Security = config["Email:Smtp:Security"] is { Length: > 0 } sec ? sec : "StartTls",
-            BlockPrivateHosts = config.GetValue("Connectors:BlockPrivateEgress", false),
+            BlockPrivateHosts = EgressGuard.IsEnabled(config),
         });
         services.AddScoped<Desk.Application.Common.IEmailSender, Desk.Infrastructure.Email.SmtpEmailSender>();
+        // Invitations and password resets: links the portal mails, a user the portal makes at the
+        // identity provider once the link is used. The admin client is a confidential client of
+        // the realm with manage-users; without its secret, links can be made but not accepted.
+        services.AddSingleton(new Desk.Infrastructure.Email.PortalOptions
+        {
+            PublicUrl = config["Portal:PublicUrl"] is { Length: > 0 } portalUrl ? portalUrl
+                : config["Attachments:PublicBaseUrl"] is { Length: > 0 } attachmentsUrl ? attachmentsUrl : "http://localhost:3000",
+        });
+        services.AddSingleton(new Desk.Infrastructure.Identity.KeycloakAdminOptions
+        {
+            Authority = config["Keycloak:Authority"],
+            ClientId = config["Keycloak:AdminClientId"] is { Length: > 0 } adminClient ? adminClient : "desk-admin",
+            ClientSecret = config["Keycloak:AdminClientSecret"],
+        });
+        services.AddHttpClient(Desk.Infrastructure.Identity.KeycloakAdminClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(20));
+        services.AddScoped<Desk.Application.Identity.IKeycloakAdmin, Desk.Infrastructure.Identity.KeycloakAdminClient>();
+        services.AddSingleton(Desk.Application.Identity.SignInInvitationPolicy.Default);
+        services.AddScoped<Desk.Infrastructure.Email.TemplateMailer>();
+        services.AddScoped<Desk.Application.Identity.IInvitationService, Desk.Infrastructure.Identity.InvitationService>();
+        services.AddScoped<Desk.Application.Identity.IEmailTemplateService, Desk.Infrastructure.Email.EmailTemplateService>();
+        services.AddSingleton<Desk.Infrastructure.Identity.InvitationReminderRunner>();
         services.AddScoped<Desk.Application.Common.IEmailSettingsService, Desk.Infrastructure.Email.EmailSettingsService>();
         services.AddScoped<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.Email.EmailReportDelivery>();
         services.AddScoped<Desk.Application.ControlPanel.IScheduledReportRunner, Desk.Infrastructure.ControlPanel.ScheduledReportRunner>();
@@ -205,11 +246,21 @@ public static class DependencyInjection
         services.AddSingleton<IConnectionFieldCache, ConnectionFieldCache>();
         services.AddScoped<IConnectionAdminService, ConnectionAdminService>();
         services.AddScoped<IMappingAdminService, MappingAdminService>();
+        services.AddScoped<IClassificationMappingService, ClassificationMappingService>();
+        services.AddScoped<IClientCompanyAccessService, ClientCompanyAccessService>();
+        // Asked through the connection service, which knows how to reach a connection still in setup.
+        services.AddScoped<ICustomFieldSource>(sp => (ConnectionAdminService)sp.GetRequiredService<IConnectionAdminService>());
+        services.AddScoped<ICustomFieldService, CustomFieldService>();
         services.AddScoped<IJobMonitorService, JobMonitorService>();
         services.AddScoped<IIntegrationHealthService, IntegrationHealthService>();
         services.AddScoped<IAttentionService, AttentionService>();
         services.AddSingleton<IAttentionDigestRunner, AttentionDigestRunner>();
         services.AddScoped<ITicketResyncService, Sync.TicketResyncService>();
+        // Changes that could not be given to a PSA when they were made: kept, and tried again.
+        services.AddScoped<Sync.OutboundQueue>(sp => new Sync.OutboundQueue(
+            sp.GetRequiredService<DeskDbContext>(), sp.GetRequiredService<TimeProvider>(), sp.GetService<IAuditWriter>()));
+        services.AddScoped<Sync.OutboundProcessor>();
+        services.AddSingleton<Sync.OutboundRunner>();
         // One switch over the whole internal-boards feature; see BoardFeatureOptions for why.
         services.AddSingleton(new Desk.Application.Boards.BoardFeatureOptions
         {

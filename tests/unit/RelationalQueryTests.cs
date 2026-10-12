@@ -118,7 +118,7 @@ public sealed class RelationalQueryTests : IDisposable
         var page = await reads.PageAsync(new TicketQuery(
             Q: "swelling", Status: "IN_PROGRESS", Priority: "HIGH", Openness: "open", MineOnly: true, FollowingOnly: true,
             UnassignedOnly: true, OverdueOnly: true, DueSoonOnly: true, CompanyName: "Acme", QueueName: "Internal",
-            ConnectionName: "Autotask", PersonKey: PersonKey.For(_me, null), RaisedSince: DateTimeOffset.UtcNow.AddDays(-30),
+            ConnectionName: "Autotask", PersonKey: PersonKey.For(_me, null, null), RaisedSince: DateTimeOffset.UtcNow.AddDays(-30),
             Kind: "internal", Skip: 0, Take: 10));
         page.Total.Should().Be(0);
         (await reads.PageAsync(new TicketQuery(PersonKey: "x:123", Skip: 1, Take: 5))).Total.Should().BeGreaterThanOrEqualTo(0);
@@ -128,6 +128,142 @@ public sealed class RelationalQueryTests : IDisposable
         (await reads.SummaryAsync(mineOnly: true)).Should().NotBeNull();
         (await reads.SummaryAsync(mineOnly: false)).Open.Should().BeGreaterThanOrEqualTo(0);
         (await reads.WorkloadAsync()).Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Ticket_visibility_translates_for_every_scope_with_PSA_links_on_two_connections()
+    {
+        // The real scope query. Every other test here passes a no-op in its place, so the predicate
+        // that decides which tickets a person may see had never been through a SQL translator - and
+        // it is built by hand, as an OR-chain with one clause per PSA connection.
+        Desk.Domain.Tenancy.PsaConnection Account(string name) => new()
+        {
+            MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://x", CredentialSecretRef = "m", DefaultTimeEntryResourceId = "api-user",
+        };
+        var first = Account("Autotask - A");
+        var second = Account("Autotask - B");
+        var dept = await _db.Departments.FirstAsync();
+        var teamId = await _db.Teams.Select(t => t.Id).FirstAsync();
+        var colleague = await _db.AppUsers.Where(u => u.Id != _me).Select(u => u.Id).FirstAsync();
+        Ticket Psa(Guid connection, string external, string login) => new()
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection,
+            ExternalTicketId = external, RequesterName = "R", RequesterEmail = "r@x.test", Title = external,
+            PortalStatus = "NEW", PortalPriority = "NORMAL", AssignedTechnicianExternalId = login, SyncStatus = TicketSyncStatus.Synced,
+        };
+        _db.AddRange(first, second,
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = _me, PsaConnectionId = first.Id, ExternalTechnicianId = "5" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = _me, PsaConnectionId = second.Id, ExternalTechnicianId = "812" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = colleague, PsaConnectionId = first.Id, ExternalTechnicianId = "7" },
+            new UserDepartment { MspOrganizationId = Org, AppUserId = _me, DepartmentId = dept.Id, IsPrimary = true },
+            new UserDepartment { MspOrganizationId = Org, AppUserId = colleague, DepartmentId = dept.Id, IsPrimary = true },
+            new UserTeam { MspOrganizationId = Org, AppUserId = colleague, TeamId = teamId },
+            Psa(first.Id, "mine-on-A", "5"), Psa(second.Id, "mine-on-B", "812"),
+            Psa(second.Id, "someone-elses-5-on-B", "5"), Psa(first.Id, "colleagues-on-A", "7"), Psa(first.Id, "the-integrations", "api-user"));
+        await _db.SaveChangesAsync();
+
+        async Task<List<string>> SeenWithAsync(Desk.Domain.Authorization.PermissionScope scope)
+        {
+            var role = new Role { Name = "R-" + scope, MspOrganizationId = Org };
+            role.Permissions.Add(new RolePermission { PermissionKey = Desk.Domain.Authorization.Permissions.TicketsViewAll, Scope = scope });
+            _db.Roles.Add(role);
+            _db.UserRoles.RemoveRange(await _db.UserRoles.Where(r => r.AppUserId == _me).ToListAsync());
+            _db.UserRoles.Add(new UserRole { AppUserId = _me, RoleId = role.Id });
+            await _db.SaveChangesAsync();
+            var visible = await new TicketScopeQuery(_db, new Desk.Infrastructure.Authorization.EffectivePermissionService(_db))
+                .VisibleAsync(_db.Tickets.AsNoTracking(), _me, Desk.Domain.Authorization.Permissions.TicketsViewAll);
+            return await visible.Where(t => t.Origin == TicketOrigin.Psa).Select(t => t.Title).OrderBy(t => t).ToListAsync();
+        }
+
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.Assigned)).Should().Equal("mine-on-A", "mine-on-B");
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.Department)).Should().Equal("colleagues-on-A", "mine-on-A", "mine-on-B");
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.Team)).Should().Equal("colleagues-on-A", "mine-on-A", "mine-on-B");
+        (await SeenWithAsync(Desk.Domain.Authorization.PermissionScope.All)).Should().HaveCount(5);
+    }
+
+    private Desk.Domain.Tenancy.PsaConnection NewConnection(string name) => new()
+    {
+        MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+        ApiEndpoint = "https://x", CredentialSecretRef = "m", SyncAttachments = false,
+    };
+
+    [Fact]
+    public async Task The_database_itself_allows_one_running_sync_one_open_failure_and_one_person_per_PSA_login()
+    {
+        // The rules the code checks first and the database enforces regardless: two processes can
+        // both pass a check, and only one of them can pass an index.
+        var connection = NewConnection("Autotask");
+        var other = NewConnection("Autotask - B");
+        _db.AddRange(connection, other);
+        await _db.SaveChangesAsync();
+        var now = _clock.GetUtcNow();
+        Desk.Domain.Sync.SyncRun Run(Guid c, Desk.Domain.Sync.SyncRunStatus status) => new()
+            { MspOrganizationId = Org, PsaConnectionId = c, Status = status, StartedAt = now, LeaseExpiresAt = now.AddMinutes(10) };
+        Desk.Domain.Sync.SyncFailure Failure(Desk.Domain.Sync.SyncFailureStatus status) => new()
+        {
+            MspOrganizationId = Org, PsaConnectionId = connection.Id, Entity = "ticket", ExternalId = "7", Operation = "notes",
+            Category = "Timeout", Message = "m", Attempts = 1, FirstFailedAt = now, LastFailedAt = now, Status = status,
+        };
+        async Task<bool> RefusedAsync(object row)
+        {
+            _db.Add(row);
+            try { await _db.SaveChangesAsync(); return false; }
+            catch (DbUpdateException) { _db.Entry(row).State = EntityState.Detached; return true; }
+        }
+
+        (await RefusedAsync(Run(connection.Id, Desk.Domain.Sync.SyncRunStatus.Running))).Should().BeFalse();
+        (await RefusedAsync(Run(connection.Id, Desk.Domain.Sync.SyncRunStatus.Running))).Should().BeTrue("one run in progress per connection");
+        (await RefusedAsync(Run(connection.Id, Desk.Domain.Sync.SyncRunStatus.Succeeded))).Should().BeFalse("finished runs are history, as many as there are");
+        (await RefusedAsync(Run(other.Id, Desk.Domain.Sync.SyncRunStatus.Running))).Should().BeFalse("another connection is another lock");
+
+        (await RefusedAsync(Failure(Desk.Domain.Sync.SyncFailureStatus.Pending))).Should().BeFalse();
+        (await RefusedAsync(Failure(Desk.Domain.Sync.SyncFailureStatus.NeedsReview))).Should().BeTrue("one open failure per record and operation");
+        (await RefusedAsync(Failure(Desk.Domain.Sync.SyncFailureStatus.Resolved))).Should().BeFalse("a resolved one is history");
+
+        var colleague = await _db.AppUsers.Where(u => u.Id != _me).Select(u => u.Id).FirstAsync();
+        (await RefusedAsync(new UserPsaIdentity { MspOrganizationId = Org, AppUserId = _me, PsaConnectionId = connection.Id, ExternalTechnicianId = "5" })).Should().BeFalse();
+        (await RefusedAsync(new UserPsaIdentity { MspOrganizationId = Org, AppUserId = colleague, PsaConnectionId = connection.Id, ExternalTechnicianId = "5" })).Should().BeTrue("one person per PSA login");
+        (await RefusedAsync(new UserPsaIdentity { MspOrganizationId = Org, AppUserId = colleague, PsaConnectionId = other.Id, ExternalTechnicianId = "5" })).Should().BeFalse("the same id on another account is another login");
+    }
+
+    [Fact]
+    public async Task A_sync_run_translates_and_a_ticket_the_database_refuses_costs_only_itself()
+    {
+        // The whole run on a real SQL engine: the lock, the cursor, the failure store and the state
+        // an administrator reads. And a failure that is a genuine refused save, which leaves the unit
+        // of work holding the refused row - the case the in-memory provider cannot produce.
+        var connection = NewConnection("Autotask");
+        _db.Add(connection);
+        await _db.SaveChangesAsync();
+        var connector = new StubConnector { Paged = true };
+        UnifiedTicketFor("1"); UnifiedTicketFor("2", title: null!); UnifiedTicketFor("3");
+        void UnifiedTicketFor(string id, string title = "A ticket") => connector.Tickets.Add(new Desk.PsaCore.Models.UnifiedTicket
+        {
+            ExternalId = id, Title = title, Status = "New", Priority = "Medium", RequesterExternalId = "co-1", CompanyName = "Acme",
+        });
+        Desk.Infrastructure.Sync.ConnectionSyncRunner Runner() => new(_db, new OneConnector(connector),
+            new Desk.Infrastructure.Sync.TicketSyncService(_db, new Desk.Application.Mapping.MappingEngine(), new Desk.Infrastructure.Sync.SyncEventStore(_db, _clock), _clock, new RecordingActivity()),
+            new Desk.Infrastructure.Attachments.InMemoryObjectStorage(new Desk.Infrastructure.Attachments.AttachmentStorageOptions(), _clock),
+            new Desk.Infrastructure.Attachments.HeuristicMalwareScanner(), _clock);
+
+        var run = await Runner().RunAsync(connection.Id, new Desk.Application.Sync.SyncRunRequest(Manual: true, RequestedBy: "Dalbir"));
+
+        (run.Fetched, run.Failed).Should().Be((3, 1));
+        (await _db.Tickets.AsNoTracking().Where(t => t.PsaConnectionId == connection.Id).OrderBy(t => t.ExternalTicketId).Select(t => t.ExternalTicketId).ToListAsync())
+            .Should().Equal("1", "3");
+        var failure = await _db.SyncFailures.AsNoTracking().SingleAsync();
+        (failure.ExternalId, failure.Operation, failure.Message).Should().Be(("2", "apply", "The record could not be saved."));
+
+        var health = new SyncHealthService(_db, new AuditWriter(_db, User, _tenant, _clock), _clock);
+        var state = await health.StateAsync(connection.Id);
+        (state.Running, state.OpenFailures, state.Runs.Single().Status, state.Runs.Single().FailedRecords).Should().Be((false, 1, "Succeeded", 1));
+        (await health.FailuresAsync(connection.Id)).Should().ContainSingle();
+        await health.RetryAsync(connection.Id, failure.Id);
+
+        // A second run: the lock is free again, and the cursor it left is read back.
+        (await Runner().RunAsync(connection.Id)).Should().NotBeNull();
+        (await _db.SyncRuns.AsNoTracking().CountAsync(r => r.Status == Desk.Domain.Sync.SyncRunStatus.Running)).Should().Be(0);
     }
 
     [Fact]
@@ -156,9 +292,15 @@ public sealed class RelationalQueryTests : IDisposable
         (await metrics.ForTechnicianAsync(login, Desk.Application.Analytics.ProductivityWeights.Default)).Should().NotBeNull();
         (await metrics.DailyAsync(login)).Should().NotBeNull();
         var reads = new TicketReadService(_db, new NoopTicketScopeQuery(), new TestCurrentUser(Org, userId: _me));
-        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(_me, null)))).Should().NotBeNull();
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(_me, null, null)))).Should().NotBeNull();
+        // A PSA login's key, with its connection and as it was written before keys named one.
+        (await reads.PageAsync(new TicketQuery(PersonKey: PersonKey.For(null, Guid.NewGuid(), "123")))).Total.Should().Be(0);
+        (await reads.PageAsync(new TicketQuery(PersonKey: "x:123"))).Should().NotBeNull();
         (await reads.WorkloadAsync()).Should().NotBeNull();
         (await reads.FacetsAsync()).Should().NotBeNull();
+        // Each of these names a PSA login together with its connection.
+        (await new Desk.Infrastructure.Analytics.PortalCoverageService(_db).CoverageAsync(new Desk.Application.Analytics.MetricsFilter())).Should().NotBeNull();
+        (await new Desk.Infrastructure.Analytics.ClientWorkloadService(_db).ForClientsAsync(new Desk.Application.Analytics.MetricsFilter())).Should().NotBeNull();
     }
 
     [Fact]
@@ -520,6 +662,136 @@ public sealed class RelationalQueryTests : IDisposable
         var cutoff = DateTimeOffset.UtcNow.AddHours(-2); // captured first, as PushDelivery does
         (await _db.PushNotifications.Where(n => n.SentAt == null && n.CreatedAt >= cutoff)
             .OrderBy(n => n.CreatedAt).CountAsync()).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task The_connection_lists_the_sync_schedule_and_their_alerts_translate_in_every_state()
+    {
+        PsaConnection Of(string name, Action<PsaConnection>? set = null)
+        {
+            var c = new PsaConnection
+            {
+                MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+                ApiEndpoint = "https://webservices31.autotask.net/ATServicesRest/", CredentialSecretRef = "ref-" + name,
+                Status = ConnectionStatus.Healthy, LastSuccessfulSyncAt = _clock.GetUtcNow(),
+            };
+            set?.Invoke(c);
+            return c;
+        }
+        _db.PsaConnections.AddRange(
+            Of("Live"),
+            Of("Setup", c => (c.InSetup, c.IsEnabled, c.Status) = (true, false, ConnectionStatus.Failed)),
+            Of("Paused", c => c.SyncPausedAt = _clock.GetUtcNow().AddHours(-3)),
+            Of("Locked", c => (c.Status, c.LastErrorKind) = (ConnectionStatus.Degraded, ConnectionStates.Authentication)),
+            Of("Away", c => (c.ArchivedAt, c.IsEnabled, c.Status) = (_clock.GetUtcNow(), false, ConnectionStatus.Disabled)));
+        await _db.SaveChangesAsync();
+
+        var audit = new AuditWriter(_db, User, _tenant, _clock);
+        var service = new ConnectionAdminService(_db, new Desk.Infrastructure.Secrets.InMemorySecretStore(), audit,
+            new OneConnector(new StubConnector()), new ConnectionFieldCache(),
+            new Desk.Infrastructure.Attachments.InMemoryObjectStorage(new Desk.Infrastructure.Attachments.AttachmentStorageOptions(), _clock), _clock);
+
+        (await service.ListAsync()).Select(c => (c.Name, c.State)).Should().BeEquivalentTo(new (string, ConnectionState?)[]
+        {
+            ("Live", ConnectionState.Healthy), ("Locked", ConnectionState.AuthRequired),
+            ("Paused", ConnectionState.Paused), ("Setup", ConnectionState.Setup),
+        });
+        (await service.ArchivedAsync()).Select(c => (c.Name, c.State)).Should().Equal(("Away", ConnectionState.Archived));
+
+        // What the worker reads: not the one in setup, the paused one, the locked-out one or the one put away.
+        (await Desk.Infrastructure.Sync.SyncSchedule.Due(_db.PsaConnections).Select(c => c.Name).ToListAsync()).Should().Equal("Live");
+
+        var attention = new AttentionService(_db, _tenant, new NoResync(), new NoMail(), audit, _clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AttentionService>.Instance);
+        (await attention.ListAsync()).Items.Where(i => i.Kind.StartsWith("connection-") || i.Kind.StartsWith("sync-")).Select(i => i.Kind)
+            .Should().BeEquivalentTo(["connection-setup", "sync-paused", "connection-credentials"]);
+
+        (await new IntegrationHealthService(_db).SnapshotAsync()).Select(c => c.Name).Should().NotContain("Away");
+    }
+
+    [Fact]
+    public async Task What_the_worker_asks_for_requested_syncs_and_due_jobs_translates()
+    {
+        var asked = new PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Asked", Provider = ProviderType.ConnectWisePsa, ApiEndpoint = "https://cw.example/",
+            CredentialSecretRef = "mem://asked", Status = ConnectionStatus.Healthy, IsEnabled = true, SyncRequestedAt = _clock.GetUtcNow().AddMinutes(-30),
+        };
+        var pausedSince = new PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Asked, then paused", Provider = ProviderType.ConnectWisePsa, ApiEndpoint = "https://cw2.example/",
+            CredentialSecretRef = "mem://paused", Status = ConnectionStatus.Healthy, IsEnabled = true,
+            SyncRequestedAt = _clock.GetUtcNow().AddMinutes(-30), SyncPausedAt = _clock.GetUtcNow(),
+        };
+        _db.PsaConnections.AddRange(asked, pausedSince);
+        Desk.Domain.Sync.BackgroundJob Job(BackgroundJobStatus status, DateTimeOffset? notBefore = null, DateTimeOffset? lease = null) => new()
+        {
+            MspOrganizationId = Org, JobType = "t", PayloadJson = "{}", Status = status, NextAttemptAt = notBefore, LeaseExpiresAt = lease,
+        };
+        var due = Job(BackgroundJobStatus.Queued);
+        var later = Job(BackgroundJobStatus.Queued, notBefore: _clock.GetUtcNow().AddHours(1));
+        var held = Job(BackgroundJobStatus.Running, lease: _clock.GetUtcNow().AddMinutes(3));
+        var abandoned = Job(BackgroundJobStatus.Running, lease: _clock.GetUtcNow().AddMinutes(-3));
+        _db.BackgroundJobs.AddRange(due, later, held, abandoned, Job(BackgroundJobStatus.Succeeded));
+        await _db.SaveChangesAsync();
+
+        (await Desk.Infrastructure.Sync.SyncRequests.Pending(_db.PsaConnections.AsNoTracking()).OrderBy(c => c.SyncRequestedAt).Select(c => c.Name).ToListAsync())
+            .Should().Equal("Asked");
+
+        var queue = new Desk.Infrastructure.Jobs.JobQueue(_db, _clock);
+        (await queue.DueAsync(20)).Should().BeEquivalentTo([due.Id, abandoned.Id]);
+        (await queue.ClaimAsync(abandoned.Id))!.Attempts.Should().Be(1);
+        (await queue.ClaimAsync(held.Id)).Should().BeNull();
+        (await queue.DueAsync(20)).Should().Equal(due.Id);
+
+        var audit = new AuditWriter(_db, User, _tenant, _clock);
+        var state = await new SyncHealthService(_db, audit, _clock).StateAsync(asked.Id);
+        // SQLite keeps a time to the millisecond, so near enough is the same moment.
+        state.RequestedAt.Should().BeCloseTo(asked.SyncRequestedAt!.Value, TimeSpan.FromSeconds(1));
+        state.RequestedFull.Should().BeFalse();
+
+        var attention = new AttentionService(_db, _tenant, new NoResync(), new NoMail(), audit, _clock,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AttentionService>.Instance);
+        (await attention.ListAsync()).Items.Where(i => i.Kind == "sync-request-waiting").Should().ContainSingle()
+            .Which.Title.Should().Contain("\"Asked\"");
+    }
+
+    [Fact]
+    public async Task Mapping_health_its_preview_and_applying_it_translate()
+    {
+        var connection = new PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Mapped", Provider = ProviderType.ConnectWisePsa, ApiEndpoint = "https://cw.example/",
+            CredentialSecretRef = "mem://mapped", Status = ConnectionStatus.Healthy, IsEnabled = true, DefaultTimeEntryResourceId = "api",
+        };
+        _db.PsaConnections.Add(connection);
+        Ticket Of(string status, string tech) => new()
+        {
+            MspOrganizationId = Org, PsaConnectionId = connection.Id, Provider = ProviderType.ConnectWisePsa, Origin = TicketOrigin.Psa,
+            ExternalTicketId = Guid.NewGuid().ToString("N")[..8], RequesterName = "r", RequesterEmail = "r@a.test", Title = status,
+            PsaStatus = status, PortalStatus = status, PsaPriority = "High", PortalPriority = "High",
+            AssignedTechnicianExternalId = tech, AssignedTechnicianName = "Asha Rao", QueueOrBoard = "Service Desk",
+        };
+        _db.Tickets.AddRange(Of("Complete", "42"), Of("Complete", "42"), Of("New", "api"));
+        _db.FieldMappings.Add(new Desk.Domain.Mapping.FieldMapping
+        {
+            MspOrganizationId = Org, Provider = ProviderType.ConnectWisePsa, Scope = MappingScope.ConnectionOverride, PsaConnectionId = connection.Id,
+            PortalField = "status", ExternalField = "status", ExternalValue = "Complete", PortalValue = "CLOSED", Direction = MappingDirection.Bidirectional,
+        });
+        await _db.SaveChangesAsync();
+
+        var service = new ConnectionAdminService(_db, new Desk.Infrastructure.Secrets.InMemorySecretStore(), new AuditWriter(_db, User, _tenant, _clock),
+            new OneConnector(new Desk.Connectors.Mock.MockConnector(new Desk.Connectors.Mock.MockConnectorOptions(), _clock)), new ConnectionFieldCache(),
+            new Desk.Infrastructure.Attachments.InMemoryObjectStorage(new Desk.Infrastructure.Attachments.AttachmentStorageOptions(), _clock), _clock);
+
+        var health = await service.MappingHealthAsync(connection.Id);
+        (health.Tickets, health.UnmappedTickets).Should().Be((3, 3), "the priority High is not mapped on any of them");
+        health.Technicians.Unlinked.Should().Contain(p => p.ExternalId == "42" && p.Tickets == 2);
+
+        (await service.MappingPreviewAsync(connection.Id)).Should().HaveCount(3);
+
+        (await service.ApplyMappingAsync(connection.Id)).StatusesChanged.Should().Be(2);
+        (await _db.Tickets.AsNoTracking().CountAsync(t => t.PsaConnectionId == connection.Id && t.PortalStatus == "CLOSED")).Should().Be(2);
     }
 
     private sealed class OneConnector(Desk.PsaCore.Contracts.IServiceManagementConnector c) : Desk.Application.Connectors.IConnectorResolver

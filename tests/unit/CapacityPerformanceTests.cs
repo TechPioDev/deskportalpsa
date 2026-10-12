@@ -54,7 +54,18 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
     private sealed class Counter : DbCommandInterceptor
     {
         public int Commands { get; private set; }
-        public void Reset() => Commands = 0;
+        /// <summary>The slowest command since the last reset, for the report: which read to look at when a figure grows.</summary>
+        public (double Ms, string Sql) Slowest { get; private set; }
+        /// <summary>Time the database took to answer, summed: what is left of a read's time is rows travelling and the work in memory.</summary>
+        public double DatabaseMs { get; private set; }
+        public void Reset() { Commands = 0; Slowest = default; DatabaseMs = 0; }
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            DatabaseMs += eventData.Duration.TotalMilliseconds;
+            if (eventData.Duration.TotalMilliseconds > Slowest.Ms) Slowest = (eventData.Duration.TotalMilliseconds, command.CommandText);
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
@@ -120,7 +131,7 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         else await db.Database.MigrateAsync();
 
         var role = new Role { MspOrganizationId = Org, Name = "Administrator", BuiltInType = RoleType.MspAdministrator };
-        foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage, Permissions.ScheduleManage, Permissions.ScheduleOverride, Permissions.TicketsViewAll, Permissions.TicketsLogTime })
+        foreach (var key in new[] { Permissions.ScheduleView, Permissions.WorkforceManage, Permissions.AvailabilityManage, Permissions.ScheduleManage, Permissions.ScheduleOverride, Permissions.TicketsViewAll, Permissions.TicketsLogTime, Permissions.WorkforceAnalyticsExport })
             role.Permissions.Add(new RolePermission { PermissionKey = key, Scope = PermissionScope.All });
         var admin = new AppUser { MspOrganizationId = Org, DisplayName = "Admin", Email = "admin@techpio.test", IsActive = true };
         admin.Roles.Add(new UserRole { RoleId = role.Id });
@@ -240,6 +251,295 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         return (board.Id, tickets, await db.WorkAllocations.CountAsync());
     }
 
+    /// <summary>The Phase 7 analytics over the same database: the real access, scope and capacity services.</summary>
+    private WorkforceAnalyticsService Analytics(DeskDbContext db, Guid callerId)
+    {
+        var permissions = new EffectivePermissionService(db);
+        var access = new WorkforceAccess(db, _tenant, permissions);
+        var scope = new TicketScopeQuery(db, permissions);
+        var audit = new AuditWriter(db, new TestCurrentUser(Org, userId: callerId), _tenant, _clock);
+        var capacity = new CapacityService(db, access, new WorkAllocationReader(db, scope, _clock), _clock);
+        return new WorkforceAnalyticsService(db, access, capacity, scope, permissions, audit, _clock);
+    }
+
+    /// <summary>Recorded time on everyone's ticket: <paramref name="perPerson"/> entries of 45 minutes every weekday over four weeks, from 09:00 local.</summary>
+    private async Task<int> SeedTimeAsync(DeskDbContext db, List<Guid> ids, List<Guid> tickets, int perPerson)
+    {
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        var n = 0;
+        for (var i = 0; i < ids.Count; i++)
+            for (var day = 0; day < 28; day++)
+            {
+                var d = Monday.AddDays(day);
+                if (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) continue;
+                for (var k = 0; k < perPerson; k++)
+                {
+                    db.Add(new TicketTimeEntry
+                    {
+                        MspOrganizationId = Org, TicketId = tickets[i], AppUserId = ids[i], Hours = 0.75m, Billable = k % 2 == 0, WorkTypeLabel = k % 2 == 0 ? "Remote" : "Onsite",
+                        EntryDate = Desk.Domain.Common.TimeZones.WallToUtc(d.ToDateTime(new TimeOnly(9 + k, 0)), zone, true), Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Synced,
+                    });
+                    n++;
+                }
+            }
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        return n;
+    }
+
+    /// <summary>
+    /// Phase 7: the analytics for everyone over a week and a month, one team, one person's detail, a
+    /// drill-down, an export and the filter lists - each a fixed number of queries however many people,
+    /// days or hours there are (one load per request; every figure is tallied from it in memory).
+    /// </summary>
+    [Theory]
+    [InlineData(50, 1)]
+    [InlineData(100, 2)]
+    [InlineData(500, 3)]
+    public async Task Workforce_analytics_cost_the_same_number_of_queries_whatever_the_number_of_people_days_or_hours(int people, int perPerson)
+    {
+        var (db, admin, teamId, _, ids) = await SeedAsync(people);
+        var (_, tickets, allocations) = await SeedAllocationsAsync(db, admin, ids, perPerson);
+        var entries = await SeedTimeAsync(db, ids, tickets, perPerson);
+        var analytics = Analytics(db, admin);
+        var week = new AnalyticsQuery("custom", Monday, Monday.AddDays(6));
+        var month = new AnalyticsQuery("custom", Monday, Monday.AddDays(27));
+
+        var overviewWeek = await MeasureAsync(() => analytics.OverviewAsync(admin, week));
+        var overviewMonth = await MeasureAsync(() => analytics.OverviewAsync(admin, month));
+        var teamWeek = await MeasureAsync(() => analytics.OverviewAsync(admin, week with { TeamId = teamId }));
+        var person = await MeasureAsync(() => analytics.TechnicianAsync(admin, ids[1], month));
+        var drill = await MeasureAsync(() => analytics.WorkAsync(admin, week, AnalyticsWorkKind.Actual, 0, 50));
+        var export = await MeasureAsync(() => analytics.ExportAsync(admin, month, AnalyticsExportReport.Technicians));
+        var filters = await MeasureAsync(() => analytics.FiltersAsync(admin));
+
+        output.WriteLine($"{people} people, {allocations} allocations, {entries} time entries | overview week: {overviewWeek.Commands} queries, {overviewWeek.Ms} ms | overview month: {overviewMonth.Commands} queries, {overviewMonth.Ms} ms | team week: {teamWeek.Commands} queries, {teamWeek.Ms} ms ({teamWeek.Result.People.Count} people)");
+        output.WriteLine($"{people} people | technician month: {person.Commands} queries, {person.Ms} ms ({person.Result.Items.Count} items) | drill-down week: {drill.Commands} queries, {drill.Ms} ms ({drill.Result.Total} rows) | export month: {export.Commands} queries, {export.Ms} ms ({export.Result.Rows} rows) | filters: {filters.Commands} queries, {filters.Ms} ms");
+
+        // Right at scale: every weekday holds perPerson hours planned and perPerson × 45 minutes recorded, all on the day's planned ticket.
+        overviewWeek.Result.People.Should().HaveCount(people + 1);
+        overviewWeek.Result.Totals.PlannedMinutes.Should().Be(people * perPerson * 60 * 5);
+        overviewWeek.Result.Totals.ActualSeconds.Should().Be(people * perPerson * 45 * 60 * 5);
+        overviewWeek.Result.Totals.PlannedActualSeconds.Should().Be(overviewWeek.Result.Totals.ActualSeconds);
+        overviewWeek.Result.Totals.ReactiveActualSeconds.Should().Be(0);
+        overviewMonth.Result.Totals.ActualSeconds.Should().Be(people * perPerson * 45 * 60 * 20);
+        overviewMonth.Result.Heatmap.Rows.Should().HaveCount(Math.Min(people + 1, WorkforceAnalyticsService.HeatmapMaxPeople));
+        overviewWeek.Result.People.Sum(p => p.Figures.ActualSeconds).Should().Be(overviewWeek.Result.Totals.ActualSeconds, "the rows add up to the card");
+        overviewWeek.Result.Sources.Sum(s => s.Figures.ActualSeconds).Should().Be(overviewWeek.Result.Totals.ActualSeconds);
+        overviewWeek.Result.WorkTypes.Sum(s => s.Figures.ActualSeconds).Should().Be(overviewWeek.Result.Totals.ActualSeconds);
+        overviewWeek.Result.Daily.Sum(d => d.Figures.ActualSeconds).Should().Be(overviewWeek.Result.Totals.ActualSeconds);
+        teamWeek.Result.People.Should().HaveCountLessThan(people + 1);
+        person.Result.Items.Should().ContainSingle().Which.ActualSeconds.Should().Be(perPerson * 45 * 60 * 20);
+        drill.Result.TotalSeconds.Should().Be(overviewWeek.Result.Totals.ActualSeconds, "the drill-down reconciles with the card");
+        drill.Result.Rows.Should().HaveCount(Math.Min(50, drill.Result.Total));
+        export.Result.Rows.Should().Be(people + 1);
+
+        // Constant whatever the size: one load (people, teams, calendar, allocations, entries, clocks, finished and open work, the
+        // tickets, visibility, names), then memory. Measured 27 / 27 / 27 / 26 / 26 / 29 / 18 at 50, 100 and 500 people alike.
+        // One more each than before time entered in the PSA itself was counted as recorded work: the
+        // people's PSA logins are read, and where any of them has one, the time filed under it (one more).
+        overviewWeek.Commands.Should().BeLessThanOrEqualTo(28);
+        overviewMonth.Commands.Should().BeLessThanOrEqualTo(28);
+        teamWeek.Commands.Should().BeLessThanOrEqualTo(28);
+        person.Commands.Should().BeLessThanOrEqualTo(27);
+        drill.Commands.Should().BeLessThanOrEqualTo(27);
+        export.Commands.Should().BeLessThanOrEqualTo(30);
+        filters.Commands.Should().BeLessThanOrEqualTo(18);
+        foreach (var ms in new[] { overviewWeek.Ms, overviewMonth.Ms, teamWeek.Ms, person.Ms, drill.Ms, export.Ms, filters.Ms }) ms.Should().BeLessThan(30_000);
+
+        // The filters through the real translator too (the in-memory provider would not notice one no database can run):
+        // a client, a PSA connection, a priority and a kind of work, on a client's ticket finished and worked in the week.
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        var connection = new PsaConnection { MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://psa.example.test", CredentialSecretRef = "ref" };
+        var client = new ClientCompany { MspOrganizationId = Org, PsaConnectionId = connection.Id, Name = "ABC Company", ExternalCompanyId = "abc" };
+        var finishedAt = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(16, 0)), zone, true);
+        var psaTicket = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection.Id, ExternalTicketId = "9001",
+            RequesterName = "ABC", RequesterEmail = "it@abc.test", Title = "Client work", PortalStatus = "CLOSED", PortalPriority = "HIGH",
+            AssignedAppUserId = ids[1], ClientCompanyId = client.Id, SyncStatus = TicketSyncStatus.Synced, ResolvedAt = finishedAt, ClosedAt = finishedAt,
+        };
+        db.AddRange(connection, client, psaTicket);
+        db.Add(new TicketTimeEntry
+        {
+            MspOrganizationId = Org, TicketId = psaTicket.Id, AppUserId = ids[1], Hours = 2m, Billable = true, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Pending,
+            EntryDate = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(14, 0)), zone, true),
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var narrowed = await MeasureAsync(() => analytics.OverviewAsync(admin, week with { ClientId = client.Id, Source = "psa:" + connection.Id, Priority = "high", Kind = ActualKindFilter.Reactive }));
+        (narrowed.Result.Totals.ActualSeconds, narrowed.Result.Totals.ReactiveActualSeconds, narrowed.Result.Totals.PlannedMinutes, narrowed.Result.Totals.CompletedWork).Should().Be((7200, 7200, 0, 1));
+        narrowed.Result.Clients.Should().ContainSingle().Which.Name.Should().Be("ABC Company");
+        narrowed.Result.Sources.Should().ContainSingle().Which.Name.Should().Be("Autotask");
+        narrowed.Result.Sync.Should().ContainSingle().Which.Connection.Should().Be("Autotask");
+        (await analytics.OverviewAsync(admin, week with { Source = "internal" })).Totals.ActualSeconds.Should().Be(people * perPerson * 45 * 60 * 5, "the client's two hours are not the team's own work");
+        (await analytics.OverviewAsync(admin, week with { Source = "client" })).Totals.ActualSeconds.Should().Be(7200);
+        (await analytics.OverviewAsync(admin, week with { Source = "monitoring" })).Totals.ActualSeconds.Should().Be(0);
+        (await analytics.WorkAsync(admin, week with { ClientId = client.Id }, AnalyticsWorkKind.Completed, 0, 50)).Rows.Should().ContainSingle().Which.Reference.Should().Be("Autotask 9001");
+        (await analytics.FiltersAsync(admin)).Should().Match<AnalyticsFilterOptionsDto>(o => o.Clients.Count == 1 && o.Priorities.Contains("HIGH") && o.Sources.Any(s => s.Key == "psa:" + connection.Id));
+        // The filters add the two existence checks and the caller's ticket scope (a filter on what a ticket says about itself matches only tickets the caller may open), and nothing that grows.
+        narrowed.Commands.Should().BeLessThanOrEqualTo(34);
+        // A technician's own view with the same kind of filter, so the "may open" subquery of a narrower ticket scope (assigned) is translated too.
+        var technician = new Role { MspOrganizationId = Org, Name = "Technician", BuiltInType = RoleType.Technician };
+        technician.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAssigned, Scope = PermissionScope.Assigned });
+        technician.Permissions.Add(new RolePermission { PermissionKey = Permissions.ScheduleView, Scope = PermissionScope.Own });
+        db.Add(technician);
+        db.Add(new UserRole { AppUserId = ids[1], RoleId = technician.Id });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var own = Analytics(db, ids[1]);
+        var ownClient = await MeasureAsync(() => own.OverviewAsync(ids[1], week with { ClientId = client.Id }));
+        (ownClient.Result.People.Count, ownClient.Result.Totals.ActualSeconds, ownClient.Result.Totals.CompletedWork, ownClient.Result.SeesOthers).Should().Be((1, 7200L, 1, false));
+        (await own.OverviewAsync(ids[1], week with { Priority = "normal" })).Totals.ActualSeconds.Should().Be(perPerson * 45 * 60 * 5, "their own board ticket");
+        (await own.OverviewAsync(ids[1], week)).Totals.ActualSeconds.Should().Be(perPerson * 45 * 60 * 5 + 7200);
+        ((Func<Task>)(() => own.TechnicianAsync(ids[1], ids[2], week))).Should().ThrowAsync<Desk.Application.Common.NotFoundException>().GetAwaiter().GetResult();
+        output.WriteLine($"{people} people | filtered overview (client + connection + priority + kind): {narrowed.Commands} queries, {narrowed.Ms} ms | a technician's own, by client: {ownClient.Commands} queries, {ownClient.Ms} ms");
+    }
+
+    /// <summary>
+    /// Phase 8: the forecast for everyone over a week and four weeks, one team, a drill-down, the
+    /// comparison with its eight weeks and quality signals, mapping and integration health, and a
+    /// report previewed and exported - each a fixed number of queries however many people, days or
+    /// hours there are, and every query through a real SQL translator.
+    /// </summary>
+    [Theory]
+    [InlineData(50, 1)]
+    [InlineData(100, 2)]
+    [InlineData(500, 3)]
+    public async Task Management_insights_and_reports_cost_the_same_number_of_queries_whatever_the_number_of_people_days_or_hours(int people, int perPerson)
+    {
+        var (db, admin, teamId, skillId, ids) = await SeedAsync(people);
+        var (boardId, tickets, allocations) = await SeedAllocationsAsync(db, admin, ids, perPerson);
+        var entries = await SeedTimeAsync(db, ids, tickets, perPerson);
+        // Every ticket is sized at 100 hours and asks for a skill; one more is routed to a team and held by nobody;
+        // a PSA connection and a recurring ticket exist; the administrator may read integration health and manage boards.
+        var role = await db.Roles.AsNoTracking().SingleAsync();
+        db.Add(new RolePermission { RoleId = role.Id, PermissionKey = Permissions.IntegrationHealthView, Scope = PermissionScope.All });
+        db.Add(new RolePermission { RoleId = role.Id, PermissionKey = Permissions.BoardsManage, Scope = PermissionScope.All });
+        foreach (var t in tickets) db.Add(new WorkPlanning { MspOrganizationId = Org, TicketId = t, RequiredMinutes = 6000, Splittable = true, RequiredSkillId = skillId, UpdatedByUserId = admin });
+        var routed = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Internal, BoardId = boardId, Number = "INT-900001", RequesterName = "Admin", RequesterEmail = "admin@techpio.test",
+            Title = "Routed to a team", PortalStatus = "NEW", AssignedTeamId = teamId, SyncStatus = TicketSyncStatus.Synced,
+        };
+        var zone = Desk.Domain.Common.TimeZones.Resolve(Zone);
+        var connection = new PsaConnection { MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://psa.example.test", CredentialSecretRef = "ref", Status = ConnectionStatus.Healthy };
+        var client = new ClientCompany { MspOrganizationId = Org, PsaConnectionId = connection.Id, Name = "Unknown", ExternalCompanyId = "unknown" };
+        var psaTicket = new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection.Id, ExternalTicketId = "9001", AssignedTechnicianExternalId = "tech-9",
+            RequesterName = "ABC", RequesterEmail = "it@abc.test", Title = "Client work", PortalStatus = "Waiting Vendor", PortalPriority = "HIGH",
+            AssignedAppUserId = ids[1], ClientCompanyId = client.Id, SyncStatus = TicketSyncStatus.Error, SlaDueAt = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(17, 0)), zone, true),
+        };
+        db.AddRange(routed, connection, client, psaTicket,
+            new WorkPlanning { MspOrganizationId = Org, TicketId = routed.Id, RequiredMinutes = 300, UpdatedByUserId = admin },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = ids[1], PsaConnectionId = connection.Id, ExternalTechnicianId = "tech-9" },
+            new RecurringTicket { MspOrganizationId = Org, BoardId = boardId, Title = "Weekly check", Frequency = RecurrenceFrequency.Weekly, DayOfWeek = 1, Hour = 9, CreatedByUserId = admin, AssignedAppUserId = ids[0] },
+            new TicketTimeEntry
+            {
+                MspOrganizationId = Org, TicketId = psaTicket.Id, AppUserId = ids[1], Hours = 1m, Billable = true, Source = TimeEntrySource.Portal, SyncStatus = TimeEntrySyncStatus.Failed,
+                EntryDate = Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(1).ToDateTime(new TimeOnly(18, 0)), zone, true),
+            });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var insights = Analytics(db, admin);
+        var week = new InsightsQuery("custom", Monday, Monday.AddDays(6));
+        var month = new InsightsQuery("custom", Monday, Monday.AddDays(27));
+
+        var forecastWeek = await MeasureAsync(() => insights.ForecastAsync(admin, week));
+        var (slowest, databaseMs) = (_counter.Slowest, _counter.DatabaseMs);
+        var forecastMonth = await MeasureAsync(() => insights.ForecastAsync(admin, month));
+        var forecastTeam = await MeasureAsync(() => insights.ForecastAsync(admin, week with { TeamId = teamId }));
+        var drill = await MeasureAsync(() => insights.ForecastWorkAsync(admin, week, ForecastWorkKind.Unscheduled, 0, 50));
+        var skillList = await MeasureAsync(() => insights.ForecastWorkAsync(admin, week with { SkillId = skillId }, ForecastWorkKind.Skill, 0, 50));
+        var health = await MeasureAsync(() => insights.HealthAsync(admin));
+        var catalogue = await MeasureAsync(() => insights.CatalogueAsync(admin));
+        var preview = await MeasureAsync(() => insights.ReportAsync(admin, "future-capacity", month));
+        var export = await MeasureAsync(() => insights.ExportReportAsync(admin, "future-capacity", month, "xlsx"));
+        var filtered = await MeasureAsync(() => insights.ForecastAsync(admin, week with { ClientId = client.Id, Source = "psa:" + connection.Id, Priority = "high" }));
+
+        output.WriteLine($"{people} people, {allocations} allocations, {entries} time entries | forecast week: {forecastWeek.Commands} queries, {forecastWeek.Ms} ms | forecast four weeks: {forecastMonth.Commands} queries, {forecastMonth.Ms} ms | team week: {forecastTeam.Commands} queries, {forecastTeam.Ms} ms ({forecastTeam.Result.People.Count} people)");
+        output.WriteLine($"{people} people | the week's forecast spent {databaseMs:0} ms waiting for the database | slowest query: {slowest.Ms:0} ms: {OneLine(slowest.Sql, 160)}");
+        output.WriteLine($"{people} people | drill-down: {drill.Commands} queries, {drill.Ms} ms ({drill.Result.Total} rows) | skill list: {skillList.Commands} queries, {skillList.Ms} ms | health: {health.Commands} queries, {health.Ms} ms | catalogue: {catalogue.Commands} queries | report preview: {preview.Commands} queries, {preview.Ms} ms | report xlsx: {export.Commands} queries, {export.Ms} ms ({export.Result.Content.Length / 1024} KB) | filtered forecast: {filtered.Commands} queries, {filtered.Ms} ms");
+
+        // Right at scale. Every weekday holds perPerson planned hours for every person; every ticket is 100 hours less the four weeks planned on it.
+        var remaining = 6000 - perPerson * 60 * 20;
+        var fc = forecastWeek.Result;
+        fc.People.Should().HaveCount(people + 1);
+        (fc.Totals.ConfirmedMinutes, fc.Totals.TentativeMinutes).Should().Be((people * perPerson * 60 * 5, 0));
+        (fc.Totals.UnscheduledMinutes, fc.Totals.UnscheduledItems, fc.Totals.UnestimatedItems).Should().Be((people * remaining + 300, people + 1, 1), "everyone's ticket, the one routed to a team, and the client's unsized one");
+        fc.Totals.ProjectedMinutes.Should().Be(fc.Totals.ConfirmedMinutes + fc.Totals.UnscheduledMinutes);
+        fc.Totals.GapMinutes.Should().Be(fc.Totals.CapacityMinutes - fc.Totals.ProjectedMinutes);
+        fc.People.Sum(p => p.Figures.ConfirmedMinutes).Should().Be(fc.Totals.ConfirmedMinutes, "the rows add up to the total");
+        (fc.People.Sum(p => p.Figures.UnscheduledMinutes) + fc.Unassigned!.UnscheduledMinutes).Should().Be(fc.Totals.UnscheduledMinutes);
+        fc.Daily.Sum(d => d.ConfirmedMinutes).Should().Be(fc.Totals.ConfirmedMinutes);
+        fc.Daily.Sum(d => d.CapacityMinutes ?? 0).Should().Be(fc.Totals.CapacityMinutes);
+        // The same capacity and confirmed demand as the Phase 7 dashboard for the same days.
+        var phase7Week = await MeasureAsync(() => insights.OverviewAsync(admin, new AnalyticsQuery("custom", Monday, Monday.AddDays(6))));
+        output.WriteLine($"{people} people | for comparison, the Phase 7 dashboard for the same week: {phase7Week.Commands} queries, {phase7Week.Ms} ms, {_counter.DatabaseMs:0} ms of it waiting for the database");
+        var phase7 = phase7Week.Result;
+        (fc.Totals.CapacityMinutes, fc.Totals.ConfirmedMinutes).Should().Be((phase7.Demand.AvailableMinutes, phase7.Demand.ConfirmedMinutes));
+        forecastMonth.Result.Totals.ConfirmedMinutes.Should().Be(people * perPerson * 60 * 20);
+        forecastMonth.Result.Totals.UnscheduledMinutes.Should().Be(fc.Totals.UnscheduledMinutes, "what is left to allocate does not depend on the window");
+        fc.Skills.Should().ContainSingle().Which.Should().Match<SkillCapacityDto>(k => k.DemandMinutes == people * remaining && k.DemandItems == people && k.SkilledPeople == (people + 3) / 4);
+        (fc.Recurring!.Definitions, fc.Recurring.Occurrences, forecastMonth.Result.Recurring!.Occurrences).Should().Be((1, 1, 4));
+        fc.AtRisk.Should().Be(new WorkAtRiskDto(0, 0, 1), "the client's ticket is due on Tuesday and has no estimate, so nothing says it cannot fit");
+        (fc.CanSeeHealth, fc.Attention.Any(a => a.Key == "time-not-in-psa"), fc.Attention.Any(a => a.Key.StartsWith("sync:"))).Should().Be((true, true, true), "the connection has never synced");
+        forecastTeam.Result.People.Should().HaveCountLessThan(people + 1);
+        forecastTeam.Result.Unassigned!.UnscheduledMinutes.Should().Be(300);
+        (drill.Result.Total, drill.Result.TotalMinutes, drill.Result.Rows.Count).Should().Be((people + 1, fc.Totals.UnscheduledMinutes, 50));
+        skillList.Result.TotalMinutes.Should().Be(people * remaining);
+        (filtered.Result.Totals.UnestimatedItems, filtered.Result.Totals.ConfirmedMinutes, filtered.Result.Clients.Single().Name).Should().Be((1, 0, "Unknown"));
+        var row = health.Result.Connections.Should().ContainSingle().Subject;
+        (row.Tickets, row.StatusMapping.Mapped, row.StatusMapping.Unmapped.Single(), row.PriorityMapping.Percent, row.TechnicianLinks.Mapped, row.TechnicianLinks.Total, row.PlaceholderClientTickets, row.TicketsInSyncError, row.TimeEntriesFailed, row.Stale)
+            .Should().Be((1, 0, "Waiting Vendor", 100d, 1, 1, 1, 1, 1, true));
+        catalogue.Result.Should().HaveCount(12);
+        (preview.Result.TotalRows, preview.Result.Truncated, preview.Result.Rows.Count).Should().Be((people + 2, people + 2 > WorkforceAnalyticsService.ReportPreviewRows, Math.Min(people + 2, WorkforceAnalyticsService.ReportPreviewRows)));
+        export.Result.Rows.Should().Be(people + 2, "the export holds every row, whatever the preview shows");
+
+        // History, read on the Monday after the four weeks: last week against the one before, eight weeks, quality signals.
+        _clock.Advance(Desk.Domain.Common.TimeZones.WallToUtc(Monday.AddDays(28).ToDateTime(new TimeOnly(9, 0)), zone, true) - _clock.GetUtcNow());
+        var trends = await MeasureAsync(() => insights.TrendsAsync(admin, new InsightsQuery(Compare: "last-week")));
+        var trendsMonth = await MeasureAsync(() => insights.TrendsAsync(admin, new InsightsQuery(Compare: "last-30")));
+        var quality = await MeasureAsync(() => insights.ExportReportAsync(admin, "operational-quality", new InsightsQuery(Compare: "last-30"), "csv"));
+        output.WriteLine($"{people} people | trends last week: {trends.Commands} queries, {trends.Ms} ms | trends last 30 days: {trendsMonth.Commands} queries, {trendsMonth.Ms} ms | quality report csv: {quality.Commands} queries, {quality.Ms} ms");
+        var actualWeek = (double)people * perPerson * 45 * 60 * 5;
+        trends.Result.Totals.Single(x => x.Key == "actual").Should().Match<ComparisonDto>(x => x.Current == actualWeek && x.Previous == actualWeek && x.Change == 0 && x.ChangePercent == 0);
+        trends.Result.Weeks.Should().HaveCount(8);
+        trends.Result.Weeks.Sum(x => x.ActualSeconds).Should().Be((long)actualWeek * 4 + 3600, "four weeks of work and the hour on the client's ticket");
+        trends.Result.Quality.Should().HaveCount(7);
+
+        // Constant whatever the size: the Phase 7 load, the open work, the tickets it points at, skills, recurring work,
+        // failed pushes, connections and permissions, then memory. Measured at 50, 100 and 500 people alike.
+        forecastWeek.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        forecastMonth.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        forecastTeam.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        drill.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        skillList.Commands.Should().BeLessThanOrEqualTo(MaxForecast);
+        filtered.Commands.Should().BeLessThanOrEqualTo(MaxForecast + 6);
+        health.Commands.Should().BeLessThanOrEqualTo(MaxHealth);
+        catalogue.Commands.Should().BeLessThanOrEqualTo(2);
+        preview.Commands.Should().BeLessThanOrEqualTo(MaxForecast + 4);
+        export.Commands.Should().BeLessThanOrEqualTo(MaxForecast + 6);
+        trends.Commands.Should().BeLessThanOrEqualTo(MaxTrends);
+        trendsMonth.Commands.Should().BeLessThanOrEqualTo(MaxTrends);
+        quality.Commands.Should().BeLessThanOrEqualTo(MaxTrends + 6);
+        foreach (var ms in new[] { forecastWeek.Ms, forecastMonth.Ms, forecastTeam.Ms, drill.Ms, health.Ms, preview.Ms, export.Ms, trends.Ms, trendsMonth.Ms, quality.Ms }) ms.Should().BeLessThan(30_000);
+    }
+
+    /// <summary>A command's text on one line, shortened: enough to recognise the read in a test report.</summary>
+    private static string OneLine(string sql, int max)
+    {
+        var line = string.Join(' ', (sql ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return line.Length <= max ? line : line[..max] + "…";
+    }
+
+    // Two more than before PSA-entered time was counted: the period and the one it is compared with each read the people's PSA logins.
+    private const int MaxForecast = 55;
+    private const int MaxHealth = 12;
+    private const int MaxTrends = 30;
+
     private async Task<(int Commands, long Ms, T Result)> MeasureAsync<T>(Func<Task<T>> work)
     {
         _counter.Reset();
@@ -358,10 +658,11 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
         teamToday.Result.People.Should().HaveCount(people + 1);
         teamToday.Result.Working.Should().Be(1, "the administrator's clock");
         // Constant whatever the size: a day is the person's capacity, their allocations, entries and sessions; the team is one query each over everyone.
-        myDay.Commands.Should().BeLessThanOrEqualTo(27);
+        // One more each for a day and a team's day: the PSA logins of the people shown.
+        myDay.Commands.Should().BeLessThanOrEqualTo(28);
         // The active lookup reads the day the clock started on once (the outside-the-schedule fact): the session plus one capacity day.
         active.Commands.Should().BeLessThanOrEqualTo(17);
-        teamToday.Commands.Should().BeLessThanOrEqualTo(27);
+        teamToday.Commands.Should().BeLessThanOrEqualTo(28);
 
         plan.Result.Allocations.Should().HaveCount(perPerson * 5);
         plan.Result.Days.Where(d => d.IsWorkingDay).Should().OnlyContain(d => d.ConfirmedMinutes == perPerson * 60);
@@ -435,6 +736,199 @@ public sealed class CapacityPerformanceTests(ITestOutputHelper output) : IDispos
             try { await call(); return null; }
             catch (Exception ex) { return ex; }
         }
+    }
+
+    [Fact]
+    public async Task Many_sync_runs_started_at_once_on_a_real_database_end_with_one()
+    {
+        // The worker and an administrator's "Sync now", in two processes, at the same instant. Each
+        // reads "nothing is running" and each tries to record its run; the index lets one through.
+        // Needs PostgreSQL for the same reason as the booking test above: one shared SQLite
+        // connection cannot carry two requests at once.
+        if (Postgres is null) return;
+        var (db, _, _, _, _) = await SeedAsync(1);
+        var connection = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Autotask", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://x", CredentialSecretRef = "m",
+        };
+        db.Add(connection);
+        await db.SaveChangesAsync();
+
+        var contexts = Enumerable.Range(0, 8).Select(_ => NewContext()).ToList();
+        try
+        {
+            var started = await Task.WhenAll(contexts.Select(c => Task.Run(async () =>
+            {
+                var mine = await c.PsaConnections.FirstAsync(x => x.Id == connection.Id);
+                return await new Desk.Infrastructure.Sync.SyncRunCoordinator(c, _clock, Desk.Infrastructure.Sync.SyncOptions.Default)
+                    .TryStartAsync(mine, Desk.Domain.Sync.SyncRunTrigger.Scheduled, null, default);
+            })));
+
+            started.Count(r => r is not null).Should().Be(1, "one run holds the connection; the other seven stand down");
+            (await db.SyncRuns.AsNoTracking().CountAsync(r => r.PsaConnectionId == connection.Id && r.Status == Desk.Domain.Sync.SyncRunStatus.Running)).Should().Be(1);
+            output.WriteLine("sync lock: 8 simultaneous starts on PostgreSQL, 1 run");
+        }
+        finally
+        {
+            foreach (var c in contexts) await c.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Many_workers_taking_the_same_jobs_on_a_real_database_run_each_one_once()
+    {
+        // Six workers, each with all thirty jobs in hand as it read them: queued. Every one of them
+        // then tries to take every job. A job's version is checked by the save that takes it, so
+        // each job has exactly one taker and the other five saves are refused - a hundred and fifty
+        // refusals, whatever the order the workers happen to run in.
+        // Needs PostgreSQL for the same reason as the tests above: one shared SQLite connection
+        // cannot carry six workers at once.
+        if (Postgres is null) return;
+        var (db, _, _, _, _) = await SeedAsync(1);
+        var jobs = Enumerable.Range(0, 30)
+            .Select(_ => new Desk.Domain.Sync.BackgroundJob { MspOrganizationId = Org, JobType = "t", PayloadJson = "{}", Status = BackgroundJobStatus.Queued })
+            .ToList();
+        db.AddRange(jobs);
+        await db.SaveChangesAsync();
+        var ids = jobs.Select(j => j.Id).ToList();
+
+        var workers = Enumerable.Range(0, 6).Select(_ => NewContext()).ToList();
+        try
+        {
+            // What each worker read before any of them saved: the moment that mattered.
+            foreach (var w in workers)
+                (await w.BackgroundJobs.ToListAsync()).Should().HaveCount(30).And.OnlyContain(j => j.Status == BackgroundJobStatus.Queued);
+
+            var taken = await Task.WhenAll(workers.Select((w, k) => Task.Run(async () =>
+            {
+                var queue = new Desk.Infrastructure.Jobs.JobQueue(w, _clock);
+                var mine = new List<Guid>();
+                // Each starts somewhere else in the list, so they meet from the first job on.
+                foreach (var id in ids.Skip(k * 5).Concat(ids.Take(k * 5)))
+                    if (await queue.ClaimAsync(id) is { } job) mine.Add(job.Id);
+                return mine;
+            })));
+
+            taken.SelectMany(t => t).Should().OnlyHaveUniqueItems("no job was taken by two workers").And.HaveCount(30, "and every job was taken by one");
+            var rows = await db.BackgroundJobs.AsNoTracking().Select(j => new { j.Status, j.Attempts, j.Version }).ToListAsync();
+            rows.Should().OnlyContain(j => j.Status == BackgroundJobStatus.Running && j.Attempts == 1 && j.Version == 1);
+            output.WriteLine($"job queue: 6 workers each tried all 30 jobs on PostgreSQL; taken {string.Join(" + ", taken.Select(t => t.Count))} = 30, each once, {6 * 30 - 30} saves refused");
+        }
+        finally
+        {
+            foreach (var w in workers) await w.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Many_workers_taking_the_same_waiting_changes_on_a_real_database_take_each_one_once()
+    {
+        // The same claim, for the changes waiting to reach a PSA: a change taken by two workers is
+        // a reply said to a customer twice. Six workers each read all thirty as due, then each
+        // tries to take every one. PostgreSQL only, for the reason given above.
+        if (Postgres is null) return;
+        var (db, _, _, _, _) = await SeedAsync(1);
+        var connection = new Desk.Domain.Tenancy.PsaConnection
+        {
+            MspOrganizationId = Org, Name = "Outbound", Provider = ProviderType.AutotaskPsa, ApiEndpoint = "https://x", CredentialSecretRef = "m",
+        };
+        var tickets = Enumerable.Range(0, 30).Select(i => new Ticket
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection.Id,
+            ExternalTicketId = $"waiting-{i}", RequesterName = "R", RequesterEmail = "r@x.test", Title = $"waiting-{i}",
+            PortalStatus = "NEW", PortalPriority = "NORMAL", SyncStatus = TicketSyncStatus.Synced,
+        }).ToList();
+        db.Add(connection);
+        db.AddRange(tickets);
+        var keeping = new Desk.Infrastructure.Sync.OutboundQueue(db, _clock);
+        var ops = tickets.Select(t => keeping.Enqueue(t, Desk.Domain.Sync.OutboundKind.StatusChange, "Status to IN_PROGRESS",
+            new Desk.Infrastructure.Sync.OutboundStatus("IN_PROGRESS", "NEW", null, null), null, Guid.NewGuid().ToString("N"),
+            null, null, "Asha Rao", "The PSA did not answer.", uncertain: false)).ToList();
+        foreach (var op in ops) op.NextAttemptAt = null;   // due now
+        await db.SaveChangesAsync();
+        var ids = ops.Select(o => o.Id).ToList();
+
+        var workers = Enumerable.Range(0, 6).Select(_ => NewContext()).ToList();
+        try
+        {
+            // What each worker was told is due before any of them saved, and the rows as each read them
+            // then: unheld. A worker keeps what it read. Without this each claim would read the row
+            // afresh, see the first taker's hold and step aside, and it would be the read that turned
+            // the others away. Holding the stale row, every worker believes the change is free and
+            // tries to save; the version checked by that save is then the only thing that refuses five
+            // of the six, which is what this test is for.
+            foreach (var w in workers)
+            {
+                (await new Desk.Infrastructure.Sync.OutboundQueue(w, _clock).DueAsync(100)).Should().BeEquivalentTo(ids);
+                (await w.OutboundOperations.ToListAsync()).Should().HaveCount(30).And.OnlyContain(o => o.LeaseExpiresAt == null && o.Version == 0);
+            }
+
+            var taken = await Task.WhenAll(workers.Select((w, k) => Task.Run(async () =>
+            {
+                var queue = new Desk.Infrastructure.Sync.OutboundQueue(w, _clock);
+                var mine = new List<Guid>();
+                foreach (var id in ids.Skip(k * 5).Concat(ids.Take(k * 5)))
+                    if (await queue.ClaimAsync(id) is { } op) mine.Add(op.Id);
+                return mine;
+            })));
+
+            taken.SelectMany(t => t).Should().OnlyHaveUniqueItems("no change was taken by two workers").And.HaveCount(30, "and every change was taken by one");
+            var rows = await db.OutboundOperations.AsNoTracking().Select(o => new { o.State, o.Version, Held = o.LeaseExpiresAt != null }).ToListAsync();
+            rows.Should().HaveCount(30).And.OnlyContain(o => o.State == Desk.Domain.Sync.OutboundState.Pending && o.Version == 1 && o.Held);
+            (await new Desk.Infrastructure.Sync.OutboundQueue(db, _clock).DueAsync(100)).Should().BeEmpty("each is held by the worker that has it");
+            output.WriteLine($"outbound queue: 6 workers each tried all 30 waiting changes on PostgreSQL; taken {string.Join(" + ", taken.Select(t => t.Count))} = 30, each once, {6 * 30 - 30} saves refused");
+        }
+        finally
+        {
+            foreach (var w in workers) await w.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Ticket_visibility_through_PSA_links_runs_on_a_real_database()
+    {
+        // The predicate that decides which tickets a person may see is assembled by hand, one clause
+        // per PSA connection. SQLite translating it does not prove PostgreSQL does, and this is the
+        // query every ticket list, count and detail goes through.
+        var (db, _, teamId, _, ids) = await SeedAsync(6);
+        var (me, teammate) = (ids[0], ids[5]);   // people 0 and 5 share Team 0
+        Desk.Domain.Tenancy.PsaConnection Account(string name) => new()
+        {
+            MspOrganizationId = Org, Name = name, Provider = ProviderType.AutotaskPsa,
+            ApiEndpoint = "https://x", CredentialSecretRef = "m", DefaultTimeEntryResourceId = "api-user",
+        };
+        var (first, second) = (Account("Autotask - A"), Account("Autotask - B"));
+        Ticket Psa(Guid connection, string external, string login) => new()
+        {
+            MspOrganizationId = Org, Origin = TicketOrigin.Psa, Provider = ProviderType.AutotaskPsa, PsaConnectionId = connection,
+            ExternalTicketId = external, RequesterName = "R", RequesterEmail = "r@x.test", Title = external,
+            PortalStatus = "NEW", PortalPriority = "NORMAL", AssignedTechnicianExternalId = login, SyncStatus = TicketSyncStatus.Synced,
+        };
+        var assigned = new Role { MspOrganizationId = Org, Name = "Technician" };
+        assigned.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAssigned, Scope = PermissionScope.Assigned });
+        var byTeam = new Role { MspOrganizationId = Org, Name = "Team lead" };
+        byTeam.Permissions.Add(new RolePermission { PermissionKey = Permissions.TicketsViewAll, Scope = PermissionScope.Team });
+        db.AddRange(first, second, assigned, byTeam,
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = me, PsaConnectionId = first.Id, ExternalTechnicianId = "5" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = me, PsaConnectionId = second.Id, ExternalTechnicianId = "812" },
+            new UserPsaIdentity { MspOrganizationId = Org, AppUserId = teammate, PsaConnectionId = first.Id, ExternalTechnicianId = "7" },
+            Psa(first.Id, "mine-on-A", "5"), Psa(second.Id, "mine-on-B", "812"), Psa(second.Id, "someone-elses-5-on-B", "5"),
+            Psa(first.Id, "teammates-on-A", "7"), Psa(first.Id, "the-integrations", "api-user"));
+        await db.SaveChangesAsync();
+
+        async Task<List<string>> SeenAsync(Role role)
+        {
+            db.UserRoles.RemoveRange(await db.UserRoles.Where(r => r.AppUserId == me).ToListAsync());
+            db.UserRoles.Add(new UserRole { AppUserId = me, RoleId = role.Id });
+            await db.SaveChangesAsync();
+            var visible = await new Desk.Infrastructure.Tickets.TicketScopeQuery(db, new EffectivePermissionService(db))
+                .VisibleAsync(db.Tickets.AsNoTracking(), me, Permissions.TicketsViewAll);
+            return await visible.Where(t => t.Origin == TicketOrigin.Psa).Select(t => t.Title).OrderBy(t => t).ToListAsync();
+        }
+
+        (await SeenAsync(assigned)).Should().Equal("mine-on-A", "mine-on-B");
+        (await SeenAsync(byTeam)).Should().Equal("mine-on-A", "mine-on-B", "teammates-on-A");
+        output.WriteLine($"ticket visibility through PSA links: {(Postgres is null ? "SQLite" : "PostgreSQL")}, team {teamId}");
     }
 
     [Fact]

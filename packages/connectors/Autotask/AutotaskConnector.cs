@@ -25,6 +25,14 @@ public sealed class AutotaskConnector(
     Action<string, string>? observePicklist = null)
     : IServiceManagementConnector
 {
+    /// <summary>
+    /// The pace a connection to Autotask keeps when it has a lot to read: two requests a second,
+    /// 7,200 an hour, under the hourly request threshold Autotask applies to a database. Whatever
+    /// limit Autotask actually enforces still arrives as a 429 and is obeyed; this is so that a
+    /// large import does not find it by running into it.
+    /// </summary>
+    public const int RequestsPerMinute = 120;
+
     // Autotask expects PascalCase request wrappers (MaxRecords/Filter). JsonContent.Create defaults
     // to camelCase (web defaults), so use explicit general options to preserve the names as written.
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.General);
@@ -42,7 +50,10 @@ public sealed class AutotaskConnector(
             SupportsAttachments = true, SupportsAttachmentDownload = true, SupportsAttachmentSweep = true,
             SupportsTimeEntries = true, SupportsAssets = true, SupportsContracts = true,
             SupportsHolidayCalendars = true,
-            SupportsSlaData = true, SupportsCustomFields = true, SupportsInboundWebhooks = true,
+            // Inbound webhooks: not yet. What this connector validates is the portal's own signed
+            // frame, which Autotask cannot send; Autotask's own callbacks are not understood until
+            // the webhook slice. Saying "true" here told the browser something that was not so.
+            SupportsSlaData = true, SupportsCustomFields = true, SupportsInboundWebhooks = false,
             SupportsOutboundWebhooks = false, SupportsIncrementalSync = true, SupportsBulkRead = true,
             SupportsBulkWrite = false, SupportsCompanies = true, SupportsContacts = true,
             SupportsTechnicians = true, SupportsTeams = true, SupportsQueues = true,
@@ -60,13 +71,13 @@ public sealed class AutotaskConnector(
 
     public async Task<IReadOnlyList<ExternalOrganization>> GetOrganizationsAsync(CancellationToken ct = default)
     {
-        var items = await QueryAsync<AtCompany>("Companies", [Filter("id", "gte", 0)], 500, ct);
+        var items = await QueryAllAsync<AtCompany>("Companies", [Filter("id", "gte", 0)], ct);
         return items.Select(c => new ExternalOrganization(c.Id.ToString(), c.CompanyName ?? "", c.IsActive)).ToList();
     }
 
     public async Task<IReadOnlyList<ExternalContact>> GetContactsAsync(string organizationId, CancellationToken ct = default)
     {
-        var items = await QueryAsync<AtContact>("Contacts", [Filter("companyID", "eq", long.Parse(organizationId))], 500, ct);
+        var items = await QueryAllAsync<AtContact>("Contacts", [Filter("companyID", "eq", long.Parse(organizationId))], ct);
         return items.Select(c => new ExternalContact(
             c.Id.ToString(), c.EmailAddress ?? "", $"{c.FirstName} {c.LastName}".Trim(), c.IsActive)).ToList();
     }
@@ -83,20 +94,20 @@ public sealed class AutotaskConnector(
 
     private async Task<IReadOnlyList<ExternalTechnician>> FetchTechniciansAsync(CancellationToken ct)
     {
-        var items = await QueryAsync<AtResource>("Resources", [Filter("id", "gte", 0)], 500, ct);
+        var items = await QueryAllAsync<AtResource>("Resources", [Filter("id", "gte", 0)], ct);
         return items.Select(r => new ExternalTechnician(
             r.Id.ToString(), r.Email ?? "", $"{r.FirstName} {r.LastName}".Trim(), r.IsActive)).ToList();
     }
 
     public async Task<IReadOnlyList<ExternalTechnicianAssignment>> GetTechnicianAssignmentsAsync(CancellationToken ct = default)
     {
-        var links = await QueryAsync<AtResourceRole>("ResourceRoles", [Filter("isActive", "eq", true)], 500, ct);
+        var links = await QueryAllAsync<AtResourceRole>("ResourceRoles", [Filter("isActive", "eq", true)], ct);
         if (links.Count == 0) return [];
 
         var roleNames = new Dictionary<long, string>();
         try
         {
-            foreach (var r in await QueryAsync<AtRole>("Roles", [Filter("isActive", "eq", true)], 500, ct))
+            foreach (var r in await QueryAllAsync<AtRole>("Roles", [Filter("isActive", "eq", true)], ct))
                 roleNames[r.Id] = r.Name ?? r.Id.ToString();
         }
         catch (ConnectorException) { /* ids still work; names are the nicety */ }
@@ -109,25 +120,19 @@ public sealed class AutotaskConnector(
             l.QueueId is > 0 ? l.QueueId!.Value.ToString() : null)).ToList();
     }
 
+    public async Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    {
+        var filters = TicketFilters(filter);
+        // The sync leaves "open only" to the runner, which sees each ticket. A count sees none of
+        // them, so it has to ask: a ticket Autotask has completed carries a completed date.
+        if (!filter.IncludeClosed) filters.Add(new { op = "notExist", field = "completedDate" });
+        var result = await SendAsync<AtQueryCount>(HttpMethod.Post, "V1.0/Tickets/query/count", new { Filter = filters }, ct);
+        return result?.QueryCount;
+    }
+
     public async Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
     {
-        var filters = new List<object>();
-        if (filter.ModifiedSince is { } since)
-            filters.Add(Filter("lastActivityDate", "gte", since.ToUniversalTime().ToString("o")));
-        else
-            filters.Add(Filter("id", "gte", 0));
-        if (filter.ExternalCompanyId is { } company)
-            filters.Add(Filter("companyID", "eq", long.Parse(company)));
-
-        // Import filters. Autotask expresses "in" with the "in" operator over a value list.
-        if (filter.CompanyIds.Count > 0)
-            filters.Add(Filter("companyID", "in", filter.CompanyIds.Select(long.Parse).ToArray()));
-        if (filter.QueueOrBoardIds.Count > 0)
-            filters.Add(Filter("queueID", "in", filter.QueueOrBoardIds.Select(long.Parse).ToArray()));
-        if (filter.AssignedResourceIds.Count > 0)
-            filters.Add(Filter("assignedResourceID", "in", filter.AssignedResourceIds.Select(long.Parse).ToArray()));
-        if (filter.ActiveWithinDays is > 0 and { } days)
-            filters.Add(Filter("lastActivityDate", "gte", clock.GetUtcNow().AddDays(-days).ToString("o")));
+        var filters = TicketFilters(filter);
 
         // Autotask answers a query with the first page and a URL for the next. Following it is the
         // whole of pagination here: without it the import stopped at MaxRecords and reported success,
@@ -150,6 +155,29 @@ public sealed class AutotaskConnector(
         var next = result?.PageDetails?.NextPageUrl;
         var hasMore = !string.IsNullOrWhiteSpace(next);
         return new PaginatedResult<UnifiedTicket>(mapped, hasMore ? next : null, hasMore);
+    }
+
+    /// <summary>The filter a read and a count of the same tickets both send, so they cannot differ.</summary>
+    private List<object> TicketFilters(TicketFilter filter)
+    {
+        var filters = new List<object>();
+        if (filter.ModifiedSince is { } since)
+            filters.Add(Filter("lastActivityDate", "gte", since.ToUniversalTime().ToString("o")));
+        else
+            filters.Add(Filter("id", "gte", 0));
+        if (filter.ExternalCompanyId is { } company)
+            filters.Add(Filter("companyID", "eq", long.Parse(company)));
+
+        // Import filters. Autotask expresses "in" with the "in" operator over a value list.
+        if (filter.CompanyIds.Count > 0)
+            filters.Add(Filter("companyID", "in", filter.CompanyIds.Select(long.Parse).ToArray()));
+        if (filter.QueueOrBoardIds.Count > 0)
+            filters.Add(Filter("queueID", "in", filter.QueueOrBoardIds.Select(long.Parse).ToArray()));
+        if (filter.AssignedResourceIds.Count > 0)
+            filters.Add(Filter("assignedResourceID", "in", filter.AssignedResourceIds.Select(long.Parse).ToArray()));
+        if (filter.ActiveWithinDays is > 0 and { } days)
+            filters.Add(Filter("lastActivityDate", "gte", clock.GetUtcNow().AddDays(-days).ToString("o")));
+        return filters;
     }
 
     public async Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
@@ -195,6 +223,8 @@ public sealed class AutotaskConnector(
         if (update.Priority is not null) body["priority"] = await IdForAsync("priority", update.Priority, ct);
         if (update.Category is not null) body["ticketCategory"] = await IdForAsync("ticketCategory", update.Category, ct);
         if (update.QueueOrBoard is not null) body["queueID"] = await IdForAsync("queueID", update.QueueOrBoard, ct);
+        // The ticket's due date, as the portal reads it back (resolvedDueDateTime wins on read where an SLA sets one).
+        if (update.DueDate is { } due) body["dueDateTime"] = due.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
         if (update.AssignedTechnicianExternalId is not null)
         {
             body["assignedResourceID"] = update.AssignedTechnicianExternalId;
@@ -221,7 +251,7 @@ public sealed class AutotaskConnector(
     {
         // All holiday sets merged: an MSP typically maintains one, and the portal's holiday page
         // is a flat calendar anyway.
-        var items = await QueryAsync<AtHoliday>("Holidays", [Filter("id", "gte", 0)], 500, ct);
+        var items = await QueryAllAsync<AtHoliday>("Holidays", [Filter("id", "gte", 0)], ct);
         return items
             .Where(h => h.HolidayDate is not null)
             .Select(h => new ExternalHoliday(h.HolidayDate!.Value.ToString("yyyy-MM-dd"), h.HolidayName ?? "Holiday"))
@@ -268,7 +298,7 @@ public sealed class AutotaskConnector(
         var roleNames = new Dictionary<long, string>();
         try
         {
-            foreach (var r in await QueryAsync<AtRole>("Roles", [Filter("isActive", "eq", true)], 500, ct))
+            foreach (var r in await QueryAllAsync<AtRole>("Roles", [Filter("isActive", "eq", true)], ct))
                 roleNames[r.Id] = r.Name ?? r.Id.ToString();
         }
         catch (ConnectorException) { /* ids alone still answer the question */ }
@@ -308,8 +338,8 @@ public sealed class AutotaskConnector(
 
     public async Task<IReadOnlyList<ExternalAgreement>> GetAgreementsAsync(string organizationId, CancellationToken ct = default)
     {
-        var items = await QueryAsync<AtContract>("Contracts",
-            [Filter("companyID", "eq", long.Parse(organizationId))], 500, ct);
+        var items = await QueryAllAsync<AtContract>("Contracts",
+            [Filter("companyID", "eq", long.Parse(organizationId))], ct);
         if (items.Count == 0) return [];
 
         // Type and status are numeric picklists; the labels come from the tenant's own Contracts
@@ -328,8 +358,8 @@ public sealed class AutotaskConnector(
     public async Task<IReadOnlyList<UnifiedTicketNote>> GetNotesAsync(string ticketId, CancellationToken ct = default)
     {
         // ALL notes — internal ones carry IsPublic=false and the portal decides who may read them.
-        var items = await QueryAsync<AtTicketNote>("TicketNotes",
-            [Filter("ticketID", "eq", long.Parse(ticketId))], 500, ct);
+        var items = await QueryAllAsync<AtTicketNote>("TicketNotes",
+            [Filter("ticketID", "eq", long.Parse(ticketId))], ct);
 
         // Resolve the real author. Autotask puts only an id on the note — a resource (technician) or,
         // when a customer contact wrote it, a contact — so translate both to display names. A thread
@@ -344,7 +374,7 @@ public sealed class AutotaskConnector(
         var contactIds = items.Where(n => n.CreatedByContactId is > 0).Select(n => n.CreatedByContactId!.Value).Distinct().ToList();
         if (contactIds.Count > 0)
             await SafeFillAsync(contactNames, async () =>
-                (await QueryAsync<AtContact>("Contacts", [Filter("id", "in", contactIds.ToArray())], 500, ct))
+                (await QueryAllAsync<AtContact>("Contacts", [Filter("id", "in", contactIds.ToArray())], ct))
                     .Select(c => (c.Id.ToString(), $"{c.FirstName} {c.LastName}".Trim())));
 
         return items.Select(n => new UnifiedTicketNote(
@@ -406,8 +436,8 @@ public sealed class AutotaskConnector(
     {
         // The list projection never carries the bytes (data is always null here) — content comes
         // from the child route in DownloadAttachmentAsync, one file at a time.
-        var items = await QueryAsync<AtTicketAttachment>("TicketAttachments",
-            [Filter("parentID", "eq", long.Parse(ticketId))], 500, ct);
+        var items = await QueryAllAsync<AtTicketAttachment>("TicketAttachments",
+            [Filter("parentID", "eq", long.Parse(ticketId))], ct);
 
         var names = new Dictionary<long, string>();
         if (items.Any(a => a.AttachedByResourceId is > 0))
@@ -432,12 +462,37 @@ public sealed class AutotaskConnector(
             ExternalNoteId = a.TicketNoteId is > 0 ? a.TicketNoteId!.Value.ToString() : null,
         };
 
-    public async Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+    public async Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
     {
         var filters = since is { } from
             ? new List<object> { Filter("attachDate", "gte", from.ToUniversalTime().ToString("o")) }
             : [Filter("id", "gte", 0)];
-        var items = await QueryAsync<AtTicketAttachment>("TicketAttachments", filters, 500, ct);
+
+        // Every page, not the first. This read one page of 500 and returned it as the whole answer;
+        // the sync then took a file's absence from it to mean the file had been deleted in Autotask,
+        // and removed its stored copy. A desk with more than 500 ticket attachments would have lost
+        // the rest on the next full re-sync.
+        var items = new List<AtTicketAttachment>();
+        var body = new { MaxRecords = config.AttachmentSweepPageSize, Filter = filters };
+        var page = await SendAsync<AtQueryResult<AtTicketAttachment>>(HttpMethod.Post, "V1.0/TicketAttachments/query", body, ct);
+        var pages = 1;
+        while (true)
+        {
+            items.AddRange(page?.Items ?? []);
+            var next = page?.PageDetails?.NextPageUrl;
+            if (string.IsNullOrWhiteSpace(next)) break;
+            if (pages >= config.AttachmentSweepMaxPages)
+                // Still more to read, and the limit is reached. What was read is real and is
+                // returned; what it is NOT is a complete list, so nothing may be inferred deleted.
+                return new ProviderAttachmentSweep(await ToRefsAsync(items, ct), Complete: false);
+            page = await SendAsync<AtQueryResult<AtTicketAttachment>>(HttpMethod.Post, NextPageUrl(next), body, ct);
+            pages++;
+        }
+        return new ProviderAttachmentSweep(await ToRefsAsync(items, ct), Complete: true);
+    }
+
+    private async Task<IReadOnlyList<ProviderAttachmentRef>> ToRefsAsync(List<AtTicketAttachment> items, CancellationToken ct)
+    {
         if (items.Count == 0) return [];
 
         var names = new Dictionary<long, string>();
@@ -502,8 +557,8 @@ public sealed class AutotaskConnector(
     /// </summary>
     public async Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default)
     {
-        var items = await QueryAsync<AtConfigurationItem>("ConfigurationItems",
-            [Filter("companyID", "eq", long.Parse(organizationId))], 500, ct);
+        var items = await QueryAllAsync<AtConfigurationItem>("ConfigurationItems",
+            [Filter("companyID", "eq", long.Parse(organizationId))], ct);
         if (items.Count == 0) return [];
 
         var types = (await PicklistAsync("ConfigurationItems", "configurationItemType", ct))
@@ -523,8 +578,8 @@ public sealed class AutotaskConnector(
 
     public async Task<IReadOnlyList<UnifiedTimeEntry>> GetTimeEntriesAsync(string ticketId, CancellationToken ct = default)
     {
-        var items = await QueryAsync<AtTimeEntry>("TimeEntries",
-            [Filter("ticketID", "eq", long.Parse(ticketId))], 500, ct);
+        var items = await QueryAllAsync<AtTimeEntry>("TimeEntries",
+            [Filter("ticketID", "eq", long.Parse(ticketId))], ct);
         if (items.Count == 0) return [];
 
         // Ids alone are unreadable in a time summary, so resolve technician and work-type names.
@@ -600,12 +655,38 @@ public sealed class AutotaskConnector(
             // while ConnectWise does not, so an entry logged without notes was accepted here and
             // rejected there — losing the technician's time over a field they were never asked for.
             // The placeholder states only what is true; the UI asks for real notes up front.
-            ["summaryNotes"] = string.IsNullOrWhiteSpace(entry.Notes) ? "Time logged from Desk Portal." : entry.Notes,
+            ["summaryNotes"] = SummaryNotes(entry.Notes),
         };
         if (long.TryParse(entry.WorkType, out var billingCode)) body["billingCodeID"] = billingCode;
 
         var result = await SendAsync<AtCreateResult>(HttpMethod.Post, "V1.0/TimeEntries", body, ct);
         return new CreateTimeEntryResult(true, result!.ItemId.ToString(), null);
+    }
+
+    private static string SummaryNotes(string? notes) => string.IsNullOrWhiteSpace(notes) ? "Time logged from PioManage." : notes;
+
+    public async Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
+        IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default)
+    {
+        // Compared with exactly what AddTimeEntryAsync sends: the resource that stands in when none
+        // is named, the placeholder for empty notes, and a window that ends at the push and runs
+        // back by the entry's length - so its start can be that much earlier than the first try.
+        if (!TryResourceId(entry.MemberIdentifier, out var resourceId)) return null;
+        var owner = resourceId.ToString();
+        var notes = SummaryNotes(entry.Notes).Trim();
+        var billable = entry.Billable != BillableOption.DoNotBill;
+        var earliest = since.AddHours(-(double)entry.Hours).AddMinutes(-5);
+
+        return (await GetTimeEntriesAsync(ticketId, ct))
+            .Where(e => !alreadyLinked.Contains(e.ExternalId)
+                        && e.TechnicianExternalId == owner
+                        && e.Hours == entry.Hours
+                        && e.Billable == billable
+                        && string.Equals((e.Notes ?? "").Trim(), notes, StringComparison.Ordinal)
+                        && e.EntryDate >= earliest)
+            .OrderBy(e => e.EntryDate)
+            .Select(e => e.ExternalId)
+            .FirstOrDefault();
     }
 
     public async Task<UpdateTimeEntryResult> UpdateTimeEntryAsync(string entryId, UnifiedTimeEntryUpdate update, CancellationToken ct = default)
@@ -702,38 +783,87 @@ public sealed class AutotaskConnector(
 
     private async Task<IReadOnlyList<ExternalFieldOption>> FetchWorkTypesAsync(CancellationToken ct)
     {
-        var items = await QueryAsync<AtBillingCode>("BillingCodes",
-            [Filter("useType", "eq", 1), Filter("isActive", "eq", true)], 500, ct);
+        var items = await QueryAllAsync<AtBillingCode>("BillingCodes",
+            [Filter("useType", "eq", 1), Filter("isActive", "eq", true)], ct);
         return items.Select(b => new ExternalFieldOption(b.Id.ToString(), b.Name ?? b.Id.ToString(), true)).ToList();
     }
 
     public async Task<IReadOnlyList<ExternalFieldOption>> GetWorkRolesAsync(CancellationToken ct = default)
     {
-        var items = await QueryAsync<AtRole>("Roles", [Filter("isActive", "eq", true)], 500, ct);
+        var items = await QueryAllAsync<AtRole>("Roles", [Filter("isActive", "eq", true)], ct);
         return items.Select(r => new ExternalFieldOption(r.Id.ToString(), r.Name ?? r.Id.ToString(), true)).ToList();
     }
 
+    /// <summary>
+    /// The tenant's own ticket fields (user-defined fields). A field is known by its name, which
+    /// is also how a ticket carries its value; the label is what the screen calls it.
+    /// </summary>
     public async Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
     {
         var info = await SendAsync<AtFieldInfoResult>(HttpMethod.Get, "V1.0/Tickets/entityInformation/userDefinedFields", null, ct);
-        return (info?.Fields ?? []).Select(f => new ExternalFieldDefinition(
-            f.Name ?? "", f.Name ?? "", "string", false)).ToList();
+        return (info?.Fields ?? [])
+            .Where(f => !string.IsNullOrWhiteSpace(f.Name))
+            .Select(f => new ExternalFieldDefinition(
+                f.Name!, string.IsNullOrWhiteSpace(f.Label) ? f.Name! : f.Label!.Trim(), CustomFieldTypeOf(f), false,
+                f.PicklistValues.Count == 0 ? null
+                    : f.PicklistValues.Select(p => new ExternalFieldOption(p.Value ?? "", p.Label ?? p.Value ?? "", p.IsActive)).ToList()))
+            .ToList();
     }
+
+    private static string CustomFieldTypeOf(AtFieldInfo field)
+        => field.IsPickList || field.PicklistValues.Count > 0 ? CustomFieldTypes.List
+            : (field.DataType ?? "").ToLowerInvariant() switch
+            {
+                "integer" or "long" or "short" or "double" or "decimal" or "float" => CustomFieldTypes.Number,
+                "datetime" or "date" => CustomFieldTypes.Date,
+                "boolean" => CustomFieldTypes.Boolean,
+                _ => CustomFieldTypes.Text,
+            };
+
+    // The words for each list-kind field's values, by field name: fetched at most once for this
+    // connector, and only when a ticket that carries a custom field is read. A failure to read
+    // them is not a failure to read tickets: a list's value then stays as the id Autotask holds.
+    private Task<Dictionary<string, Dictionary<string, string>>>? _customFieldLists;
+
+    private async Task<Dictionary<string, Dictionary<string, string>>> CustomFieldListsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var info = await SendAsync<AtFieldInfoResult>(HttpMethod.Get, "V1.0/Tickets/entityInformation/userDefinedFields", null, ct);
+            return (info?.Fields ?? [])
+                .Where(f => !string.IsNullOrWhiteSpace(f.Name) && f.PicklistValues.Count > 0)
+                .GroupBy(f => f.Name!, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First().PicklistValues
+                    .Where(p => !string.IsNullOrEmpty(p.Value))
+                    .GroupBy(p => p.Value!, StringComparer.Ordinal)
+                    .ToDictionary(v => v.Key, v => v.First().Label ?? v.Key, StringComparer.Ordinal), StringComparer.Ordinal);
+        }
+        catch (ConnectorException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>A ticket's custom fields by name, each as words where Autotask holds an id of a list.</summary>
+    private async Task<IReadOnlyDictionary<string, string?>> CustomFieldsOfAsync(AtTicket t, CancellationToken ct)
+    {
+        if (t.UserDefinedFields is not { Count: > 0 } fields) return NoCustomFields;
+        var lists = await (_customFieldLists ??= CustomFieldListsAsync(ct));
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var field in fields)
+        {
+            if (string.IsNullOrWhiteSpace(field.Name)) continue;
+            var value = string.IsNullOrWhiteSpace(field.Value) ? null : field.Value;
+            if (value is not null && lists.TryGetValue(field.Name, out var options) && options.TryGetValue(value, out var label)) value = label;
+            values[field.Name] = value;
+        }
+        return values;
+    }
+
+    private static readonly IReadOnlyDictionary<string, string?> NoCustomFields = new Dictionary<string, string?>();
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
-    {
-        if (!request.Headers.TryGetValue("X-Timestamp", out var tsRaw) || !DateTimeOffset.TryParse(tsRaw, out var ts))
-            return Task.FromResult(new WebhookValidationResult(false, "Missing or invalid timestamp."));
-        if (Math.Abs((request.ReceivedAt - ts).TotalSeconds) > config.WebhookMaxSkew.TotalSeconds)
-            return Task.FromResult(new WebhookValidationResult(false, "Timestamp outside allowed skew."));
-
-        var expected = Hmac(request.Body, config.WebhookSecret);
-        var ok = CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(request.RawSignature ?? ""));
-        return Task.FromResult(ok
-            ? new WebhookValidationResult(true, null)
-            : new WebhookValidationResult(false, "Signature mismatch."));
-    }
+        => Task.FromResult(WebhookSignature.Validate(request, config.WebhookSecret, config.WebhookMaxSkew));
 
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default)
     {
@@ -938,8 +1068,34 @@ public sealed class AutotaskConnector(
 
     private static object Filter(string field, string op, object value) => new { op, field, value };
 
+    /// <summary>One page, for a read that wants a known handful: a probe, or records named by id.</summary>
     private async Task<List<T>> QueryAsync<T>(string entity, List<object> filters, int maxRecords, CancellationToken ct)
         => (await QueryPageAsync<T>(entity, filters, maxRecords, ct))?.Items ?? [];
+
+    /// <summary>
+    /// Every record a query matches, a page at a time. Each of these lists used to be its first
+    /// page of 500 and nothing said the rest existed: the 501st company, technician or note was
+    /// simply not there.
+    ///
+    /// A list too long to finish is an error, not a shorter list. A caller that is handed part of a
+    /// ticket's notes as though it were all of them deletes the ones it was not shown.
+    /// </summary>
+    private async Task<List<T>> QueryAllAsync<T>(string entity, List<object> filters, CancellationToken ct)
+    {
+        var body = new { MaxRecords = config.ListPageSize, Filter = filters };
+        var all = new List<T>();
+        var page = await SendAsync<AtQueryResult<T>>(HttpMethod.Post, $"V1.0/{entity}/query", body, ct);
+        for (var pages = 1; ; pages++)
+        {
+            all.AddRange(page?.Items ?? []);
+            var next = page?.PageDetails?.NextPageUrl;
+            if (string.IsNullOrWhiteSpace(next)) return all;
+            if (pages >= config.MaxListPages)
+                throw new ConnectorException(ConnectorFailureKind.ProviderError,
+                    $"Autotask holds more than {all.Count} {entity} for this request; the list was not read in full.");
+            page = await SendAsync<AtQueryResult<T>>(HttpMethod.Post, NextPageUrl(next), body, ct);
+        }
+    }
 
     /// <summary>The whole page, page details included, for reads that continue past the first one.</summary>
     private Task<AtQueryResult<T>?> QueryPageAsync<T>(string entity, List<object> filters, int maxRecords, CancellationToken ct)
@@ -991,6 +1147,10 @@ public sealed class AutotaskConnector(
         req.Headers.Add("Secret", config.Credentials.Secret);
         if (body is not null)
             req.Content = JsonContent.Create(body, options: JsonOpts);
+        // Autotask asks questions with POST. Said here, so the layer below knows a query may be
+        // repeated after a timeout - and that nothing else sent with POST may.
+        if (method == HttpMethod.Post && path.Contains("/query", StringComparison.OrdinalIgnoreCase))
+            req.AsRead();
 
         HttpResponseMessage resp;
         try
@@ -1007,7 +1167,7 @@ public sealed class AutotaskConnector(
         }
 
         if (!resp.IsSuccessStatusCode)
-            throw MapError(resp, await SafeBodyAsync(resp, ct));
+            throw MapError(resp, await SafeBodyAsync(resp, ct), clock.GetUtcNow());
 
         try
         {
@@ -1046,7 +1206,7 @@ public sealed class AutotaskConnector(
         catch { return null; }
     }
 
-    private static ConnectorException MapError(HttpResponseMessage resp, string? body)
+    private static ConnectorException MapError(HttpResponseMessage resp, string? body, DateTimeOffset now)
     {
         var detail = string.IsNullOrWhiteSpace(body) ? "" : $" {body}";
         return resp.StatusCode switch
@@ -1056,7 +1216,7 @@ public sealed class AutotaskConnector(
             HttpStatusCode.NotFound => new(ConnectorFailureKind.NotFound, "Autotask entity not found."),
             HttpStatusCode.TooManyRequests => new(ConnectorFailureKind.RateLimited, "Autotask rate limit hit.")
             {
-                RetryAfter = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(10),
+                RetryAfter = ProviderRequest.Wait(resp.Headers.RetryAfter, now) ?? TimeSpan.FromSeconds(10),
             },
             >= HttpStatusCode.InternalServerError => new(ConnectorFailureKind.ProviderError, $"Autotask server error ({(int)resp.StatusCode}).{detail}"),
             _ => new(ConnectorFailureKind.InvalidRequest, $"Autotask rejected the request ({(int)resp.StatusCode}).{detail}"),
@@ -1077,7 +1237,13 @@ public sealed class AutotaskConnector(
         Status = await LabelForAsync("status", t.Status, ct),
         Priority = await LabelForAsync("priority", t.Priority, ct),
         Category = await LabelForAsync("ticketCategory", t.Category, ct),
+        // As words, like the rest: an id that names no value in the list stays as the id it was.
+        TicketType = await LabelForAsync("ticketType", t.TicketType, ct),
+        IssueType = await LabelForAsync("issueType", t.IssueType, ct),
+        SubIssueType = await LabelForAsync("subIssueType", t.SubIssueType, ct),
+        CustomFields = await CustomFieldsOfAsync(t, ct),
         QueueOrBoard = await LabelForAsync("queueID", t.QueueId, ct),
+        QueueOrBoardId = string.IsNullOrWhiteSpace(t.QueueId) ? null : t.QueueId,
         AssignedTechnicianExternalId = t.AssignedResourceId,
         RequesterExternalId = t.CompanyId.ToString(),
         // An Autotask ticket carries only a numeric companyID, so without this every client company

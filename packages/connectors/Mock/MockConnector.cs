@@ -95,6 +95,17 @@ public sealed class MockConnector : IServiceManagementConnector
             page, hasMore ? (skip + page.Count).ToString() : null, hasMore));
     }
 
+    public Task<int?> CountTicketsAsync(TicketFilter filter, CancellationToken ct = default)
+    {
+        Guard();
+        var query = _tickets.Values.AsEnumerable();
+        if (filter.ModifiedSince is { } since)
+            query = query.Where(t => (t.ModifiedAt ?? t.CreatedAt) >= since);
+        if (!filter.IncludeClosed)
+            query = query.Where(t => t.ClosedAt is null && t.ResolvedAt is null);
+        return Task.FromResult<int?>(query.Count());
+    }
+
     public Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
     { Guard(); return Task.FromResult(_tickets.GetValueOrDefault(ticketId)); }
 
@@ -112,6 +123,9 @@ public sealed class MockConnector : IServiceManagementConnector
             ExternalId = id, Title = ticket.Title, Description = ticket.Description,
             Status = ticket.Status ?? "New", Priority = ticket.Priority ?? "Medium",
             Category = ticket.Category, QueueOrBoard = ticket.QueueOrBoard,
+            TicketType = ticket.TicketType, IssueType = ticket.IssueType, SubIssueType = ticket.SubIssueType,
+            // Raised with custom fields, a ticket is read back with them.
+            CustomFields = new Dictionary<string, string?>(ticket.CustomFields),
             RequesterEmail = ticket.RequesterEmail, CreatedAt = now, ModifiedAt = now,
         };
         _idempotency[ticket.IdempotencyKey] = id;
@@ -131,6 +145,7 @@ public sealed class MockConnector : IServiceManagementConnector
             Category = update.Category ?? t.Category,
             QueueOrBoard = update.QueueOrBoard ?? t.QueueOrBoard,
             AssignedTechnicianExternalId = update.AssignedTechnicianExternalId ?? t.AssignedTechnicianExternalId,
+            SlaDueAt = update.DueDate ?? t.SlaDueAt,
             ModifiedAt = _clock.GetUtcNow(),
         };
         return Task.FromResult(new UpdateTicketResult(true, null));
@@ -177,14 +192,14 @@ public sealed class MockConnector : IServiceManagementConnector
         return Task.FromResult<IReadOnlyList<UnifiedAttachment>>(list);
     }
 
-    public Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+    public Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
     {
         Guard();
         var refs = _attachments
             .SelectMany(kv => kv.Value.Select(a => new ProviderAttachmentRef(kv.Key, a.Meta)))
             .Where(r => since is null || r.Attachment.CreatedAt is null || r.Attachment.CreatedAt >= since)
             .ToList();
-        return Task.FromResult<IReadOnlyList<ProviderAttachmentRef>>(refs);
+        return Task.FromResult(new ProviderAttachmentSweep(refs, Complete: true));
     }
 
     public Task<DownloadedAttachment?> DownloadAttachmentAsync(string ticketId, string attachmentId, CancellationToken ct = default)
@@ -270,27 +285,12 @@ public sealed class MockConnector : IServiceManagementConnector
     {
         Guard();
         return Task.FromResult<IReadOnlyList<ExternalFieldDefinition>>(
-            [new ExternalFieldDefinition("cf_site", "Site", "string", false)]);
+            [new ExternalFieldDefinition("cf_site", "Site", CustomFieldTypes.Text, false),
+             new ExternalFieldDefinition("cf_asset", "Asset tag", CustomFieldTypes.Text, false)]);
     }
 
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default)
-    {
-        // Timestamp freshness (replay protection).
-        if (!request.Headers.TryGetValue("X-Timestamp", out var tsRaw)
-            || !DateTimeOffset.TryParse(tsRaw, out var ts))
-            return Task.FromResult(new WebhookValidationResult(false, "Missing or invalid timestamp."));
-        if (Math.Abs((request.ReceivedAt - ts).TotalSeconds) > _options.WebhookMaxSkew.TotalSeconds)
-            return Task.FromResult(new WebhookValidationResult(false, "Timestamp outside allowed skew."));
-
-        // HMAC signature over the raw body.
-        var expected = ComputeHmac(request.Body, _options.WebhookSecret);
-        var provided = request.RawSignature ?? "";
-        var ok = CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(provided));
-        return Task.FromResult(ok
-            ? new WebhookValidationResult(true, null)
-            : new WebhookValidationResult(false, "Signature mismatch."));
-    }
+        => Task.FromResult(WebhookSignature.Validate(request, _options.WebhookSecret, _options.WebhookMaxSkew));
 
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default)
     {
@@ -334,8 +334,6 @@ public sealed class MockConnector : IServiceManagementConnector
         var mac = HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(body));
         return Convert.ToHexStringLower(mac);
     }
-
-    public static string SignBody(string body, string secret) => ComputeHmac(body, secret);
 
     private void Seed()
     {

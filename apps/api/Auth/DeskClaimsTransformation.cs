@@ -11,7 +11,8 @@ namespace Desk.Api.Auth;
 /// permission claims for the matching internal user. Keeping the DB as the source of truth
 /// means access can change without re-issuing tokens. Runs idempotently per request.
 /// </summary>
-public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider clock, IHttpContextAccessor? http = null)
+public sealed class DeskClaimsTransformation(
+    DeskDbContext db, TimeProvider clock, IHttpContextAccessor? http = null, ILogger<DeskClaimsTransformation>? logger = null)
     : Microsoft.AspNetCore.Authentication.IClaimsTransformation
 {
     /// <summary>How stale AppUser.LastActiveAt must be before it's worth a write. This method runs
@@ -48,9 +49,11 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
             var email = principal.FindFirstValue(ClaimTypes.Email) ?? principal.FindFirstValue("email");
             if (!string.IsNullOrEmpty(email))
             {
-                var invited = await db.AppUsers
-                    .Include(u => u.Roles)
-                    .SingleOrDefaultAsync(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower());
+                var invited = await OnlyInvitationAsync(
+                    db.AppUsers.Include(u => u.Roles)
+                        .Where(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower())
+                        .OrderBy(u => u.Id),
+                    "staff");
                 if (invited is not null)
                 {
                     invited.IdpSubject = subject;
@@ -100,6 +103,29 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
         return principal;
     }
 
+    /// <summary>
+    /// The one account waiting on this e-mail, or null when there is none - or more than one.
+    ///
+    /// An e-mail is unique within an organization (staff) or within a client company (clients), not
+    /// across them, and a client company belongs to one PSA connection. So the same address can be
+    /// waiting in two places: the same contact under two connections, or two organizations inviting
+    /// the same person. Which of them a first sign-in means is not something to guess - binding
+    /// either would open the wrong organization's or company's data half the time - so neither is
+    /// bound. It used to be an exception on every request instead: the person could not sign in at
+    /// all, and nothing said why.
+    /// </summary>
+    private async Task<T?> OnlyInvitationAsync<T>(IOrderedQueryable<T> waiting, string kind) where T : class
+    {
+        // Two rows are enough to know there is more than one. Ordered, because a row limit without
+        // an order is a query the database may answer differently each time, and says so in the log.
+        var found = await waiting.Take(2).ToListAsync();
+        if (found.Count > 1)
+            logger?.LogWarning(
+                "First sign-in not bound: more than one unclaimed {Kind} account is waiting on the same e-mail address. "
+                + "Deactivate or remove all but one, then ask the person to sign in again.", kind);
+        return found.Count == 1 ? found[0] : null;
+    }
+
     /// <summary>A staff member's portal identity: who they are, their organization, and what they may do.</summary>
     private async Task<(ClaimsIdentity Identity, HashSet<string> Granted, bool IsPlatform)> StaffIdentityAsync(Desk.Domain.Identity.AppUser user)
     {
@@ -112,12 +138,14 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
 
         var identity = new ClaimsIdentity();
 
-        // Who this is, in both id spaces. Emitted here because this is the one place per request
-        // that already has the AppUser loaded — anything scoping data to "this person's own work"
-        // would otherwise re-query for it on every call site.
+        // Who this is. Emitted here because this is the one place per request that already has the
+        // AppUser loaded — anything scoping data to "this person's own work" would otherwise
+        // re-query for it on every call site.
+        //
+        // Only the portal id. A person's PSA logins are per connection (UserPsaIdentity) and are
+        // looked up where they are needed; a single technician id in the token could only ever be
+        // right for one PSA account, and would name somebody else on a second.
         identity.AddClaim(new Claim(CurrentUser.UserIdClaim, user.Id.ToString()));
-        if (!string.IsNullOrEmpty(user.ExternalTechnicianId))
-            identity.AddClaim(new Claim(CurrentUser.TechnicianClaim, user.ExternalTechnicianId));
 
         var isPlatform = roles.Any(r => r.BuiltInType == RoleType.PlatformSuperAdministrator);
         if (isPlatform)
@@ -189,9 +217,11 @@ public sealed class DeskClaimsTransformation(DeskDbContext db, TimeProvider cloc
             var email = principal.FindFirstValue(ClaimTypes.Email) ?? principal.FindFirstValue("email");
             if (!string.IsNullOrEmpty(email))
             {
-                var invited = await db.ClientUsers
-                    .IgnoreQueryFilters()
-                    .SingleOrDefaultAsync(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower());
+                var invited = await OnlyInvitationAsync(
+                    db.ClientUsers.IgnoreQueryFilters()
+                        .Where(u => u.IdpSubject == null && u.IsActive && u.Email.ToLower() == email.ToLower())
+                        .OrderBy(u => u.Id),
+                    "client");
                 if (invited is not null)
                 {
                     invited.IdpSubject = subject;

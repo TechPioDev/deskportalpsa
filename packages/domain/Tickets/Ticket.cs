@@ -105,6 +105,34 @@ public class Ticket : TenantEntity
     public string? PortalSubcategory { get; set; }
     public string? PsaSubcategory { get; set; }
 
+    /// <summary>
+    /// The PSA's own classification, as it sent it: Autotask's ticket type, issue type and
+    /// sub-issue type; ConnectWise's type, subtype and item. Shown to staff under the PSA's names
+    /// for them. Not translated into anything, and not sent back: what a ticket is filed under is
+    /// changed in the PSA.
+    /// </summary>
+    public string? PsaTicketType { get; set; }
+    public string? PsaIssueType { get; set; }
+    public string? PsaSubIssueType { get; set; }
+
+    /// <summary>
+    /// What kind of work the ticket is, in the portal's words, where one of the connection's
+    /// classification rules says (as <see cref="PortalCategory"/> and <see cref="PortalSubcategory"/>
+    /// are, where a rule gives them). Nothing where no rule does: it is never worked out from the
+    /// PSA's wording. Not the work type of a time entry, which is the PSA's billing code for an
+    /// hour of work.
+    /// </summary>
+    public string? PortalWorkType { get; set; }
+
+    /// <summary>
+    /// The values of the PSA's custom fields an administrator chose to bring in for this ticket's
+    /// connection, as one JSON object of field key to value (see <c>CustomFieldValues</c>). Null
+    /// where there are none. A field that was not chosen is not in here: it is not stored at all.
+    /// Who may see each value is decided when a ticket is read, from the field's setting as it is
+    /// then, and never from this column alone.
+    /// </summary>
+    public string? CustomFieldsJson { get; set; }
+
     public string? QueueOrBoard { get; set; }
     public string? AssignedTechnicianExternalId { get; set; }
 
@@ -146,6 +174,19 @@ public class Ticket : TenantEntity
 
     // SLA & time
     public DateTimeOffset? SlaDueAt { get; set; }
+
+    /// <summary>
+    /// The due date before the first time somebody moved it, kept so an extended ticket can be told
+    /// from one that was simply on time. Null until the first extension; never changed after.
+    /// </summary>
+    public DateTimeOffset? OriginalSlaDueAt { get; set; }
+    /// <summary>How many times the due date was moved later from the portal.</summary>
+    public int DueDateExtensions { get; set; }
+    public DateTimeOffset? DueDateExtendedAt { get; set; }
+    public Guid? DueDateExtendedByUserId { get; set; }
+    public string? DueDateExtendedByName { get; set; }
+    /// <summary>Why the last extension was given. Staff only; a client is never sent it.</summary>
+    public string? DueDateExtensionReason { get; set; }
 
     /// <summary>The plan a board ticket's due dates came from, kept so the ticket can say why it is due when it is.</summary>
     public Guid? SlaPlanId { get; set; }

@@ -38,21 +38,32 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
             Attachments.GetValueOrDefault(ticketId, []).Select(a => a.Meta).ToList());
     }
 
-    public Task<IReadOnlyList<ProviderAttachmentRef>> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
+    public Task<ProviderAttachmentSweep> GetRecentAttachmentsAsync(DateTimeOffset? since, CancellationToken ct = default)
     {
         AttachmentSweeps++;
         var refs = Attachments
             .SelectMany(kv => kv.Value.Select(a => new ProviderAttachmentRef(kv.Key, a.Meta)))
             .Where(r => since is null || r.Attachment.CreatedAt is null || r.Attachment.CreatedAt >= since)
             .ToList();
-        return Task.FromResult<IReadOnlyList<ProviderAttachmentRef>>(refs);
+        // A provider that stopped reading early hands back the first part of its list and says so.
+        return Task.FromResult(SweepStopsAfter is { } limit && refs.Count > limit
+            ? new ProviderAttachmentSweep(refs.Take(limit).ToList(), Complete: false)
+            : new ProviderAttachmentSweep(refs, Complete: true));
     }
+
+    /// <summary>Set to make the sweep return only its first N files and report itself incomplete.</summary>
+    public int? SweepStopsAfter { get; set; }
 
     /// <summary>How many times the runner swept for attachments.</summary>
     public int AttachmentSweeps { get; private set; }
 
+    /// <summary>Attachment ids whose bytes the provider fails to serve.</summary>
+    public HashSet<string> DownloadFailsFor { get; } = [];
+
     public Task<DownloadedAttachment?> DownloadAttachmentAsync(string ticketId, string attachmentId, CancellationToken ct = default)
     {
+        if (DownloadFailsFor.Contains(attachmentId))
+            throw new ConnectorException(ConnectorFailureKind.Timeout, "download timed out");
         var hit = Attachments.GetValueOrDefault(ticketId, []).FirstOrDefault(a => a.Meta.ExternalId == attachmentId);
         return Task.FromResult(hit.Meta is null
             ? null
@@ -67,13 +78,42 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
 
     public ProviderType Provider => provider;
 
+    /// <summary>Every ticket request the runner made, in order: what it asked for, and from where.</summary>
+    public List<TicketFilter> TicketRequests { get; } = [];
+
+    /// <summary>
+    /// Serve tickets as a real provider does: a page at a time (the cursor is the offset), and only
+    /// those changed since the date asked for. Off by default - most tests want one page of everything.
+    /// </summary>
+    public bool Paged { get; set; }
+
+    /// <summary>Runs on every ticket request, before it is answered; may throw as the provider would.</summary>
+    public Func<TicketFilter, ConnectorException?>? OnTicketRequest { get; set; }
+
     public Task<PaginatedResult<UnifiedTicket>> GetTicketsAsync(TicketFilter filter, CancellationToken ct = default)
-        => Task.FromResult(new PaginatedResult<UnifiedTicket>(Tickets, null, false));
+    {
+        TicketRequests.Add(filter);
+        if (OnTicketRequest?.Invoke(filter) is { } failure) throw failure;
+        if (!Paged) return Task.FromResult(new PaginatedResult<UnifiedTicket>(Tickets, null, false));
+
+        var matching = Tickets
+            .Where(t => filter.ModifiedSince is not { } since || t.ModifiedAt is null || t.ModifiedAt >= since)
+            .ToList();
+        var offset = int.Parse(filter.Cursor ?? "0");
+        var items = matching.Skip(offset).Take(filter.PageSize).ToList();
+        var next = offset + items.Count;
+        var more = next < matching.Count;
+        return Task.FromResult(new PaginatedResult<UnifiedTicket>(items, more ? next.ToString() : null, more));
+    }
+
+    /// <summary>Tickets whose notes cannot be read, and how the provider says so.</summary>
+    public Dictionary<string, ConnectorException> NoteReadFailureFor { get; } = [];
 
     public Task<IReadOnlyList<UnifiedTicketNote>> GetNotesAsync(string ticketId, CancellationToken ct = default)
     {
         NoteReads++;
         if (NoteReadFailure is not null) throw NoteReadFailure;
+        if (NoteReadFailureFor.TryGetValue(ticketId, out var failure)) throw failure;
         return Task.FromResult<IReadOnlyList<UnifiedTicketNote>>(Notes.GetValueOrDefault(ticketId, []));
     }
 
@@ -95,6 +135,7 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
         => Task.FromResult(new ProviderCapabilities
         {
             SupportsTimeEntries = SupportsTimeEntries,
+            SupportsCustomFields = CustomFields.Count > 0 || CustomFieldFailure is not null,
             SupportsAttachments = true,
             SupportsAttachmentDownload = SupportsAttachmentDownload,
             SupportsAttachmentSweep = SupportsAttachmentSweep,
@@ -104,7 +145,10 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     public Task<ConnectionTestResult> TestConnectionAsync(CancellationToken ct = default) => No<ConnectionTestResult>();
     public Task<IReadOnlyList<ExternalOrganization>> GetOrganizationsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalOrganization>>();
     public Task<IReadOnlyList<ExternalContact>> GetContactsAsync(string organizationId, CancellationToken ct = default) => No<IReadOnlyList<ExternalContact>>();
-    public Task<IReadOnlyList<ExternalTechnician>> GetTechniciansAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnician>>();
+    /// <summary>The provider's people. Read by the sync to put a name to a ticket's assignee.</summary>
+    public List<ExternalTechnician> Technicians { get; } = [];
+    public Task<IReadOnlyList<ExternalTechnician>> GetTechniciansAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<ExternalTechnician>>(Technicians);
     public Task<IReadOnlyList<ExternalTechnicianAssignment>> GetTechnicianAssignmentsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalTechnicianAssignment>>();
     /// <summary>Every device change asked for: ticket, new device, the one it replaced.</summary>
     public List<(string TicketId, string? Device, string? Previous)> DeviceChanges { get; } = [];
@@ -156,22 +200,93 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
 
     public Task<CreateTicketResult> CreateTicketAsync(UnifiedTicketCreateRequest ticket, CancellationToken ct = default)
     {
+        if (WriteFailure is { } away && !WritesLandButAnswerIsLost) throw away;
         CreateRequests.Add(ticket);
+        if (WriteFailure is { } lost) throw lost;
         return Task.FromResult(NextCreateResult);
     }
-    public Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default) => No<UpdateTicketResult>();
-    public Task<CreateNoteResult> AddPublicNoteAsync(string ticketId, UnifiedTicketNoteCreateRequest note, CancellationToken ct = default) => No<CreateNoteResult>();
+    /// <summary>
+    /// The PSA is away, or refuses: every write throws this until it is cleared. Reads go on working
+    /// unless their own failure is set, as a PSA that is slow to write is not always slow to read.
+    /// </summary>
+    public ConnectorException? WriteFailure { get; set; }
+
+    /// <summary>A write the PSA carries out and then fails to answer: done there, and reported here as a failure.</summary>
+    public bool WritesLandButAnswerIsLost { get; set; }
+
+    /// <summary>Every status the stub was asked to set, in order. On by setting <see cref="AcceptsWrites"/>.</summary>
+    public List<(string TicketId, UnifiedTicketUpdate Update)> Updates { get; } = [];
+
+    /// <summary>Every note the stub was sent. A note it took is also in <see cref="Notes"/>, as the PSA would then list it.</summary>
+    public List<(string TicketId, UnifiedTicketNoteCreateRequest Note)> PostedNotes { get; } = [];
+
+    /// <summary>Off, a write is "not part of this stub", as before. On, the stub takes notes and status changes like a PSA.</summary>
+    public bool AcceptsWrites { get; set; }
+
+    /// <summary>What the PSA answers to a status change or a note it does not accept; null is acceptance.</summary>
+    public string? WriteRefusal { get; set; }
+    /// <summary>The one ticket the PSA takes no notes on, where the rest are taken.</summary>
+    public string? RefuseNotesOn { get; set; }
+
+    private int _noteSeq = 7000;
+
+    public Task<UpdateTicketResult> UpdateTicketAsync(string ticketId, UnifiedTicketUpdate update, CancellationToken ct = default)
+    {
+        if (!AcceptsWrites) return No<UpdateTicketResult>();
+        if (WriteFailure is { } away && !WritesLandButAnswerIsLost) throw away;
+        Updates.Add((ticketId, update));
+        if (WriteFailure is { } lost) throw lost;
+        return Task.FromResult(WriteRefusal is { } no ? new UpdateTicketResult(false, no) : new UpdateTicketResult(true, null));
+    }
+
+    public Task<CreateNoteResult> AddPublicNoteAsync(string ticketId, UnifiedTicketNoteCreateRequest note, CancellationToken ct = default)
+    {
+        if (!AcceptsWrites) return No<CreateNoteResult>();
+        if (WriteFailure is { } away && !WritesLandButAnswerIsLost) throw away;
+        if (WriteRefusal is { } no) return Task.FromResult(new CreateNoteResult(false, null, no));
+        if (RefuseNotesOn == ticketId) return Task.FromResult(new CreateNoteResult(false, null, "Notes cannot be added to a completed ticket."));
+        PostedNotes.Add((ticketId, note));
+        var id = (++_noteSeq).ToString();
+        if (!Notes.TryGetValue(ticketId, out var thread)) Notes[ticketId] = thread = [];
+        thread.Add(new UnifiedTicketNote(id, "Integration", note.Body, note.IsPublic, NoteClock?.Invoke() ?? DateTimeOffset.UtcNow));
+        if (WriteFailure is { } lost) throw lost;
+        return Task.FromResult(new CreateNoteResult(true, id, null));
+    }
+
+    /// <summary>What time the PSA stamps a note it takes with. The test's own clock, where it has one.</summary>
+    public Func<DateTimeOffset>? NoteClock { get; set; }
     /// <summary>Time entries per external ticket id.</summary>
     public Dictionary<string, List<UnifiedTimeEntry>> TimeEntries { get; } = [];
 
     /// <summary>How many times the runner asked for time — proves it does not ask needlessly.</summary>
     public int TimeReads { get; private set; }
 
+    /// <summary>Tickets whose time entries cannot be read, and how the provider says so.</summary>
+    public Dictionary<string, ConnectorException> TimeReadFailureFor { get; } = [];
+
     public Task<IReadOnlyList<UnifiedTimeEntry>> GetTimeEntriesAsync(string ticketId, CancellationToken ct = default)
     {
         TimeReads++;
+        if (TimeReadFailureFor.TryGetValue(ticketId, out var failure)) throw failure;
         return Task.FromResult<IReadOnlyList<UnifiedTimeEntry>>(TimeEntries.GetValueOrDefault(ticketId, []));
     }
+    /// <summary>What the PSA answers when asked whether it already holds a time entry: its id, or null.</summary>
+    public string? TimeEntryAlreadyThere { get; set; }
+
+    /// <summary>When set, that question cannot be answered.</summary>
+    public ConnectorException? FindTimeEntryFailure { get; set; }
+
+    /// <summary>Every time the portal asked that question: for which ticket, since when, and what it said was already linked.</summary>
+    public List<(string TicketId, UnifiedTimeEntryCreateRequest Entry, DateTimeOffset Since, IReadOnlyCollection<string> Linked)> TimeEntryLookups { get; } = [];
+
+    public Task<string?> FindTimeEntryAsync(string ticketId, UnifiedTimeEntryCreateRequest entry, DateTimeOffset since,
+        IReadOnlyCollection<string> alreadyLinked, CancellationToken ct = default)
+    {
+        TimeEntryLookups.Add((ticketId, entry, since, alreadyLinked));
+        if (FindTimeEntryFailure is { } failure) throw failure;
+        return Task.FromResult(TimeEntryAlreadyThere);
+    }
+
     /// <summary>When set, pushing time throws it — how a provider REJECTS a payload it dislikes.</summary>
     public ConnectorException? TimeEntryFailure { get; set; }
     /// <summary>When set, pushing time succeeds with this (the id the PSA gave it); each push is recorded in <see cref="PushedTime"/>.</summary>
@@ -191,7 +306,14 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     public Task<IReadOnlyList<ExternalFieldOption>> GetCategoriesAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldOption>>();
     public Task<IReadOnlyList<ExternalFieldOption>> GetWorkTypesAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldOption>>();
     public Task<IReadOnlyList<ExternalFieldOption>> GetWorkRolesAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldOption>>();
-    public Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default) => No<IReadOnlyList<ExternalFieldDefinition>>();
+    /// <summary>The PSA's custom fields. Listing any makes the stub one that reads custom fields.</summary>
+    public List<ExternalFieldDefinition> CustomFields { get; } = [];
+
+    /// <summary>The PSA cannot be asked for its custom fields just now.</summary>
+    public ConnectorException? CustomFieldFailure { get; set; }
+
+    public Task<IReadOnlyList<ExternalFieldDefinition>> GetCustomFieldsAsync(CancellationToken ct = default)
+        => CustomFieldFailure is { } failure ? throw failure : Task.FromResult<IReadOnlyList<ExternalFieldDefinition>>(CustomFields);
     public Task<WebhookValidationResult> ValidateWebhookAsync(WebhookRequest request, CancellationToken ct = default) => No<WebhookValidationResult>();
     public Task<NormalizedProviderEvent> ProcessWebhookAsync(WebhookRequest request, CancellationToken ct = default) => No<NormalizedProviderEvent>();
 }

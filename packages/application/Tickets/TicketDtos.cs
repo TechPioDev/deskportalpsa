@@ -3,7 +3,46 @@ using Desk.Domain.Enums;
 namespace Desk.Application.Tickets;
 
 /// <summary>The client identity a request acts on behalf of, resolved from the authenticated subject.</summary>
-public sealed record ClientAccess(Guid MspOrganizationId, Guid ClientCompanyId, Guid ClientUserId, bool IsCompanyAdministrator);
+/// <summary>
+/// Who a client request is from and which ONE company it is about. Every client read and write is
+/// held to <see cref="ClientCompanyId"/>; nothing a client is answered is gathered across companies.
+///
+/// It is the person's own company unless the request names another, and then only a company they
+/// have been explicitly given (see <c>ClientCompanyAccess</c>). In a company they were given they
+/// are never its administrator: <see cref="IsCompanyAdministrator"/> is the control panel's flag,
+/// and a grant does not carry it.
+/// </summary>
+public sealed record ClientAccess(Guid MspOrganizationId, Guid ClientCompanyId, Guid ClientUserId, bool IsCompanyAdministrator)
+{
+    /// <summary>True when this is a company the person was given, and not their own.</summary>
+    public bool IsGranted { get; init; }
+
+    /// <summary>What a grant says about seeing every ticket. Null in the person's own company, where the administrator flag decides.</summary>
+    public bool? GrantSeesAllTickets { get; init; }
+
+    /// <summary>Every ticket of the company, or only the ones this person raised.</summary>
+    public bool SeesAllTickets => GrantSeesAllTickets ?? IsCompanyAdministrator;
+
+    /// <summary>May raise tickets and reply. False for a company given to be looked at only.</summary>
+    public bool CanWrite { get; init; } = true;
+}
+
+/// <summary>
+/// The company a client request asks to act in, when it names one, and whether the request would
+/// change anything. Read from the request by the API; the resolver decides whether it is allowed.
+/// A request carries no authority of its own: naming a company gives nothing that a grant has not.
+/// </summary>
+public interface IActingCompany
+{
+    /// <summary>The company named, or null when none was (the person's own is meant).</summary>
+    Guid? RequestedCompanyId { get; }
+
+    /// <summary>A company was named and could not be read as one. Refused, never treated as "none".</summary>
+    bool Malformed { get; }
+
+    /// <summary>The request would change something (anything but a read).</summary>
+    bool IsWrite { get; }
+}
 
 public sealed record TicketListItem(
     Guid Id,
@@ -204,7 +243,19 @@ public sealed record TicketNoteDto(
     // even before (or without) the live entry list loading. Null for provider-side te- notes,
     // whose hours only the live PSA fetch knows.
     decimal? TimeEntryHours = null,
-    bool? TimeEntryBillable = null);
+    bool? TimeEntryBillable = null,
+    // "Pending Sync" or "Sync Failed" for a note written while the PSA could not be reached and not
+    // yet taken by it. Null for every note the PSA has.
+    string? SyncState = null);
+
+/// <summary>
+/// A change to a ticket that has not reached its PSA yet, or that the PSA would not take. Shown on
+/// the ticket to staff. <paramref name="State"/> is "Pending Sync" or "Sync Failed": a change that
+/// is synced is simply the ticket as it is.
+/// </summary>
+public sealed record TicketOutboundDto(
+    Guid Id, string Kind, string Summary, string State, int Attempts, int MaxAttempts,
+    DateTimeOffset RequestedAt, string? RequestedBy, DateTimeOffset? NextAttemptAt, string? LastError);
 
 /// <summary>
 /// Ticket detail for the client portal. Contains ONLY public conversation — internal PSA notes
@@ -274,7 +325,41 @@ public sealed record TicketDetailDto(
     /// </summary>
     TicketBoardDetailsDto? BoardDetails = null,
     /// <summary>Who resolved it in the portal - the person productivity credits it to. Staff only.</summary>
-    string? ResolvedByName = null);
+    string? ResolvedByName = null,
+    /// <summary>What the PSA files the ticket under, in its own three levels. Staff only, and null when it has none.</summary>
+    TicketClassificationDto? Classification = null,
+    /// <summary>
+    /// The PSA's custom fields an administrator chose to bring in, with a value on this ticket.
+    /// For staff, every one of them. For a client, only the ones separately marked as theirs to
+    /// see; the rest are not sent at all. Null where there are none.
+    /// </summary>
+    IReadOnlyList<TicketCustomFieldDto>? CustomFields = null,
+    /// <summary>Changes made here that the PSA does not have yet, or refused. Staff only; null where there are none.</summary>
+    IReadOnlyList<TicketOutboundDto>? Outbound = null,
+    /// <summary>How the due date was moved, where it was. Null when never moved, and always for a client.</summary>
+    TicketDueDateDto? DueDate = null);
+
+/// <param name="Label">What the field is called in the portal.</param>
+/// <param name="DataType">text, number, date, boolean or list.</param>
+/// <param name="ClientVisible">Whether the client sees it too. Always true in what a client is sent.</param>
+public sealed record TicketCustomFieldDto(string Label, string Value, string DataType, bool ClientVisible);
+
+/// <summary>
+/// The PSA's own classification of a ticket, as it sent it. Which words the three levels go by is
+/// the PSA's: Autotask's ticket type, issue type and sub-issue type; ConnectWise's type, subtype
+/// and item.
+/// </summary>
+/// <param name="WorkType">What kind of work it is in the portal's words, where one of the connection's rules says. Staff only.</param>
+/// <param name="Subcategory">The portal's subcategory, on the same terms.</param>
+/// <param name="Mapped">
+/// Whether one of the connection's rules names what the ticket is filed under. False is UNMAPPED:
+/// the connection has rules, none names this, and the portal has put nothing in a rule's place.
+/// Null where the connection has no rules at all: the desk has not taken them up, and a ticket is
+/// not called unmapped against rules that do not exist.
+/// </param>
+public sealed record TicketClassificationDto(
+    string? TicketType, string? IssueType, string? SubIssueType,
+    string? WorkType = null, string? Subcategory = null, bool? Mapped = null);
 
 public sealed record TicketBoardDetailsDto(
     Guid BoardId, Guid? BoardTopicId, Guid? DepartmentId, Guid? ClientCompanyId,

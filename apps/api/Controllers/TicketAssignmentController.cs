@@ -270,8 +270,8 @@ public sealed class TicketAssignmentController(
         {
             // Store the PORTAL-side value, exactly as an inbound sync would, so the projection does
             // not flip between "Support" and "Level I Support" depending on which wrote it last.
-            var rules = await db.FieldMappings.AsNoTracking()
-                .Where(m => m.Provider == ticket.Provider && m.IsActive).ToListAsync(ct);
+            var rules = await Desk.Infrastructure.Sync.ConnectionMappingRules.LoadAsync(
+                db, ticket.MspOrganizationId, ticket.Provider!.Value, ticket.PsaConnectionId!.Value, ct);
             var ctx = new MappingContext { Provider = ticket.Provider!.Value, PsaConnectionId = ticket.PsaConnectionId!.Value };
             ticket.QueueOrBoard = mapping.MapToPortal(rules, ctx, "queue", queueId).Value
                 ?? fields.QueuesOrBoards.FirstOrDefault(o => o.Value == queueId)?.Label
@@ -344,8 +344,8 @@ public sealed class TicketAssignmentController(
     {
         if (string.IsNullOrWhiteSpace(ticket.QueueOrBoard)) return null;
 
-        var rules = await db.FieldMappings.AsNoTracking()
-            .Where(m => m.Provider == ticket.Provider && m.IsActive).ToListAsync(ct);
+        var rules = await Desk.Infrastructure.Sync.ConnectionMappingRules.LoadAsync(
+            db, ticket.MspOrganizationId, ticket.Provider!.Value, ticket.PsaConnectionId!.Value, ct);
         var ctx = new MappingContext { Provider = ticket.Provider!.Value, PsaConnectionId = ticket.PsaConnectionId!.Value };
         var mapped = mapping.MapToProvider(rules, ctx, "queue", ticket.QueueOrBoard).Value;
         if (!string.IsNullOrWhiteSpace(mapped)

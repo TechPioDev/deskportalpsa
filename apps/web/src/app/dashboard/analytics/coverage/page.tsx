@@ -114,7 +114,7 @@ export default function CoveragePage() {
                 </thead>
                 <tbody>
                   {data.technicians.map((t) => (
-                    <tr key={t.technicianExternalId} className="border-t border-[var(--border)]">
+                    <tr key={`${t.psaConnectionId ?? ''}:${t.technicianExternalId}`} className="border-t border-[var(--border)]">
                       <td className="px-4 py-2.5 font-medium">
                         {t.technicianName ?? (
                           <span className="text-[var(--muted)]">

@@ -101,6 +101,7 @@ public static class PermissionCatalog
             [PermissionScope.All, PermissionScope.Department, PermissionScope.Team, PermissionScope.Own, PermissionScope.None],
             PermissionScope.All, IsBoardAware: false),
         Admin(Permissions.ScheduleOverride, "Workforce", "Override a scheduling conflict, with a reason"),
+        Admin(Permissions.WorkforceAnalyticsExport, "Workforce", "Export workforce analytics (CSV)"),
     ];
 
     private static readonly Dictionary<string, PermissionDefinition> ByKey =

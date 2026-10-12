@@ -78,4 +78,21 @@ public sealed class AdminHarness
             Secrets = new InMemorySecretStore(), Clock = clock,
         };
     }
+
+    /// <summary>
+    /// The database <see cref="Create"/> opens under <paramref name="dbName"/>, read and written
+    /// across tenants - for seeding another organization's rows beside the harness's own.
+    ///
+    /// Built with the same options as Create, on purpose. The in-memory provider keeps its stores
+    /// per options shape: a context configured any differently (TestDbContextFactory turns on
+    /// sensitive-data logging) opens a different, empty database of the same name, and a test that
+    /// "cannot see the other tenant's row" then proves nothing - the row was never there.
+    /// </summary>
+    public static DeskDbContext Platform(string dbName)
+    {
+        var tenant = new TenantContext();
+        tenant.SetPlatformScope();
+        var options = new DbContextOptionsBuilder<DeskDbContext>().UseInMemoryDatabase(dbName).Options;
+        return new DeskDbContext(options, tenant, new TestClock());
+    }
 }

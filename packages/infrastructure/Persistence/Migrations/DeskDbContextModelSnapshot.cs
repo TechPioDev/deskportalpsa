@@ -993,6 +993,144 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.ToTable("app_users", (string)null);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Identity.EmailLogEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("SentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<Guid?>("SubjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SubjectType")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<bool>("Succeeded")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("TemplateKey")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("To")
+                        .IsRequired()
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MspOrganizationId", "SentAt");
+
+                    b.ToTable("email_log", (string)null);
+                });
+
+            modelBuilder.Entity("Desk.Domain.Identity.EmailTemplate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(5000)
+                        .HasColumnType("character varying(5000)");
+
+                    b.Property<string>("ButtonLabel")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MspOrganizationId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("email_templates", (string)null);
+                });
+
+            modelBuilder.Entity("Desk.Domain.Identity.PsaTechnicianIgnore", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalTechnicianId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ExternalTechnicianName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId", "ExternalTechnicianId")
+                        .IsUnique();
+
+                    b.ToTable("psa_technician_ignores", (string)null);
+                });
+
             modelBuilder.Entity("Desk.Domain.Identity.Role", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1059,6 +1197,85 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.ToTable("role_permissions", (string)null);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Identity.SignInInvitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AppUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ClientUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ExpiryNoticeSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("LastSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Purpose")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RemindersSent")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SentCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AppUserId");
+
+                    b.HasIndex("ClientUserId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("MspOrganizationId", "Purpose", "ConsumedAt", "RevokedAt");
+
+                    b.ToTable("sign_in_invitations", (string)null);
+                });
+
             modelBuilder.Entity("Desk.Domain.Identity.UserPsaIdentity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1091,9 +1308,10 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PsaConnectionId");
-
                     b.HasIndex("AppUserId", "PsaConnectionId")
+                        .IsUnique();
+
+                    b.HasIndex("PsaConnectionId", "ExternalTechnicianId")
                         .IsUnique();
 
                     b.ToTable("user_psa_identities", (string)null);
@@ -1252,6 +1470,59 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.ToTable("kb_deflections", (string)null);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Mapping.ClassificationMapping", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IssueType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SubIssueType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Subcategory")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TicketType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WorkType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId", "TicketType", "IssueType", "SubIssueType")
+                        .IsUnique();
+
+                    b.ToTable("classification_mappings", (string)null);
+                });
+
             modelBuilder.Entity("Desk.Domain.Mapping.FieldMapping", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1366,6 +1637,58 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.HasIndex("MspOrganizationId", "Provider", "PsaConnectionId", "Version");
 
                     b.ToTable("field_mapping_versions", (string)null);
+                });
+
+            modelBuilder.Entity("Desk.Domain.Mapping.PsaCustomField", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("ClientVisible")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DataType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ExternalKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ExternalLabel")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("Import")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PortalLabel")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId", "ExternalKey")
+                        .IsUnique();
+
+                    b.ToTable("psa_custom_fields", (string)null);
                 });
 
             modelBuilder.Entity("Desk.Domain.Marketing.Enquiry", b =>
@@ -1895,6 +2218,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<string>("LastError")
                         .HasColumnType("text");
 
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("MaxAttempts")
                         .HasColumnType("integer");
 
@@ -1914,11 +2240,164 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.HasKey("Id");
 
                     b.HasIndex("Status", "NextAttemptAt");
 
                     b.ToTable("background_jobs", (string)null);
+                });
+
+            modelBuilder.Entity("Desk.Domain.Sync.OutboundOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("LastAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("RequestedByAppUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("RequestedByClientUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTimeOffset?>("SyncedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("TargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Uncertain")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MspOrganizationId", "State");
+
+                    b.HasIndex("State", "NextAttemptAt");
+
+                    b.HasIndex("TicketId", "State");
+
+                    b.ToTable("outbound_operations", (string)null);
+                });
+
+            modelBuilder.Entity("Desk.Domain.Sync.SyncCursor", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Continuation")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<bool>("ContinuationFull")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("ContinuationPages")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("ContinuationSince")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ContinuationStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Entity")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("Watermark")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId", "Entity")
+                        .IsUnique();
+
+                    b.ToTable("sync_cursors", (string)null);
                 });
 
             modelBuilder.Entity("Desk.Domain.Sync.SyncEvent", b =>
@@ -1982,6 +2461,172 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.ToTable("sync_events", (string)null);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Sync.SyncFailure", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Entity")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("FirstFailedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("LastFailedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId", "Status", "NextAttemptAt");
+
+                    b.HasIndex("PsaConnectionId", "Entity", "ExternalId", "Operation")
+                        .IsUnique()
+                        .HasDatabaseName("IX_sync_failures_one_open")
+                        .HasFilter("\"Status\" IN (0, 2)");
+
+                    b.ToTable("sync_failures", (string)null);
+                });
+
+            modelBuilder.Entity("Desk.Domain.Sync.SyncRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attachments")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AttachmentsRemoved")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Created")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("FailedRecords")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Fetched")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Notes")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("NotesRemoved")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Notice")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("Pages")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Recovered")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RequestedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("Retried")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Skipped")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Trigger")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Updated")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PsaConnectionId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_sync_runs_one_running")
+                        .HasFilter("\"Status\" = 0");
+
+                    b.HasIndex("PsaConnectionId", "StartedAt");
+
+                    b.ToTable("sync_runs", (string)null);
+                });
+
             modelBuilder.Entity("Desk.Domain.Tenancy.ClientCompany", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2021,6 +2666,43 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("client_companies", (string)null);
+                });
+
+            modelBuilder.Entity("Desk.Domain.Tenancy.ClientCompanyAccess", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("CanCreate")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ClientCompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ClientUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MspOrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("SeesAllTickets")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientCompanyId");
+
+                    b.HasIndex("ClientUserId", "ClientCompanyId")
+                        .IsUnique();
+
+                    b.ToTable("client_company_access", (string)null);
                 });
 
             modelBuilder.Entity("Desk.Domain.Tenancy.ClientUser", b =>
@@ -2206,10 +2888,17 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AccountKeyHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("ApiEndpoint")
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("ArchivedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("AutoImportNewTickets")
                         .HasColumnType("boolean");
@@ -2264,11 +2953,20 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<bool>("ImportSystemNotes")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("InSetup")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean");
 
                     b.Property<string>("LastError")
                         .HasColumnType("text");
+
+                    b.Property<string>("LastErrorKind")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
 
                     b.Property<DateTimeOffset?>("LastHealthCheckAt")
                         .HasColumnType("timestamp with time zone");
@@ -2309,6 +3007,21 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("SyncAttachments")
                         .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("SyncPausedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("SyncRequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SyncRequestedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("SyncRequestedFull")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("TenantIdentifier")
                         .HasColumnType("text");
@@ -2918,6 +3631,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CreatedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CustomFieldsJson")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("DepartmentId")
                         .HasColumnType("uuid");
 
@@ -2930,6 +3646,21 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.Property<Guid?>("DeviceId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("DueDateExtendedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DueDateExtendedByName")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("DueDateExtendedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DueDateExtensionReason")
+                        .HasColumnType("text");
+
+                    b.Property<int>("DueDateExtensions")
+                        .HasColumnType("integer");
 
                     b.Property<string>("ExternalTicketId")
                         .HasColumnType("text");
@@ -2960,6 +3691,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<int>("Origin")
                         .HasColumnType("integer");
 
+                    b.Property<DateTimeOffset?>("OriginalSlaDueAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("PortalCategory")
                         .HasColumnType("text");
 
@@ -2974,6 +3708,10 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<string>("PortalSubcategory")
                         .HasColumnType("text");
 
+                    b.Property<string>("PortalWorkType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<int?>("Provider")
                         .HasColumnType("integer");
 
@@ -2986,14 +3724,26 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PsaCreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("PsaIssueType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<string>("PsaPriority")
                         .HasColumnType("text");
 
                     b.Property<string>("PsaStatus")
                         .HasColumnType("text");
 
+                    b.Property<string>("PsaSubIssueType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<string>("PsaSubcategory")
                         .HasColumnType("text");
+
+                    b.Property<string>("PsaTicketType")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("QueueOrBoard")
                         .HasColumnType("text");
@@ -3088,6 +3838,12 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("DeviceId");
 
+                    b.HasIndex("MspOrganizationId")
+                        .HasDatabaseName("IX_tickets_open")
+                        .HasFilter("upper(\"PortalStatus\") NOT LIKE '%RESOLV%' AND upper(\"PortalStatus\") NOT LIKE '%CLOSED%'");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("MspOrganizationId"), new[] { "Origin", "BoardId", "AssignedAppUserId", "CreatedByUserId", "PortalStatus", "PortalPriority", "PsaConnectionId", "SlaPausedAt", "SlaDueAt", "AssignedTechnicianExternalId" });
+
                     b.HasIndex("AlertSourceId", "SourceAlertId")
                         .IsUnique()
                         .HasFilter("\"SourceAlertId\" IS NOT NULL");
@@ -3112,6 +3868,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("MspOrganizationId", "ResolvedAt");
 
+                    b.HasIndex("MspOrganizationId", "ResolvedByAppUserId")
+                        .HasFilter("\"ResolvedByAppUserId\" IS NOT NULL");
+
                     b.HasIndex("MspOrganizationId", "SlaDueAt");
 
                     b.HasIndex("PsaConnectionId", "ExternalTicketId")
@@ -3119,6 +3878,8 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .HasFilter("\"ExternalTicketId\" IS NOT NULL");
 
                     b.HasIndex("MspOrganizationId", "BoardId", "PortalStatus");
+
+                    b.HasIndex("MspOrganizationId", "PsaConnectionId", "AssignedTechnicianExternalId");
 
                     b.ToTable("tickets", (string)null);
                 });
@@ -3429,6 +4190,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("OriginCorrelationId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("SyncState")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("TicketId")
                         .HasColumnType("uuid");
 
@@ -3580,6 +4344,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("PsaConnectionId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Source")
                         .HasColumnType("integer");
 
@@ -3625,7 +4392,14 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("\"WorkSessionId\" IS NOT NULL");
 
+                    b.HasIndex("PsaConnectionId", "ExternalEntryId")
+                        .IsUnique()
+                        .HasFilter("\"PsaConnectionId\" IS NOT NULL AND \"ExternalEntryId\" IS NOT NULL");
+
                     b.HasIndex("MspOrganizationId", "AppUserId", "EntryDate");
+
+                    b.HasIndex("MspOrganizationId", "PsaConnectionId", "TechnicianExternalId")
+                        .HasFilter("\"AppUserId\" IS NULL");
 
                     b.ToTable("ticket_time_entries", (string)null);
                 });
@@ -4305,6 +5079,17 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Navigation("Manager");
                 });
 
+            modelBuilder.Entity("Desk.Domain.Identity.PsaTechnicianIgnore", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", "PsaConnection")
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PsaConnection");
+                });
+
             modelBuilder.Entity("Desk.Domain.Identity.RolePermission", b =>
                 {
                     b.HasOne("Desk.Domain.Identity.Role", "Role")
@@ -4365,6 +5150,28 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Navigation("Article");
                 });
 
+            modelBuilder.Entity("Desk.Domain.Mapping.ClassificationMapping", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", "PsaConnection")
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PsaConnection");
+                });
+
+            modelBuilder.Entity("Desk.Domain.Mapping.PsaCustomField", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", "PsaConnection")
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PsaConnection");
+                });
+
             modelBuilder.Entity("Desk.Domain.Organization.Team", b =>
                 {
                     b.HasOne("Desk.Domain.Organization.Department", "Department")
@@ -4419,6 +5226,33 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade);
                 });
 
+            modelBuilder.Entity("Desk.Domain.Sync.SyncCursor", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", null)
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Desk.Domain.Sync.SyncFailure", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", null)
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Desk.Domain.Sync.SyncRun", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.PsaConnection", null)
+                        .WithMany()
+                        .HasForeignKey("PsaConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Desk.Domain.Tenancy.ClientCompany", b =>
                 {
                     b.HasOne("Desk.Domain.Tenancy.MspOrganization", null)
@@ -4434,6 +5268,25 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("PsaConnection");
+                });
+
+            modelBuilder.Entity("Desk.Domain.Tenancy.ClientCompanyAccess", b =>
+                {
+                    b.HasOne("Desk.Domain.Tenancy.ClientCompany", "ClientCompany")
+                        .WithMany()
+                        .HasForeignKey("ClientCompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Desk.Domain.Tenancy.ClientUser", "ClientUser")
+                        .WithMany()
+                        .HasForeignKey("ClientUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ClientCompany");
+
+                    b.Navigation("ClientUser");
                 });
 
             modelBuilder.Entity("Desk.Domain.Tenancy.ClientUser", b =>

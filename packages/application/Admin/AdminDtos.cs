@@ -26,7 +26,23 @@ public sealed record ConnectionSummary(
     // existing key" from "there is nothing stored to keep": after the Vault-era secret loss, both
     // rendered as the same 'unchanged' placeholder and an admin could not tell whether their
     // re-entry had actually landed.
-    IReadOnlyList<string>? StoredCredentialKeys = null);
+    IReadOnlyList<string>? StoredCredentialKeys = null,
+    // Where the connection stands, as one word. Null only from a caller that did not work it out.
+    ConnectionState? State = null,
+    DateTimeOffset? SyncPausedAt = null,
+    // A sync someone asked for that the worker has not finished: the card says so, and follows it.
+    DateTimeOffset? SyncRequestedAt = null);
+
+/// <summary>A PSA that can be connected, or one that is planned. Nothing is behind a planned one: it cannot be chosen.</summary>
+/// <param name="Available">A connector exists for it.</param>
+public sealed record ProviderCatalogEntry(
+    ProviderType Provider, string Name, bool Available,
+    string? EndpointExample, string? EndpointHint, string? TenantIdentifierLabel,
+    IReadOnlyList<CredentialFieldDto> Credentials,
+    // Two letters for a connection's tile where no logo has been uploaded.
+    string Mark = "");
+
+public sealed record CredentialFieldDto(string Key, string Label, bool Secret, string? Hint);
 
 public sealed record CreateConnectionInput(
     string Name,
@@ -123,7 +139,9 @@ public sealed record UnsyncedTicketDto(
 public sealed record UnsyncedTicketsDto(int Count, IReadOnlyList<UnsyncedTicketDto> Tickets);
 
 /// <summary>Outcome of a single resync attempt.</summary>
-public sealed record ResyncResultDto(bool Success, Guid TicketId, string? ExternalTicketId, string? Error);
+/// <param name="Transient">It failed because the PSA could not be reached, not because it refused.</param>
+/// <param name="NeverSent">And the request certainly did nothing there, so sending it again cannot make a second ticket.</param>
+public sealed record ResyncResultDto(bool Success, Guid TicketId, string? ExternalTicketId, string? Error, bool Transient = false, bool NeverSent = false);
 
 /// <summary>A role a staff user can hold, by id (for assignment) and name (for display).</summary>
 public sealed record RoleOptionDto(Guid Id, string Name);
@@ -340,3 +358,82 @@ public sealed record UserPsaIdentityDto(
     string ConnectionName,
     string? ExternalTechnicianId,
     string? ExternalTechnicianName);
+
+/// <summary>
+/// One line of a connection's test: what was tried and how it went. <paramref name="Outcome"/> is
+/// Pass, Fail, Warn, NotTested (nothing to try it on, or a write, which a test never makes),
+/// Available or Unavailable. A <paramref name="Required"/> line is one the sync cannot do without.
+/// </summary>
+public sealed record ConnectionCheckDto(string Key, string Name, string Outcome, string? Detail, bool Required);
+
+/// <summary>A connection's test, line by line. Passed means every required line passed.</summary>
+public sealed record ConnectionCheckReportDto(bool Passed, DateTimeOffset CheckedAt, IReadOnlyList<ConnectionCheckDto> Checks);
+
+/// <summary>A value the PSA lists, and what it becomes in the portal. Null = no rule maps it.</summary>
+public sealed record MappedValueDto(string Value, string Label, string? MapsTo, bool ByFallbackRule);
+
+public sealed record MappingCoverageDto(IReadOnlyList<MappedValueDto> Statuses, IReadOnlyList<MappedValueDto> Priorities, int Unmapped);
+
+/// <summary>
+/// How much an import would bring in, asked of the PSA before anything is imported. A null is
+/// "the PSA could not say", never zero.
+/// </summary>
+public sealed record ConnectionPreviewDto(
+    int? Clients, int? Technicians, int? OpenTickets, int? AllTickets, int? TicketsToImport, int Unmapped, IReadOnlyList<string> Notes);
+
+public sealed record PreflightItemDto(string Key, string Name, string Outcome, string Detail);
+
+/// <summary>What stands between a connection and being switched on. A Fail blocks; a Warn is said and left to the administrator.</summary>
+public sealed record PreflightDto(bool CanEnable, IReadOnlyList<PreflightItemDto> Items);
+
+/// <summary>
+/// One value a PSA uses for a field, and what the portal makes of it. <paramref name="MapsTo"/> is
+/// null where no rule maps it. <paramref name="UnmappedTickets"/> can be less than
+/// <paramref name="Tickets"/>: a rule can map a value in one queue and not in another.
+/// <paramref name="TreatedAs"/> is how the portal counts tickets in a status nothing maps - "Open"
+/// or "Finished", read from the PSA's own word for it.
+/// </summary>
+public sealed record MappingValueDto(
+    string Value, string? MapsTo, bool ByFallbackRule, int Tickets, int UnmappedTickets, bool ListedByPsa, string? TreatedAs);
+
+public sealed record MappingFieldHealthDto(
+    string Field, string Name, int Values, int Mapped, double? MappedPct, int UnmappedTickets, IReadOnlyList<MappingValueDto> Items);
+
+/// <summary>A status the portal can be set to, and what the PSA is sent for it. A problem is said in words.</summary>
+public sealed record OutboundStatusDto(string PortalValue, string? SendsAs, string? Problem);
+
+public sealed record UnlinkedTechnicianDto(string ExternalId, string? Name, int Tickets);
+
+/// <param name="Ignored">Logins an administrator has said to leave alone. Not counted in the other figures.</param>
+public sealed record TechnicianHealthDto(
+    int Technicians, int Linked, double? LinkedPct, IReadOnlyList<UnlinkedTechnicianDto> Unlinked, int Ignored = 0);
+
+/// <summary>
+/// How well a connection's mapping covers what its PSA sends. <paramref name="Level"/> is Pass,
+/// Optional (something could be mapped and need not be), Warning (tickets hold a value nothing maps,
+/// or a portal status has no PSA counterpart) or Blocking (no status is mapped at all, so finished
+/// work cannot be told from open).
+/// </summary>
+public sealed record MappingHealthDto(
+    Guid ConnectionId, string ConnectionName, DateTimeOffset CheckedAt, string Level,
+    IReadOnlyList<MappingFieldHealthDto> Fields, IReadOnlyList<OutboundStatusDto> OutboundStatuses,
+    TechnicianHealthDto Technicians, int Tickets, int UnmappedTickets, int TicketsWithoutClient, IReadOnlyList<string> Notes,
+    /// <summary>How far the connection's classification rules reach. A connection with no rules has not taken them up, which is not a fault.</summary>
+    ClassificationHealthDto? Classification = null);
+
+/// <summary>A sample ticket: what it arrived with and what the rules make of it. A null mapped value = nothing maps it.</summary>
+public sealed record MappingPreviewRowDto(
+    string Reference, string Title, string? SourceStatus, string? MappedStatus, string? SourcePriority, string? MappedPriority, bool ReadFromPsa);
+
+public sealed record MappingApplyResultDto(int StatusesChanged, int PrioritiesChanged, IReadOnlyList<string> Changes);
+
+/// <summary>
+/// What one value a PSA sends should become in the portal. A null <paramref name="PortalValue"/>
+/// takes the mapping away: the value then arrives as the PSA wrote it.
+/// </summary>
+public sealed record SetInboundMappingInput(string Field, string Value, string? PortalValue);
+
+public sealed record InboundMappingResultDto(int Changed, IReadOnlyList<string> Changes);
+
+/// <summary>The portal's own words: what a PSA's statuses and priorities are mapped to.</summary>
+public sealed record PortalVocabularyDto(IReadOnlyList<string> Statuses, IReadOnlyList<string> Priorities);

@@ -16,8 +16,33 @@ public interface IAuditWriter
 public interface IConnectionAdminService
 {
     Task<IReadOnlyList<ConnectionSummary>> ListAsync(CancellationToken ct = default);
+
+    /// <summary>The connections that have been put away. They are in no other list.</summary>
+    Task<IReadOnlyList<ConnectionSummary>> ArchivedAsync(CancellationToken ct = default);
     Task<ConnectionSummary> CreateAsync(CreateConnectionInput input, CancellationToken ct = default);
     Task SetEnabledAsync(Guid connectionId, bool enabled, CancellationToken ct = default);
+
+    /// <summary>Every PSA the portal names: the ones that can be connected, with what they need, and the ones that are planned.</summary>
+    IReadOnlyList<ProviderCatalogEntry> Providers();
+
+    /// <summary>What this connection's PSA can and cannot do, as its connector declares it.</summary>
+    Task<Desk.PsaCore.Contracts.ProviderCapabilities> CapabilitiesAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Switches a new connection on for the first time. Refused until a test has passed: a
+    /// connection is never live on credentials the PSA has not accepted.
+    /// </summary>
+    Task<ConnectionSummary> ActivateAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Stops reading from the PSA. Replies, status changes and logged time still reach it.</summary>
+    Task<ConnectionSummary> PauseSyncAsync(Guid connectionId, CancellationToken ct = default);
+    Task<ConnectionSummary> ResumeSyncAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Puts a connection away: disabled and no longer listed. Nothing it imported is removed.</summary>
+    Task ArchiveAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Brings an archived connection back, disabled. Switching it on is a separate, deliberate step.</summary>
+    Task<ConnectionSummary> RestoreAsync(Guid connectionId, CancellationToken ct = default);
 
     /// <summary>Stores an uploaded logo and points the connection at it. Audited.</summary>
     Task<ConnectionSummary> UploadLogoAsync(Guid connectionId, ConnectionLogoUpload upload, CancellationToken ct = default);
@@ -30,6 +55,39 @@ public interface IConnectionAdminService
 
     /// <summary>Live-tests a saved connection against its PSA, updates its health status, and audits it.</summary>
     Task<ConnectionTestResultDto> TestAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The test, line by line: authentication, the reads the sync needs, and what else the PSA
+    /// allows. Reads only - nothing is written to the PSA. Records the outcome and is audited.
+    /// </summary>
+    Task<ConnectionCheckReportDto> CheckAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>Each status and priority the PSA lists, and what the connection's rules turn it into.</summary>
+    Task<MappingCoverageDto> MappingCoverageAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>How much an import would bring in under the connection's scope, asked of the PSA.</summary>
+    Task<ConnectionPreviewDto> PreviewAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>What stands between this connection and being switched on.</summary>
+    Task<PreflightDto> PreflightAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// How well the connection's mapping covers what its PSA sends, worked out from the tickets it
+    /// holds and the rules as they are now. Nothing is stored for it.
+    /// </summary>
+    Task<MappingHealthDto> MappingHealthAsync(Guid connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sample tickets with what the rules make of each. Tickets already imported where there are
+    /// any; otherwise a handful read from the PSA and not kept.
+    /// </summary>
+    Task<IReadOnlyList<MappingPreviewRowDto>> MappingPreviewAsync(Guid connectionId, int take = 10, CancellationToken ct = default);
+
+    /// <summary>
+    /// Re-maps tickets already imported that still show the PSA's own word for a status or priority
+    /// a rule now maps. Tickets a person or a rule already gave a portal value are left. Audited.
+    /// </summary>
+    Task<MappingApplyResultDto> ApplyMappingAsync(Guid connectionId, CancellationToken ct = default);
 
     /// <summary>Read-only pre-flight: can this connection log time with its current settings?</summary>
     Task<TimeEntryReadinessDto> CheckTimeEntryAsync(Guid connectionId, CancellationToken ct = default);
@@ -59,6 +117,14 @@ public interface IMappingAdminService
     Task<IReadOnlyList<MappingRuleDto>> ListAsync(ProviderType provider, CancellationToken ct = default);
     Task<MappingRuleDto> UpsertAsync(UpsertMappingInput input, string? changeNote, CancellationToken ct = default);
     Task<IReadOnlyList<MappingVersionDto>> VersionsAsync(ProviderType provider, Guid? connectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Says what values a connection's PSA sends should become in the portal: any number of PSA
+    /// values to one portal value. Every change is checked before any is made; the set is saved,
+    /// snapshotted and audited together, with what each value was mapped to before.
+    /// </summary>
+    Task<InboundMappingResultDto> SetInboundAsync(
+        Guid connectionId, IReadOnlyList<SetInboundMappingInput> changes, string? changeNote, CancellationToken ct = default);
 
     /// <summary>Removes a mapping rule entirely (snapshotted + audited, like any other change).</summary>
     Task DeleteAsync(Guid ruleId, CancellationToken ct = default);

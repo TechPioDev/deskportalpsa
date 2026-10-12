@@ -34,6 +34,21 @@ public record ExternalFieldOption(string Value, string Label, bool IsActive = tr
 }
 
 /// <summary>Definition of a provider custom field discovered at runtime.</summary>
+/// <summary>
+/// The kinds a custom field can be, as the portal shows them. A connector says one of these for
+/// each field it lists (<see cref="ExternalFieldDefinition.DataType"/>); a kind it cannot tell is text.
+/// </summary>
+public static class CustomFieldTypes
+{
+    public const string Text = "text";
+    public const string Number = "number";
+    public const string Date = "date";
+    public const string Boolean = "boolean";
+    public const string List = "list";
+
+    public static readonly IReadOnlyList<string> All = [Text, Number, Date, Boolean, List];
+}
+
 public record ExternalFieldDefinition(
     string Key,
     string Label,
@@ -51,7 +66,24 @@ public record UnifiedTicket
     public string? Priority { get; init; }
     public string? Category { get; init; }
     public string? Subcategory { get; init; }
+
+    /// <summary>
+    /// The PSA's own classification of the ticket, in its three levels and in its own words:
+    /// Autotask's ticket type, issue type and sub-issue type; ConnectWise's type, subtype and item.
+    /// The same three a ticket is created with (<see cref="UnifiedTicketCreateRequest"/>). Kept as the
+    /// PSA sent them: nothing here is translated, and null means the PSA gave none.
+    /// </summary>
+    public string? TicketType { get; init; }
+    public string? IssueType { get; init; }
+    public string? SubIssueType { get; init; }
     public string? QueueOrBoard { get; init; }
+
+    /// <summary>
+    /// The provider's own id for that queue or board, kept beside its name. The name is what people
+    /// read and what mapping rules match; the id is what the provider is asked for, so it is what an
+    /// import filter holds. With only the name on the ticket, a filter of ids matched nothing.
+    /// </summary>
+    public string? QueueOrBoardId { get; init; }
     public string? AssignedTechnicianExternalId { get; init; }
     public string? RequesterExternalId { get; init; }
     /// <summary>Display name of the owning company, when the provider sends it inline (CW does).</summary>
@@ -120,6 +152,8 @@ public record UnifiedTicketUpdate
     /// resource and its role are a pair there — so this is not decoration.
     /// </summary>
     public string? AssignedTechnicianRoleId { get; init; }
+    /// <summary>A new due date (Autotask dueDateTime, ConnectWise requiredDate). Null leaves it as it is.</summary>
+    public DateTimeOffset? DueDate { get; init; }
     public required string IdempotencyKey { get; init; }
 }
 
@@ -269,6 +303,20 @@ public record ExternalTechnicianAssignment(
 
 /// <summary>An attachment paired with the ticket it hangs off, as returned by a tenant-wide sweep.</summary>
 public record ProviderAttachmentRef(string TicketExternalId, UnifiedAttachment Attachment);
+
+/// <summary>
+/// The result of a tenant-wide attachment sweep, and whether it is ALL of what was asked for.
+///
+/// The difference matters because of what a caller does with an absence. A file missing from a
+/// complete list has been deleted in the PSA; a file missing from a list that was cut short is
+/// simply further down it. A sweep that stopped early - a page limit, a cap - must say so, or the
+/// second case is read as the first and the portal deletes files that still exist.
+/// </summary>
+public record ProviderAttachmentSweep(IReadOnlyList<ProviderAttachmentRef> Items, bool Complete)
+{
+    /// <summary>Nothing, from a provider that cannot answer the question: never grounds for a deletion.</summary>
+    public static ProviderAttachmentSweep Unsupported { get; } = new([], Complete: false);
+}
 
 /// <summary>An attachment's bytes pulled back from a provider, ready to stage in object storage.</summary>
 public record DownloadedAttachment(string FileName, string ContentType, byte[] Content);

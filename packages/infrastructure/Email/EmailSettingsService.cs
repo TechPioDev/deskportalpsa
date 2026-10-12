@@ -81,7 +81,7 @@ public sealed class EmailSettingsService(
         row.Security = security;
         row.Username = username;
         row.FromAddress = from[0];
-        row.FromName = string.IsNullOrWhiteSpace(input.FromName) ? "Desk Portal" : input.FromName.Trim()[..Math.Min(input.FromName.Trim().Length, 100)];
+        row.FromName = string.IsNullOrWhiteSpace(input.FromName) ? "PioManage" : input.FromName.Trim()[..Math.Min(input.FromName.Trim().Length, 100)];
         row.UpdatedByUserId = user.UserId;
         if (created) db.OrganizationEmailSettings.Add(row);
         await db.SaveChangesAsync(ct);
@@ -133,7 +133,7 @@ public sealed class EmailSettingsService(
         row.Security = "SslOnConnect";
         row.Username = null;
         row.FromAddress = from[0];
-        row.FromName = string.IsNullOrWhiteSpace(input.FromName) ? "Desk Portal" : input.FromName.Trim()[..Math.Min(input.FromName.Trim().Length, 100)];
+        row.FromName = string.IsNullOrWhiteSpace(input.FromName) ? "PioManage" : input.FromName.Trim()[..Math.Min(input.FromName.Trim().Length, 100)];
         row.UpdatedByUserId = user.UserId;
         if (created) db.OrganizationEmailSettings.Add(row);
         await db.SaveChangesAsync(ct);

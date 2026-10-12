@@ -83,7 +83,7 @@ public class TicketListPeopleTests
             .Select(p => (p.Name, p.Holds)).Should().Equal(("Basit Lone", true), ("Komal Sharma", false));
         list.Single(t => t.Title == "psa-held").People!
             .Should().ContainSingle().Which.Name.Should().Be("Kamal Arora");
-        list.SelectMany(t => t.People!).Should().NotContain(p => p.Key == PersonKey.For(null, "api-user"),
+        list.SelectMany(t => t.People!).Should().NotContain(p => p.Key == PersonKey.For(null, Conn, "api-user"),
             "the integration account is how a portal technician's work reaches the PSA, not a person");
     }
 
@@ -123,7 +123,7 @@ public class TicketListPeopleTests
 
         list.Single(t => t.Title == "account-held").People.Should().BeEmpty("the PSA side of it is unassigned");
         list.Single(t => t.Title == "elsewhere").People!
-            .Should().ContainSingle().Which.Should().Be(new TicketPersonRef(PersonKey.For(null, "api-user"), "Real Person", true));
+            .Should().ContainSingle().Which.Should().Be(new TicketPersonRef(PersonKey.For(null, cw, "api-user"), "Real Person", true));
         list.SelectMany(t => t.People!).Should().NotContain(p => p.Name == "Sudanshu Aggarwal",
             "the account's name is not a name source either");
     }

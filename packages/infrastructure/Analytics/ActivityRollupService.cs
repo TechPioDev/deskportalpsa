@@ -75,25 +75,51 @@ public sealed class ActivityRollupService(DeskDbContext db, TimeProvider clock) 
 
         // Portal events name a portal user; the facts are keyed on the PSA identity so both halves
         // aggregate on the same axis. Someone unmapped resolves to null rather than a guess.
-        var externalIdByUser = await db.UserPsaIdentities.IgnoreQueryFilters().AsNoTracking()
-            .Select(i => new { i.AppUserId, i.ExternalTechnicianId })
-            .ToListAsync(ct);
-        var actorLookup = externalIdByUser
+        //
+        // A PSA id means something only on its own connection. This pass reads every organization at
+        // once, and these lookups used to be keyed on the bare id: member "5" of one tenant's
+        // ConnectWise resolved to whichever tenant's user happened to be linked to a "5" first, and
+        // that user's id was written into the other tenant's facts.
+        var links = (await db.UserPsaIdentities.IgnoreQueryFilters().AsNoTracking()
+            .Select(i => new { i.MspOrganizationId, i.PsaConnectionId, i.AppUserId, i.ExternalTechnicianId })
+            .ToListAsync(ct))
+            .OrderBy(i => i.PsaConnectionId)
+            .ToList();
+        var loginOnConnection = links
+            .GroupBy(i => (i.AppUserId, i.PsaConnectionId))
+            .ToDictionary(g => g.Key, g => g.First().ExternalTechnicianId);
+        var firstLogin = links
             .GroupBy(i => i.AppUserId)
             .ToDictionary(g => g.Key, g => g.First().ExternalTechnicianId);
         // The reverse direction too, so PSA-observed work also lands on a portal person where we
         // know who they are. Without it a linked technician's synced activity and portal activity
         // would aggregate on different axes and never add up to one number.
-        var userByExternalId = externalIdByUser
-            .GroupBy(i => i.ExternalTechnicianId)
+        var userOnConnection = links
+            .GroupBy(i => (i.PsaConnectionId, i.ExternalTechnicianId))
             .ToDictionary(g => g.Key, g => g.First().AppUserId);
+        // An event that names no connection can still be placed when only one person in its own
+        // organization holds that id. Two people with it - on two accounts - is a guess, so nobody.
+        var onlyUserInOrganization = links
+            .GroupBy(i => (i.MspOrganizationId, i.ExternalTechnicianId))
+            .Where(g => g.Select(i => i.AppUserId).Distinct().Count() == 1)
+            .ToDictionary(g => g.Key, g => g.First().AppUserId);
+
+        string? LoginOf(Guid user, Guid? connection)
+            => connection is { } c && loginOnConnection.TryGetValue((user, c), out var there)
+                ? there
+                : firstLogin.GetValueOrDefault(user);
+
+        Guid? UserOf(Guid organization, Guid? connection, string login)
+            => connection is { } c
+                ? userOnConnection.TryGetValue((c, login), out var linked) ? linked : null
+                : onlyUserInOrganization.TryGetValue((organization, login), out var only) ? only : null;
 
         var events = (await db.ActivityEvents.IgnoreQueryFilters().AsNoTracking()
             .Where(e => e.OccurredAt >= rangeStart && e.OccurredAt < rangeEndExclusive)
             .Select(e => new
             {
                 e.MspOrganizationId, e.OccurredAt, e.Source, e.ActorUserId, e.ActorExternalId,
-                e.ClientCompanyId, e.DurationSeconds,
+                e.ClientCompanyId, e.DurationSeconds, e.PsaConnectionId,
             })
             .ToListAsync(ct))
             .Where(e => targetDays.Contains(DateOnly.FromDateTime(e.OccurredAt.UtcDateTime.Date)))
@@ -116,11 +142,11 @@ public sealed class ActivityRollupService(DeskDbContext db, TimeProvider clock) 
                 Day = DateOnly.FromDateTime(e.OccurredAt.UtcDateTime.Date),
                 e.Source,
                 Actor = e.ActorExternalId
-                    ?? (e.ActorUserId is { } uid ? actorLookup.GetValueOrDefault(uid) : null),
+                    ?? (e.ActorUserId is { } uid ? LoginOf(uid, e.PsaConnectionId) : null),
                 // Whoever acted, as a portal person: the event's own user if it had one, else the
                 // portal account behind the PSA id it carried.
                 ActorUser = e.ActorUserId
-                    ?? (e.ActorExternalId is { } ext ? userByExternalId.GetValueOrDefault(ext) : null),
+                    ?? (e.ActorExternalId is { } ext ? UserOf(e.MspOrganizationId, e.PsaConnectionId, ext) : null),
                 e.ClientCompanyId,
             })
             .Select(g => new ActivityDailyFact

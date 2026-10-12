@@ -54,8 +54,8 @@ public sealed class PollingSyncService(
         {
             scope.ServiceProvider.GetRequiredService<TenantContext>().SetPlatformScope();
             var db = scope.ServiceProvider.GetRequiredService<DeskDbContext>();
-            connectionIds = await db.PsaConnections
-                .Where(c => c.IsEnabled && c.Status != ConnectionStatus.Failed)
+            // Which ones is one rule, kept with the sync engine: SyncSchedule.Due.
+            connectionIds = await Desk.Infrastructure.Sync.SyncSchedule.Due(db.PsaConnections)
                 .Select(c => c.Id)
                 .ToListAsync(ct);
         }
@@ -73,6 +73,12 @@ public sealed class PollingSyncService(
                         "Synced {Connection}: {Fetched} tickets ({Created} new, {Updated} updated), {Notes} notes (+{NotesRemoved} removed), {Files} files (+{FilesRemoved} removed)",
                         connectionId, result.Fetched, result.Created, result.Updated,
                         result.Notes, result.NotesRemoved, result.Attachments, result.AttachmentsRemoved);
+            }
+            catch (Desk.Application.Common.ConflictException)
+            {
+                // A run already has this connection - someone pressed "Sync now", or an earlier run
+                // of this worker is still going. One at a time; this cycle moves on.
+                logger.LogDebug("Scheduled sync skipped for connection {Connection}: a run is already in progress", connectionId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
