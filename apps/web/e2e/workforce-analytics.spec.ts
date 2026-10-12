@@ -1,4 +1,5 @@
-import { test, expect, type APIResponse, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { ask } from './support/ask';
 
 /**
  * Phase 7 through the browser: the workforce analytics dashboard with planned and recorded work on
@@ -14,14 +15,6 @@ import { test, expect, type APIResponse, type Page } from '@playwright/test';
  */
 test.describe.configure({ timeout: 180_000 });
 
-async function ask(send: () => Promise<APIResponse>): Promise<APIResponse> {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const res = await send();
-    if (res.status() !== 429) return res;
-    await new Promise((r) => setTimeout(r, 10_000));
-  }
-  return send();
-}
 const stamp = () => Date.now().toString().slice(-7);
 const api = (path: string) => `/api/bff/api${path}`;
 /** My day plans today at 01-02 and 13-15 (Chromium), 05-06 and 17-19 (Firefox), 09-10 and 21-23 (WebKit); these three hours per browser are free of all of them. */
