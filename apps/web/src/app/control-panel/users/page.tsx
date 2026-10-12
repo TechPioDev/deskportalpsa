@@ -6,6 +6,7 @@ import {
   Users, UserPlus, ShieldCheck, User as UserIcon, CheckCircle2, AlertTriangle, Info,
   SlidersHorizontal, Power, X, Send,
 } from 'lucide-react';
+import { CopyLinkField } from '@/components/CopyLinkField';
 import { api, type Capabilities, type ClientUser } from '@/lib/api';
 
 // Delegable sections a company administrator can grant to a user (Users management stays admin-only).
@@ -128,8 +129,10 @@ function InviteCard({ onDone }: { onDone: () => void }) {
           <p className="inline-flex items-center gap-1 text-green-600 dark:text-green-400"><CheckCircle2 size={12} />
             {invite.data.invitation.mailed ? `Invitation e-mailed to ${invite.data.user.email}. They choose a password through it and are in.` : `User added. The invitation could not be e-mailed (${invite.data.invitation.mailError ?? 'no mail account'}); send them this link instead:`}
           </p>
-          <input readOnly value={invite.data.invitation.link} aria-label="Invitation link" onFocus={(e) => e.currentTarget.select()}
-            className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-[11px]" />
+          <div className="flex flex-wrap items-center gap-2">
+            <CopyLinkField value={invite.data.invitation.link} label="Invitation link"
+              inputClassName="min-w-[220px] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-[11px]" />
+          </div>
         </div>
       )}
       <p className="mt-2 flex items-center gap-1.5 text-xs text-[var(--faint)]"><Info size={12} /> Administrators can manage everything for your account. Everyone else gets only the sections you grant.</p>

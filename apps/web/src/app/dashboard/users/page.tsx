@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImportStaffDrawer } from '@/components/ImportStaffDrawer';
 import { ViewAsPicker } from '@/components/ViewAs';
+import { CopyLinkField } from '@/components/CopyLinkField';
 import {
-  UserPlus, Search, X, MailQuestion, Power, MoreVertical, Send, Link2,
+  UserPlus, Search, X, MailQuestion, Power, MoreVertical, Send,
   Users, UserCheck, Crown, Trash2, Copy, Pencil,
   FileSpreadsheet,
 } from 'lucide-react';
@@ -600,10 +601,7 @@ export default function UsersPage() {
       {inviteResult && (
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-sm">
           <span>{inviteResult.mailed ? `Invitation e-mailed to ${inviteResult.email}.` : `The invitation for ${inviteResult.email} could not be e-mailed: ${inviteResult.error ?? 'no mail account'}.`} The link, shown once:</span>
-          <input readOnly value={inviteResult.link} aria-label="Invitation link" onFocus={(e) => e.currentTarget.select()}
-            className="min-w-[280px] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-xs" />
-          <button onClick={() => { void navigator.clipboard?.writeText(inviteResult.link); }}
-            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg)]"><Link2 size={12} /> Copy</button>
+          <CopyLinkField value={inviteResult.link} label="Invitation link" />
           <button onClick={() => setInviteResult(null)} aria-label="Dismiss" className="text-[var(--muted)] hover:text-[var(--fg)]"><X size={14} /></button>
         </div>
       )}
