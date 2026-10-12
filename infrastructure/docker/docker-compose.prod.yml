@@ -73,6 +73,12 @@ services:
       Bootstrap__OrganizationName: ${BOOTSTRAP_ORG_NAME:?}
       Bootstrap__OrganizationSlug: ${BOOTSTRAP_ORG_SLUG:?}
       Connectors__BlockPrivateEgress: "true"
+      # Sign-in invitations and password resets: the realm's `desk-admin` client, whose service
+      # account may create users and set passwords (realm-management: manage-users, nothing more).
+      # Empty, invitations can be made and mailed but the page at a link says it cannot be
+      # accepted yet. Set KEYCLOAK_ADMIN_CLIENT_SECRET in .env.prod on the server only.
+      Keycloak__AdminClientId: ${KEYCLOAK_ADMIN_CLIENT_ID:-desk-admin}
+      Keycloak__AdminClientSecret: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
       # The team's own boards (internal work, and RMM alerts). Set to false in .env.prod to switch
       # the feature off without a rebuild: the endpoints and pages disappear, the data stays.
       Features__InternalBoards: ${FEATURES_INTERNAL_BOARDS:-true}
@@ -87,7 +93,7 @@ services:
       Email__Smtp__Username: ${SMTP_USERNAME:-}
       Email__Smtp__Password: ${SMTP_PASSWORD:-}
       Email__Smtp__From: ${SMTP_FROM:-}
-      Email__Smtp__FromName: ${SMTP_FROM_NAME:-Desk Portal}
+      Email__Smtp__FromName: ${SMTP_FROM_NAME:-PioManage}
     volumes: ["desk_attachments:/data/attachments"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -116,7 +122,7 @@ services:
       Email__Smtp__Username: ${SMTP_USERNAME:-}
       Email__Smtp__Password: ${SMTP_PASSWORD:-}
       Email__Smtp__From: ${SMTP_FROM:-}
-      Email__Smtp__FromName: ${SMTP_FROM_NAME:-Desk Portal}
+      Email__Smtp__FromName: ${SMTP_FROM_NAME:-PioManage}
     volumes: ["desk_attachments:/data/attachments"]
     depends_on:
       postgres: { condition: service_healthy }

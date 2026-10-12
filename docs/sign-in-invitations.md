@@ -67,11 +67,25 @@ PioManage needs leave to create users in Keycloak. In the Keycloak console, real
 2. On the new client, **Service accounts roles → Assign role → Filter by clients →
    `realm-management` → `manage-users`**. Assign. (Only that role; it is all the portal calls.)
 3. **Credentials → Client secret**: copy it.
-4. On the server, in the API's environment: `Keycloak__AdminClientId=desk-admin` (the default,
-   may be omitted) and `Keycloak__AdminClientSecret=<the secret>`. `Keycloak__Authority` is the
-   issuer the API already validates tokens against. Restart the API.
-5. `Portal__PublicUrl=https://piomanage.com` is where links point; it falls back to
-   `Attachments__PublicBaseUrl`, which production already has.
+4. On the server, add one line to `/opt/deskportal/infrastructure/docker/.env.prod` (type it
+   there; never send the secret to anyone or paste it in a chat):
+
+   ```
+   KEYCLOAK_ADMIN_CLIENT_SECRET=<the secret>
+   ```
+
+   The production compose file hands it to the API as `Keycloak__AdminClientSecret`; the client
+   ID defaults to `desk-admin` (`KEYCLOAK_ADMIN_CLIENT_ID` changes it). The issuer is the one the
+   API already validates tokens against.
+5. Run the deploy script, which recreates the API with the new setting:
+   `/opt/deskportal/infrastructure/scripts/deploy-vps.sh`.
+
+Nothing has to be set for the links: they point at `Portal__PublicUrl`, which falls back to
+`Attachments__PublicBaseUrl`, and production already sets that to the public address.
+
+To check it took: `docker inspect` on the API container lists `Keycloak__AdminClientSecret`
+among its settings, and the page at a fresh invitation link offers the password form instead of
+saying it cannot be accepted yet.
 
 Until the secret is set, invitations can be made and mailed, but the page at a link says it
 cannot be accepted yet, and nothing is sent to Keycloak. Local mode runs no Keycloak and uses an
