@@ -67,7 +67,7 @@ The employee's day, from the work that reaches them to the comparison with the p
           Finish the ticket   (separate, optional: the existing status change, after the stop)
 ```
 
-Three things the picture leaves out, each covered below:
+Four things the picture leaves out, each covered below:
 
 - **Stop and Finish are two different acts.** Stop ends the clock and logs the time; it never changes
   the ticket. Finish is the existing status change (resolve, with its review and resolution rules),
@@ -79,6 +79,10 @@ Three things the picture leaves out, each covered below:
 - **Paused time is not in the picture because it is not in the count.** Only the clock's segments
   are actual time; a pause, with or without a reason, adds nothing
   ([Pause, resume, waiting](#pause-resume-waiting)). And nothing here is attendance.
+- **Time typed straight into the PSA is not drawn, and it is counted.** The picture is what a
+  person does here. Since Phase 9, time entered in the PSA itself is in the day's figure too, for
+  the person whose PSA login it is under; under a login linked to nobody it is in no person's day
+  ([Actual time: the one rule](#actual-time-the-one-rule)).
 
 ## The time architecture that already existed
 
