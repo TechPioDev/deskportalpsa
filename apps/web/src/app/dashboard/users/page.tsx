@@ -1,13 +1,14 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImportStaffDrawer } from '@/components/ImportStaffDrawer';
 import { ViewAsPicker } from '@/components/ViewAs';
+import { CopyLinkField } from '@/components/CopyLinkField';
 import {
-  UserPlus, Search, X, MailQuestion, Power, MoreVertical, Send, Link2,
+  UserPlus, Search, X, MailQuestion, Power, MoreVertical, Send,
   Users, UserCheck, Crown, Trash2, Copy, Pencil,
   FileSpreadsheet,
 } from 'lucide-react';
@@ -109,14 +110,42 @@ function RowMenu({ open, onToggle, onClose, isActive, onManage, onToggleActive, 
   open: boolean; onToggle: () => void; onClose: () => void; isActive: boolean;
   onManage: () => void; onToggleActive: () => void; onCopy: () => void; onDelete: () => void; onInvite?: () => void;
 }) {
+  // The list sits in a box that scrolls sideways on a narrow screen, and such a box also cuts off
+  // whatever hangs below it. A menu placed inside the row was cut off on the last rows and hidden
+  // altogether on a list of one (a search for one person): "Send invitation" could not be seen.
+  // So the menu is placed against the window, from where its button is, and opens upwards when
+  // there is no room below.
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open) { setPlace(null); return; }
+    const put = () => {
+      if (!button.current || !menu.current) return;
+      const at = button.current.getBoundingClientRect();
+      const height = menu.current.offsetHeight;
+      const width = menu.current.offsetWidth;
+      const roomBelow = window.innerHeight - at.bottom;
+      const below = roomBelow >= height + 8 || at.top < height + 8;
+      setPlace({ top: below ? at.bottom + 4 : at.top - height - 4, left: Math.max(8, at.right - width) });
+    };
+    put();
+    // Fixed to the window, the menu would stay behind when the page moves: it follows its button.
+    window.addEventListener('scroll', put, true);
+    window.addEventListener('resize', put);
+    return () => { window.removeEventListener('scroll', put, true); window.removeEventListener('resize', put); };
+  }, [open]);
+
   return (
     <div className="relative inline-block text-left"
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) onClose(); }}>
-      <button onClick={onToggle} aria-label="Actions" className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
+      <button ref={button} onClick={onToggle} aria-label="Actions" className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--fg)]">
         <MoreVertical size={16} />
       </button>
       {open && (
-        <div className="absolute right-0 z-10 mt-1 w-56 rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 text-sm shadow-lg">
+        <div ref={menu} role="menu" aria-label="Actions for this person"
+          style={place ? { top: place.top, left: place.left } : { top: 0, left: 0, visibility: 'hidden' }}
+          className="fixed z-50 w-56 rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 text-sm shadow-lg">
           {onInvite && (
             <button onClick={onInvite} className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--bg)]">
               <Send size={13} /> Send invitation
@@ -572,10 +601,7 @@ export default function UsersPage() {
       {inviteResult && (
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-sm">
           <span>{inviteResult.mailed ? `Invitation e-mailed to ${inviteResult.email}.` : `The invitation for ${inviteResult.email} could not be e-mailed: ${inviteResult.error ?? 'no mail account'}.`} The link, shown once:</span>
-          <input readOnly value={inviteResult.link} aria-label="Invitation link" onFocus={(e) => e.currentTarget.select()}
-            className="min-w-[280px] flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-xs" />
-          <button onClick={() => { void navigator.clipboard?.writeText(inviteResult.link); }}
-            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg)]"><Link2 size={12} /> Copy</button>
+          <CopyLinkField value={inviteResult.link} label="Invitation link" />
           <button onClick={() => setInviteResult(null)} aria-label="Dismiss" className="text-[var(--muted)] hover:text-[var(--fg)]"><X size={14} /></button>
         </div>
       )}
