@@ -21,4 +21,16 @@ public class TicketFollower : TenantEntity
 
     /// <summary>Who put them on it, which is usually somebody else asking them to look.</summary>
     public Guid? AddedByUserId { get; set; }
+
+    /// <summary>
+    /// When the question "do they know they were put on it?" was settled: the message was sent, or
+    /// none was owed (they followed it themselves). Null while it is still to be looked at.
+    /// </summary>
+    public DateTimeOffset? AddedNotifiedAt { get; set; }
+
+    /// <summary>
+    /// Everything on the ticket up to this moment has been reported to them. Null means "from when
+    /// they started following": what happened before that is not news to a new follower.
+    /// </summary>
+    public DateTimeOffset? NotifiedThrough { get; set; }
 }

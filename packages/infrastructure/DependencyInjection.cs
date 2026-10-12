@@ -204,6 +204,8 @@ public static class DependencyInjection
         services.AddScoped<Desk.Application.Identity.IInvitationService, Desk.Infrastructure.Identity.InvitationService>();
         services.AddScoped<Desk.Application.Identity.IEmailTemplateService, Desk.Infrastructure.Email.EmailTemplateService>();
         services.AddSingleton<Desk.Infrastructure.Identity.InvitationReminderRunner>();
+        services.AddScoped<Desk.Infrastructure.Tickets.TicketFollowerNotifier>();
+        services.AddSingleton<Desk.Infrastructure.Tickets.TicketFollowerNotifyRunner>();
         services.AddScoped<Desk.Application.Common.IEmailSettingsService, Desk.Infrastructure.Email.EmailSettingsService>();
         services.AddScoped<Desk.Application.ControlPanel.IReportDelivery, Desk.Infrastructure.Email.EmailReportDelivery>();
         services.AddScoped<Desk.Application.ControlPanel.IScheduledReportRunner, Desk.Infrastructure.ControlPanel.ScheduledReportRunner>();

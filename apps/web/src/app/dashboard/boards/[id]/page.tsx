@@ -356,6 +356,8 @@ function RaiseForm({ boardId, members, onClose, onRaised }: {
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('NORMAL');
   const [assignee, setAssignee] = useState('');
+  // Colleagues to keep informed. Not a second assignee: they are told, they are not given the work.
+  const [informed, setInformed] = useState<string[]>([]);
   const [client, setClient] = useState('');
   const [topicId, setTopicId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
@@ -402,6 +404,8 @@ function RaiseForm({ boardId, members, onClose, onRaised }: {
       departmentId: departmentId || null,
       source: source || null,
       dueAt: dueAt ? new Date(dueAt).toISOString() : null,
+      // The assignee hears about their own ticket anyway; the server drops them from this list too.
+      followerUserIds: informed.filter((id) => id !== assignee),
     }),
     onSuccess: onRaised,
   });
@@ -449,6 +453,32 @@ function RaiseForm({ boardId, members, onClose, onRaised }: {
           {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </label>
+      <div className="space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2" role="group" aria-label="Keep informed">
+        <label htmlFor="keep-informed">Keep informed (CC)</label>
+        {informed.filter((id) => id !== assignee).length > 0 && (
+          <ul className="flex flex-wrap gap-1.5" aria-label="People kept informed">
+            {informed.filter((id) => id !== assignee).map((id) => {
+              const name = people.find((p) => p.id === id)?.name ?? 'Someone';
+              return (
+                <li key={id} className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--bg)] py-0.5 pl-2.5 pr-1 text-xs font-normal text-[var(--fg)]">
+                  {name}
+                  <button type="button" onClick={() => setInformed((list) => list.filter((x) => x !== id))}
+                    aria-label={`Stop keeping ${name} informed`}
+                    className="rounded-full px-1 text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--fg)]">×</button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <select id="keep-informed" value="" className={field}
+          onChange={(e) => { const id = e.target.value; if (id) setInformed((list) => (list.includes(id) ? list : [...list, id])); }}>
+          <option value="">{informed.length === 0 ? 'Nobody else — add a colleague…' : 'Add another colleague…'}</option>
+          {people.filter((p) => p.id !== assignee && !informed.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <p className="font-normal text-[var(--faint)]">
+          They get an e-mail saying you added them, and another when somebody replies or the ticket is finished. The ticket is not assigned to them.
+        </p>
+      </div>
       <label className="space-y-1 text-xs font-medium text-[var(--muted)]">
         Priority
         <select value={priority} onChange={(e) => setPriority(e.target.value)} className={field}>

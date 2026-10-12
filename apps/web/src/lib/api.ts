@@ -2237,6 +2237,8 @@ export type InternalTicketInput = {
   clientCompanyId?: string | null; assignedAppUserId?: string | null; dueAt?: string | null;
   /** What it is about; fills in department, priority, assignee and due date unless stated. */
   boardTopicId?: string | null; departmentId?: string | null; source?: string | null;
+  /** Colleagues to keep informed without giving them the ticket. Each becomes a follower. */
+  followerUserIds?: string[];
 };
 
 export const BoardTopicSchema = z.object({
