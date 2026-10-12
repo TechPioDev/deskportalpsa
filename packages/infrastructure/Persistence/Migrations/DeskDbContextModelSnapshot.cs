@@ -3465,6 +3465,21 @@ namespace Desk.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("DeviceId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("DueDateExtendedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DueDateExtendedByName")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("DueDateExtendedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DueDateExtensionReason")
+                        .HasColumnType("text");
+
+                    b.Property<int>("DueDateExtensions")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ExternalTicketId")
                         .HasColumnType("text");
 
@@ -3493,6 +3508,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("Origin")
                         .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("OriginalSlaDueAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PortalCategory")
                         .HasColumnType("text");

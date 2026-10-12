@@ -49,8 +49,12 @@ spec `due-date.spec.ts`.
 ## Not done here
 
 - Bringing a due date forward, or clearing one. The action is an extension.
-- Queueing the write for when the PSA is away. Phase 9's outbound queue (slice 19) is not merged
-  yet; when it is, this becomes one more kind of change it can hold.
+- Queueing the write for when the PSA is away. Phase 9's outbound queue (live since 11 October
+  2026) holds status changes and notes; it does not hold a due date. An extension made while the
+  PSA cannot be reached is refused with the PSA's error and nothing is kept, so the person asks
+  again later. That is deliberate for now: a queued date would be shown here before the PSA holds
+  it, which is the divergence "provider first" exists to prevent. It can become one more kind of
+  queued change if the owner wants it.
 - The reports do not yet single out extended tickets (see Figures).
 - The real Autotask and ConnectWise are not exercised: the field names come from their
   documentation and the fakes. Part of the blocked real-PSA certification.
