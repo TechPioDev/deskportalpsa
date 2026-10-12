@@ -19,7 +19,8 @@ namespace Desk.Api.Controllers;
 public sealed class ControlPanelController(
     ICurrentUser user,
     IClientAccessResolver accessResolver,
-    IControlPanelService svc) : ControllerBase
+    IControlPanelService svc,
+    Desk.Application.Identity.IInvitationService invitations) : ControllerBase
 {
     [HttpGet("capabilities")]
     public async Task<IActionResult> Capabilities(CancellationToken ct)
@@ -41,8 +42,22 @@ public sealed class ControlPanelController(
 
     [HttpPost("users")]
     public async Task<IActionResult> InviteUser([FromBody] InviteUserRequest req, CancellationToken ct)
-        => Ok(await svc.InviteUserAsync(await AccessAsync(ct),
-            new InviteClientUserInput(req.Email, req.DisplayName, req.IsCompanyAdministrator), ct));
+    {
+        // The row first, then the mail: the person exists in the account whether or not the mail goes.
+        var created = await svc.InviteUserAsync(await AccessAsync(ct),
+            new InviteClientUserInput(req.Email, req.DisplayName, req.IsCompanyAdministrator), ct);
+        var sent = await invitations.InviteClientAsync(created.Id, ct);
+        return Ok(new { user = created, invitation = sent });
+    }
+
+    /// <summary>Sends the invitation again (a new link; the old one stops working). Only for a user of this company.</summary>
+    [HttpPost("users/{id:guid}/invite")]
+    public async Task<IActionResult> ReinviteUser(Guid id, CancellationToken ct)
+    {
+        var access = await AccessAsync(ct);
+        if (!(await svc.ListUsersAsync(access, ct)).Any(u => u.Id == id)) throw new Desk.Application.Common.NotFoundException("User");
+        return Ok(await invitations.InviteClientAsync(id, ct));
+    }
 
     [HttpPost("users/{id:guid}/active")]
     public async Task<IActionResult> SetUserActive(Guid id, [FromBody] SetActiveRequest req, CancellationToken ct)

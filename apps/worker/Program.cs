@@ -29,6 +29,7 @@ builder.Services.AddHostedService<PollingSyncService>();
 builder.Services.AddHostedService<RequestedSyncService>();
 builder.Services.AddHostedService<OutboundQueueService>();
 builder.Services.AddHostedService<ScheduledReportService>();
+builder.Services.AddHostedService<InvitationReminderService>();
 builder.Services.AddHostedService<StaffReportBackgroundService>();
 builder.Services.AddHostedService<AttentionDigestBackgroundService>();
 builder.Services.AddHostedService<RecurringTicketBackgroundService>();
