@@ -1,4 +1,5 @@
-import { test, expect, type APIResponse, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { ask } from './support/ask';
 
 /**
  * Phase 6 through the browser: My Day with planned work, the clock (start, pause, resume, a reload
@@ -12,14 +13,6 @@ import { test, expect, type APIResponse, type Page } from '@playwright/test';
  */
 test.describe.configure({ timeout: 180_000 });
 
-async function ask(send: () => Promise<APIResponse>): Promise<APIResponse> {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const res = await send();
-    if (res.status() !== 429) return res;
-    await new Promise((r) => setTimeout(r, 10_000));
-  }
-  return send();
-}
 const stamp = () => Date.now().toString().slice(-7);
 const api = (path: string) => `/api/bff/api${path}`;
 /** The three browsers share one account and the same "today": each plans its own hours, so nothing overlaps. */

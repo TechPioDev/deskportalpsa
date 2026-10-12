@@ -1,16 +1,5 @@
-import { test, expect, type APIResponse, type Page } from '@playwright/test';
-
-// Every test signs in as the same user, and the API allows each user 300 requests a minute, so a
-// busy parallel run can be told 429 "too many requests". That is the limiter working, not what is
-// being tested here: wait for the window to reset and ask again.
-async function ask(send: () => Promise<APIResponse>): Promise<APIResponse> {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const res = await send();
-    if (res.status() !== 429) return res;
-    await new Promise((r) => setTimeout(r, 10_000));
-  }
-  return send();
-}
+import { test, expect, type Page } from '@playwright/test';
+import { ask } from './support/ask';
 
 test.describe.configure({ timeout: 180_000 });
 

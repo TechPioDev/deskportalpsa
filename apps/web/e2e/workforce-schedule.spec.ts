@@ -1,4 +1,5 @@
-import { test, expect, type APIResponse, type Locator, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
+import { ask } from './support/ask';
 
 /**
  * The team scheduler through the browser: the day board with its rows, capacity, free time and
@@ -10,15 +11,6 @@ import { test, expect, type APIResponse, type Locator, type Page } from '@playwr
  * Each browser plans on its own days.
  */
 test.describe.configure({ timeout: 180_000 });
-
-async function ask(send: () => Promise<APIResponse>): Promise<APIResponse> {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const res = await send();
-    if (res.status() !== 429) return res;
-    await new Promise((r) => setTimeout(r, 10_000));
-  }
-  return send();
-}
 
 const stamp = () => Date.now().toString().slice(-7);
 const api = (path: string) => `/api/bff/api${path}`;

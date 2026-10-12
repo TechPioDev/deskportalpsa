@@ -1,4 +1,5 @@
-import { test, expect, type APIResponse, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { ask } from './support/ask';
 
 /**
  * Phase 8 through the browser: management insights (the capacity forecast, what needs attention,
@@ -13,14 +14,6 @@ import { test, expect, type APIResponse, type Page } from '@playwright/test';
  */
 test.describe.configure({ timeout: 180_000 });
 
-async function ask(send: () => Promise<APIResponse>): Promise<APIResponse> {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const res = await send();
-    if (res.status() !== 429) return res;
-    await new Promise((r) => setTimeout(r, 10_000));
-  }
-  return send();
-}
 const stamp = () => Date.now().toString().slice(-7);
 const api = (path: string) => `/api/bff/api${path}`;
 const browserOffset = () => ({ chromium: 110, firefox: 120, webkit: 130 } as Record<string, number>)[test.info().project.name] ?? 140;
