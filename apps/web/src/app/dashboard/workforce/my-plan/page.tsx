@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useCallback, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ClipboardList } from 'lucide-react';
@@ -26,6 +26,10 @@ function MyPlan() {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(query.get('date') ?? '') ? query.get('date') : null;
   const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
   const canPlan = !!me?.permissions.includes('schedule.manage');
+  // The unscheduled work waits for the plan above it. Drawn sooner, its "Internal work" button
+  // appeared and then dropped by the height of the plan, and a click made in between missed.
+  const [planSettled, setPlanSettled] = useState(false);
+  const onPlanSettled = useCallback(() => setPlanSettled(true), []);
 
   return (
     <div className="space-y-5">
@@ -38,8 +42,8 @@ function MyPlan() {
       {me && !me.userId && <p className="text-sm text-[var(--muted)]">This sign-in is not a staff account, so it has no plan.</p>}
       {me?.userId && (
         <>
-          <PlanAgenda userId={me.userId} viewerId={me.userId} initialDate={date} />
-          <UnscheduledWorkList viewerId={me.userId} canPlan={canPlan} />
+          <PlanAgenda userId={me.userId} viewerId={me.userId} initialDate={date} onSettled={onPlanSettled} />
+          {planSettled && <UnscheduledWorkList viewerId={me.userId} canPlan={canPlan} />}
         </>
       )}
     </div>

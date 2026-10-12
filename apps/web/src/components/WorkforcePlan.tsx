@@ -482,7 +482,15 @@ function agenda(day: DayCapacity, allocations: WorkAllocation[]): AgendaItem[] {
  * between; and the capacity sums. The planned person moves and removes what they may; whoever
  * schedules others does the rest.
  */
-export function PlanAgenda({ userId, viewerId, initialDate }: { userId: string; viewerId: string | null; initialDate?: string | null }) {
+export function PlanAgenda({ userId, viewerId, initialDate, onSettled }: {
+  userId: string; viewerId: string | null; initialDate?: string | null;
+  /**
+   * Called once the plan has first arrived or failed: from then on this takes the room it will
+   * keep. While it loads it is one line of text, so anything drawn under it before this would be
+   * pushed down a moment later, out from under a pointer already on its way.
+   */
+  onSettled?: () => void;
+}) {
   const qc = useQueryClient();
   const [picked, setPicked] = useState<string | null>(initialDate ?? null);
   // Without a chosen day the server answers with the person's own "today"; from then on one day at a time.
@@ -496,6 +504,8 @@ export function PlanAgenda({ userId, viewerId, initialDate }: { userId: string; 
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['plan'] }); qc.invalidateQueries({ queryKey: ['capacity'] }); qc.invalidateQueries({ queryKey: ['ticket-plan'] }); },
   });
   useEffect(() => { setPicked(initialDate ?? null); }, [userId, initialDate]);
+  const settled = !!plan || !!error;
+  useEffect(() => { if (settled) onSettled?.(); }, [settled, onSettled]);
 
   if (error) return <p role="alert" className="text-sm text-red-600 dark:text-red-400">{(error as Error).message}</p>;
   if (!date || !plan) return <p className="text-sm text-[var(--muted)]">Loading the plan…</p>;
