@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { ask } from './support/ask';
 
 /**
  * A client that is in no PSA, added by hand so that a ticket on a board can say who the work
@@ -11,7 +12,7 @@ import { test, expect, type Page } from '@playwright/test';
 const stamp = () => `${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 90 + 10)}`;
 
 async function board(page: Page, s: string) {
-  const res = await page.request.post('/api/bff/api/boards', { data: { name: `Projects ${s}`, key: `L${s}`.slice(0, 8).toUpperCase() } });
+  const res = await ask(() => page.request.post('/api/bff/api/boards', { data: { name: `Projects ${s}`, key: `L${s}`.slice(0, 8).toUpperCase() } }));
   expect(res.ok()).toBeTruthy();
   return await res.json() as { id: string };
 }
@@ -41,6 +42,10 @@ test('a client that is not in the list is added from the ticket form and the tic
   await form.getByRole('button', { name: 'Raise ticket' }).click();
   const row = page.locator('tr').filter({ hasText: `NinjaRMM implementation ${s}` });
   await row.getByRole('link', { name: `NinjaRMM implementation ${s}` }).click();
+  // On the ticket itself. The board's own row already shows the client's name, so the page is
+  // waited for first: without that the next step set off while this one was still opening.
+  await page.waitForURL(/\/dashboard\/tickets\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole('heading', { name: `NinjaRMM implementation ${s}` })).toBeVisible();
   await expect(page.getByText(name).first()).toBeVisible();
 
   // Adding the same name again is refused, in words that say why.
@@ -55,8 +60,8 @@ test('a client that is not in the list is added from the ticket form and the tic
 test('the clients added by hand are renamed, retired and brought back from the Boards page', async ({ page }) => {
   const s = stamp();
   const b = await board(page, s);
-  const made = await (await page.request.post('/api/bff/api/boards/clients/local', { data: { name: `Kiran Traders ${s}`, isActive: true } })).json() as { id: string };
-  await page.request.post('/api/bff/api/boards/tickets', { data: { boardId: b.id, title: `Printer setup ${s}`, description: null, clientCompanyId: made.id } });
+  const made = await (await ask(() => page.request.post('/api/bff/api/boards/clients/local', { data: { name: `Kiran Traders ${s}`, isActive: true } }))).json() as { id: string };
+  await ask(() => page.request.post('/api/bff/api/boards/tickets', { data: { boardId: b.id, title: `Printer setup ${s}`, description: null, clientCompanyId: made.id } }));
 
   await page.goto('/dashboard/boards');
   const panel = page.getByRole('region', { name: 'Clients not in a PSA' });
@@ -74,10 +79,10 @@ test('the clients added by hand are renamed, retired and brought back from the B
   await expect(row()).toContainText('Retired');
 
   // Retired: not offered on a new ticket.
-  const offered = async () => (await (await page.request.get('/api/bff/api/boards/clients')).json() as { id: string }[]).some((c) => c.id === made.id);
+  const offered = async () => (await (await ask(() => page.request.get('/api/bff/api/boards/clients'))).json() as { id: string }[]).some((c) => c.id === made.id);
   expect(await offered()).toBe(false);
   // And a ticket cannot be raised for it by asking the server directly.
-  const refused = await page.request.post('/api/bff/api/boards/tickets', { data: { boardId: b.id, title: `Second job ${s}`, description: null, clientCompanyId: made.id } });
+  const refused = await ask(() => page.request.post('/api/bff/api/boards/tickets', { data: { boardId: b.id, title: `Second job ${s}`, description: null, clientCompanyId: made.id } }));
   expect(refused.status()).toBe(400);
   expect(await refused.text()).toContain('has been retired');
 
