@@ -60,6 +60,10 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
   const { id } = use(params);
   const qc = useQueryClient();
   const [raising, setRaising] = useState(false);
+  // "New ticket" elsewhere sends a member of staff here with ?new=1: the form is what they came for.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('new') === '1') setRaising(true);
+  }, []);
   const [mineOnly, setMineOnly] = useState(false);
   const [department, setDepartment] = useState('');
 
