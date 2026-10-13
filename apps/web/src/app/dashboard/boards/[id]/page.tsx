@@ -466,6 +466,7 @@ function RaiseForm({ boardId, members, canAddClients, onClose, onRaised }: {
           <option value="">Leave for anyone to pick up</option>
           {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+        <span className="block font-normal text-[var(--faint)]">They get an e-mail saying the ticket is theirs.</span>
       </label>
       <div className="space-y-1 text-xs font-medium text-[var(--muted)] sm:col-span-2" role="group" aria-label="Keep informed">
         <label htmlFor="keep-informed">Keep informed (CC)</label>

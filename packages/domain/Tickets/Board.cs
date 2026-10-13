@@ -133,4 +133,11 @@ public class TicketAssignment : TenantEntity
 
     /// <summary>What the handover said, if anything.</summary>
     public string? Note { get; set; }
+
+    /// <summary>
+    /// When the turn that tells people about assignments dealt with this one: it mailed the person
+    /// the ticket went to, or decided there was nobody to tell (they took it themselves, it was
+    /// passed on again first, it went back to the board). Empty means that turn has not seen it.
+    /// </summary>
+    public DateTimeOffset? NotifiedAt { get; set; }
 }

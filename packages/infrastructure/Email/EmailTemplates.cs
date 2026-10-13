@@ -27,6 +27,7 @@ public static class EmailTemplates
     public const string PasswordReset = "user.password_reset";
     public const string FollowerAdded = "ticket.follower_added";
     public const string FollowerNews = "ticket.follower_news";
+    public const string TicketAssigned = "ticket.assigned";
 
     private static readonly string[] Person = ["user.name", "user.first_name", "user.email", "organization.name", "product", "product_url"];
     private static readonly string[] WithLink = [.. Person, "link", "expires", "invited_by"];
@@ -63,6 +64,10 @@ public static class EmailTemplates
             "News on {{ticket.number}}: {{ticket.title}}",
             "Hi {{user.first_name}},\n\nThere is news on the ticket {{ticket.number}}, \"{{ticket.title}}\", which you follow:\n\n{{updates}}\n\nTo stop these e-mails, open the ticket and press Unfollow.",
             "Open the ticket", [.. Follower, "updates"]),
+        new(TicketAssigned, "Ticket: assigned to you", "Sent to a colleague when somebody else assigns a ticket to them, as it is raised or later.",
+            "{{assigned_by}} assigned {{ticket.number}} to you",
+            "Hi {{user.first_name}},\n\n{{assigned_by}} assigned the ticket {{ticket.number}}, \"{{ticket.title}}\", to you. It is yours to work on now.\n\nOpen it to see what is needed and what has been done so far.",
+            "Open the ticket", [.. Follower, "assigned_by"]),
     ];
 
     public static EmailTemplateDefinition? Find(string key) => All.FirstOrDefault(t => t.Key == key);
@@ -89,7 +94,7 @@ public static class EmailTemplates
             ["organization.name"] = organizationName, ["product"] = Product, ["product_url"] = productUrl,
             ["link"] = productUrl.TrimEnd('/') + "/invite/example-link-not-real", ["expires"] = "Tuesday 14 October 2026, 09:00",
             ["invited_by"] = "Priya Nair",
-            ["ticket.number"] = "INT-000123", ["ticket.title"] = "Replace the office router", ["added_by"] = "Priya Nair",
+            ["ticket.number"] = "INT-000123", ["ticket.title"] = "Replace the office router", ["added_by"] = "Priya Nair", ["assigned_by"] = "Priya Nair",
             ["updates"] = "- Ravi Kumar replied\n- Priya Nair added an internal note\n- The ticket was closed",
         };
 

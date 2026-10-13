@@ -3987,6 +3987,9 @@ namespace Desk.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<DateTimeOffset?>("NotifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("TicketId")
                         .HasColumnType("uuid");
 
