@@ -25,6 +25,9 @@ jobs:
         run: dotnet build Desk.sln --no-restore -c Release
       - name: Unit tests
         run: dotnet test tests/unit/Desk.Tests.Unit.csproj --no-build -c Release --logger "trx;LogFileName=unit.trx"
+      # The deploy script's disk check and build-cache clean-up, run against stand-ins: needs bash only.
+      - name: Deploy script tests
+        run: bash infrastructure/scripts/tests/deploy-disk-test.sh
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

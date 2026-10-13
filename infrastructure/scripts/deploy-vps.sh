@@ -26,6 +26,17 @@
 # additive (new columns/tables), as they have been. A destructive migration needs a plain
 # stop-and-start deploy instead.
 #
+# Disk. Every build leaves layers behind in Docker's build cache, and nothing ever removed them:
+# by 13 October 2026 they were 38 GB of a 96 GB disk that was 79% full, growing with each deploy.
+# A disk that fills during a build stops the database, which is an outage of everything on this
+# server. So: before building, a deploy checks there is room and refuses if there is not; after a
+# deploy that worked, the build cache is cut back to its most recently used CACHE_KEEP_GB (8).
+# By size and not by age, because age does not bound it: of those 38 GB, 32 were under three days
+# old (ten deploys in three days), so "older than 72h" would have freed under 2 GB. The build
+# cache belongs to the Docker daemon, not to this project: the other stacks on this server lose
+# their older leftovers too, which costs them a slower next build and nothing else. Images,
+# containers and volumes are never touched. CACHE_KEEP_GB=off skips the clean-up.
+#
 # Usage (on the VPS, as root):
 #   /opt/deskportal/infrastructure/scripts/deploy-vps.sh              # pull, build, deploy api worker web
 #   /opt/deskportal/infrastructure/scripts/deploy-vps.sh --no-pull web
@@ -47,6 +58,8 @@ UPSTREAM_INC="${UPSTREAM_INC:-/etc/nginx/deskportal-web-upstream.inc}"
 WEB_PORT="${WEB_PORT:-3100}"
 STANDBY_PORT="${STANDBY_PORT:-3101}"
 STANDBY_NAME="desk-portal-prod-web-standby"
+CACHE_KEEP_GB="${CACHE_KEEP_GB:-8}"
+MIN_FREE_GB="${MIN_FREE_GB:-6}"
 cd "$APP_DIR"
 F=(-f infrastructure/docker/docker-compose.prod.yml -f infrastructure/docker/docker-compose.hostproxy.yml --env-file infrastructure/docker/.env.prod)
 dc() { docker compose "${F[@]}" "$@"; }
@@ -64,6 +77,49 @@ wait_http() {
     (( SECONDS - start >= timeout )) && return 1
     sleep 2
   done
+}
+
+# Whole gigabytes free where Docker keeps its data. 9999 when it cannot be read: a deploy is not
+# held up because a number could not be measured.
+free_gb() {
+  local root n
+  root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null) || root=""
+  [ -d "$root" ] || root=/
+  n=$(df -BG --output=avail "$root" 2>/dev/null | tail -1 | tr -dc '0-9') || n=""
+  echo "${n:-9999}"
+}
+
+# Cuts the build cache back to its most recently used <n> GB, or to nothing with "all". Only
+# cache no build is using; never an image, a container or a volume. Never fails a deploy.
+# --reserved-space is the flag's name since Docker 28; --keep-storage is the same thing before.
+prune_build_cache() {
+  local before after keep=()
+  before=$(free_gb)
+  [ "$1" = "all" ] || keep=(--reserved-space "${1}GB")
+  if ! docker builder prune -f -a "${keep[@]}" >/dev/null 2>&1; then
+    [ "$1" = "all" ] || keep=(--keep-storage "${1}GB")
+    if [ "$1" = "all" ] || ! docker builder prune -f -a "${keep[@]}" >/dev/null 2>&1; then
+      log "disk: old build leftovers could not be removed; the deploy itself is not affected"
+      return 0
+    fi
+  fi
+  after=$(free_gb)
+  if [ "$1" = "all" ]; then log "disk: all unused build leftovers removed; ${before}G free before, ${after}G free now"
+  else log "disk: build leftovers cut back to the newest ${1}G; ${before}G free before, ${after}G free now"; fi
+}
+
+# Refuses to build on a disk that is nearly full, after first trying to make room.
+require_room() {
+  local free
+  free=$(free_gb)
+  (( free >= MIN_FREE_GB )) && return 0
+  log "disk: only ${free}G free, less than the ${MIN_FREE_GB}G a build needs; removing build leftovers first"
+  prune_build_cache all
+  free=$(free_gb)
+  (( free >= MIN_FREE_GB )) && return 0
+  log "disk: still only ${free}G free. NOT building: a build that fills the disk stops the database." >&2
+  log "disk: nothing was changed and the site is still serving. Free some space, then deploy again." >&2
+  return 1
 }
 
 DRAIN_SECONDS="${DRAIN_SECONDS:-10}"
@@ -167,6 +223,7 @@ if (( PULL )); then
   log "pulling"
   git pull --ff-only
 fi
+require_room
 log "building: ${SERVICES[*]}"
 dc build "${SERVICES[@]}"
 
@@ -179,3 +236,5 @@ for s in "${SERVICES[@]}"; do
   esac
 done
 log "deployed: ${SERVICES[*]} at $(git rev-parse --short HEAD)"
+# Only after a deploy that worked: a failed one may be retried within minutes and wants its layers.
+[ "$CACHE_KEEP_GB" = "off" ] || prune_build_cache "$CACHE_KEEP_GB"
