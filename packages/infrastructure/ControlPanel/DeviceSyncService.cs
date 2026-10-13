@@ -5,6 +5,7 @@ using Desk.Application.ControlPanel;
 using Desk.Domain.ControlPanel;
 using Desk.Domain.Tenancy;
 using Desk.Infrastructure.Persistence;
+using Desk.Infrastructure.Sync;
 using Desk.PsaCore.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,6 +28,16 @@ public sealed class DeviceSyncService(
 {
     public async Task<DeviceSyncResult> SyncConnectionAsync(Guid connectionId, CancellationToken ct = default)
     {
+        // Nobody asked for this: it runs by itself, once a day and at every start. So it keeps to
+        // the rule the ticket sync keeps (SyncSchedule.Due) and leaves alone a connection that is
+        // paused, put away, or whose login the PSA has refused. Asking again with a refused login
+        // is how an API account gets locked, and this used to ask once for every client.
+        if (!await SyncSchedule.Due(db.PsaConnections.AsNoTracking()).AnyAsync(c => c.Id == connectionId, ct))
+        {
+            logger.LogInformation("Devices for connection {ConnectionId} were not read: the connection is paused, put away, or its login was refused", connectionId);
+            return DeviceSyncResult.None;
+        }
+
         var companies = await db.ClientCompanies
             .Where(c => c.PsaConnectionId == connectionId && c.IsActive)
             .OrderBy(c => c.Name)
@@ -40,6 +51,14 @@ public sealed class DeviceSyncService(
             try
             {
                 total += await SyncAsync(company, connector, ct);
+            }
+            catch (ConnectorException ex) when (ex.Kind == ConnectorFailureKind.Authentication)
+            {
+                // The login was refused just now. The next client would be refused the same way:
+                // one refusal is enough to know, and every further one counts against the account.
+                var left = companies.Count - companies.IndexOf(company);
+                logger.LogWarning("The PSA refused the login while reading devices for {Company}; the other {Left} client(s) of this connection were not asked", company.Name, left - 1);
+                return total + new DeviceSyncResult(0, 0, 0, 0, left);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

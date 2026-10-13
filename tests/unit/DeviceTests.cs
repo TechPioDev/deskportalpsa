@@ -57,6 +57,59 @@ public class DeviceTests
         return new Kit(h, psa, new DeviceSyncService(h.Db, new Resolver(psa), h.Clock, NullLogger<DeviceSyncService>.Instance));
     }
 
+    // ---- a sync nobody asked for leaves a PSA alone that should not be called -------------------
+
+    [Theory]
+    [InlineData("login refused")]
+    [InlineData("paused")]
+    [InlineData("put away")]
+    [InlineData("switched off")]
+    public async Task The_daily_sync_does_not_call_a_connection_that_is_not_to_be_called(string why)
+    {
+        var k = await BuildAsync();
+        var connection = await k.H.Db.PsaConnections.SingleAsync(c => c.Id == Conn);
+        switch (why)
+        {
+            case "login refused": connection.LastErrorKind = Desk.Infrastructure.Admin.ConnectionStates.Authentication; break;
+            case "paused": connection.SyncPausedAt = DateTimeOffset.UtcNow; break;
+            case "put away": connection.ArchivedAt = DateTimeOffset.UtcNow; break;
+            case "switched off": connection.IsEnabled = false; break;
+        }
+        await k.H.Db.SaveChangesAsync();
+        k.Psa.Devices["176"] = [Dev("d1", "ACME-PC-01")];
+
+        var result = await k.Sync.SyncConnectionAsync(Conn);
+
+        result.Should().Be(DeviceSyncResult.None);
+        k.Psa.DeviceReads.Should().Be(0, "three clients used to mean three refused calls, at every start");
+        (await k.H.Db.Devices.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_login_refused_during_the_daily_sync_stops_it_after_one_client()
+    {
+        var k = await BuildAsync();
+        k.Psa.DeviceReadFailure = new ConnectorException(ConnectorFailureKind.Authentication, "Autotask rejected the credentials.");
+
+        var result = await k.Sync.SyncConnectionAsync(Conn);
+
+        k.Psa.DeviceReads.Should().Be(1, "the next client would be refused the same way");
+        result.CompaniesFailed.Should().Be(3, "the client that was refused and the two that were not asked");
+    }
+
+    [Fact]
+    public async Task Any_other_failure_still_moves_on_to_the_next_client()
+    {
+        var k = await BuildAsync();
+        k.Psa.DeviceReadFailsFor.Add("176");
+        k.Psa.Devices["177"] = [Dev("d9", "GLOBEX-PC-01")];
+
+        var result = await k.Sync.SyncConnectionAsync(Conn);
+
+        k.Psa.DeviceReads.Should().Be(2);
+        result.Should().BeEquivalentTo(new { Created = 1, CompaniesFailed = 1 });
+    }
+
     private static ExternalDevice Dev(string id, string name, string? serial = null, bool active = true, string? type = "Workstation")
         => new(id, name, type, serial, active, DateTimeOffset.Parse("2027-03-31T00:00:00Z"));
 
