@@ -3,9 +3,9 @@ using Desk.Infrastructure.Tickets;
 namespace Desk.Worker;
 
 /// <summary>
-/// Tells the followers of a ticket that they were put on it, and what has happened since. Every
-/// two minutes: soon enough to feel like being copied in, slow enough that a burst of replies on
-/// one ticket becomes one message.
+/// Tells a person that a ticket was assigned to them, and tells the followers of a ticket that
+/// they were put on it and what has happened since. Every two minutes: soon enough to feel like
+/// being told, slow enough that a burst of replies on one ticket becomes one message.
 /// </summary>
 public sealed class TicketFollowerNotifyService(TicketFollowerNotifyRunner runner, ILogger<TicketFollowerNotifyService> logger) : BackgroundService
 {
@@ -20,7 +20,7 @@ public sealed class TicketFollowerNotifyService(TicketFollowerNotifyRunner runne
             try
             {
                 var sent = await runner.RunAllAsync(stoppingToken);
-                if (sent > 0) logger.LogInformation("Follower notices: {Count} message(s) sent", sent);
+                if (sent > 0) logger.LogInformation("Ticket notices: {Count} message(s) sent", sent);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

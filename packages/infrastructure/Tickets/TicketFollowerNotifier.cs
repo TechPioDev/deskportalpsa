@@ -180,11 +180,13 @@ public sealed class TicketFollowerNotifyRunner(IServiceScopeFactory scopes, ILog
             {
                 using var scope = scopes.CreateScope();
                 scope.ServiceProvider.GetRequiredService<ISettableTenantContext>().SetTenant(org);
+                // The person a ticket was given to first, then the people kept informed about it.
+                sent += await scope.ServiceProvider.GetRequiredService<TicketAssignmentNotifier>().RunAsync(ct);
                 sent += await scope.ServiceProvider.GetRequiredService<TicketFollowerNotifier>().RunAsync(ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.LogWarning(ex, "Follower notices failed for organization {Organization}", org);
+                logger.LogWarning(ex, "Ticket notices failed for organization {Organization}", org);
             }
         }
         return sent;
