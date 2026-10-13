@@ -4,7 +4,15 @@ public record ConnectionTestResult(bool Success, string? Message, TimeSpan Laten
 
 public record CreateTicketResult(bool Success, string? ExternalId, string? Error);
 
-public record UpdateTicketResult(bool Success, string? Error);
+public record UpdateTicketResult(bool Success, string? Error)
+{
+    /// <summary>
+    /// The status the provider now holds, in the provider's own words, where the connector had to
+    /// work it out (ConnectWise: the name on the ticket's own board). Null where what was asked for
+    /// is what was set.
+    /// </summary>
+    public string? AppliedStatus { get; init; }
+}
 
 public record CreateNoteResult(bool Success, string? ExternalId, string? Error);
 

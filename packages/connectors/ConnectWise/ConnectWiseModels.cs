@@ -25,6 +25,20 @@ internal sealed class CwRef
     [JsonPropertyName("name")] public string? Name { get; set; }
 }
 
+/// <summary>
+/// One status of one service board. The two flags are read where ConnectWise sends them and left
+/// unknown where it does not, so nothing here depends on their being present.
+/// </summary>
+internal sealed class CwBoardStatus
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    /// <summary>Whether a ticket in this status is closed: the board's own definition of "done".</summary>
+    [JsonPropertyName("closedStatus")] public bool? ClosedStatus { get; set; }
+    /// <summary>Switched off on the board: it cannot be given to a ticket.</summary>
+    [JsonPropertyName("inactive")] public bool? Inactive { get; set; }
+}
+
 /// <summary>The answer to <c>{resource}/count</c>.</summary>
 internal sealed class CwCount
 {
