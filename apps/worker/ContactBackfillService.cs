@@ -37,7 +37,7 @@ public sealed class ContactBackfillService(IServiceProvider services, ILogger<Co
             var total = pending.Sum(p => p.Value.Count);
             if (total == 0)
             {
-                logger.LogInformation("Contact backfill: every PSA ticket already has a reachable contact");
+                logger.LogInformation("Contact backfill: nothing to ask a PSA for. Every ticket has a reachable contact, or its connection is paused, put away, or has had its login refused");
                 return;
             }
             logger.LogInformation("Contact backfill: {Tickets} tickets without a contact across {Connections} connection(s)", total, pending.Count);

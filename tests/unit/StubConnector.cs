@@ -169,10 +169,20 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
     /// <summary>Companies whose device list cannot be read.</summary>
     public HashSet<string> DeviceReadFailsFor { get; } = [];
 
+    /// <summary>What every device read answers with, when set: a login the PSA refuses, say.</summary>
+    public ConnectorException? DeviceReadFailure { get; set; }
+
+    /// <summary>How many times a device list was asked for, whatever the answer.</summary>
+    public int DeviceReads { get; private set; }
+
     public Task<IReadOnlyList<ExternalDevice>> GetDevicesAsync(string organizationId, CancellationToken ct = default)
-        => DeviceReadFailsFor.Contains(organizationId)
+    {
+        DeviceReads++;
+        if (DeviceReadFailure is { } failure) throw failure;
+        return DeviceReadFailsFor.Contains(organizationId)
             ? throw new ConnectorException(ConnectorFailureKind.ProviderError, "provider unavailable")
             : Task.FromResult<IReadOnlyList<ExternalDevice>>(Devices.GetValueOrDefault(organizationId) ?? []);
+    }
 
     /// <summary>Agreements the fake provider holds, keyed by organization id.</summary>
     public Dictionary<string, List<ExternalAgreement>> Agreements { get; } = [];
@@ -188,10 +198,20 @@ public sealed class StubConnector(ProviderType provider = ProviderType.AutotaskP
         => Task.FromResult<IReadOnlyList<ExternalHoliday>>(Holidays);
     /// <summary>Answers from <see cref="Tickets"/>; an id listed in <see cref="FailingTicketIds"/> throws as a provider error would.</summary>
     public Task<UnifiedTicket?> GetTicketAsync(string ticketId, CancellationToken ct = default)
-        => FailingTicketIds.Contains(ticketId)
+    {
+        TicketReads++;
+        if (TicketReadFailure is { } failure) throw failure;
+        return FailingTicketIds.Contains(ticketId)
             ? throw new ConnectorException(ConnectorFailureKind.ProviderError, "provider unavailable")
             : Task.FromResult(Tickets.FirstOrDefault(t => t.ExternalId == ticketId));
+    }
     public HashSet<string> FailingTicketIds { get; } = [];
+
+    /// <summary>What every single-ticket read answers with, when set.</summary>
+    public ConnectorException? TicketReadFailure { get; set; }
+
+    /// <summary>How many times one ticket was asked for, whatever the answer.</summary>
+    public int TicketReads { get; private set; }
     /// <summary>What the provider answers to the next create; default is acceptance.</summary>
     public CreateTicketResult NextCreateResult { get; set; } = new(true, "9001", null);
 
