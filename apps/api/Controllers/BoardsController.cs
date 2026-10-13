@@ -30,6 +30,30 @@ public sealed class BoardsController(
     IBoardService boards, IInternalTicketService tickets, ICurrentUser user, BoardFeatureOptions features)
     : ControllerBase, IActionFilter
 {
+    // ---- who a ticket on a board can be for --------------------------------------------------
+
+    /// <summary>The clients a ticket here can name: the PSA's own, and the ones the desk added by hand.</summary>
+    [HttpGet("clients")]
+    [RequirePermission(Permissions.TicketsCreate)]
+    public async Task<IActionResult> ClientChoices([FromServices] ILocalClientService clients, CancellationToken ct)
+        => Ok(await clients.ChoicesAsync(ct));
+
+    /// <summary>The clients added by hand, for the people who look after the boards.</summary>
+    [HttpGet("clients/local")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> LocalClients([FromServices] ILocalClientService clients, CancellationToken ct)
+        => Ok(await clients.ListAsync(ct));
+
+    [HttpPost("clients/local")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> AddLocalClient([FromServices] ILocalClientService clients, [FromBody] LocalClientInput input, CancellationToken ct)
+        => Ok(await clients.AddAsync(input, ct));
+
+    [HttpPut("clients/local/{id:guid}")]
+    [RequirePermission(Permissions.BoardsManage)]
+    public async Task<IActionResult> UpdateLocalClient([FromServices] ILocalClientService clients, Guid id, [FromBody] LocalClientInput input, CancellationToken ct)
+        => Ok(await clients.UpdateAsync(id, input, ct));
+
     /// <summary>
     /// Refuses every route here when the feature is switched off. Tickets already raised on a board
     /// are untouched and readable again the moment it is switched back on.

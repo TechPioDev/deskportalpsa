@@ -1383,6 +1383,13 @@ export const api = {
     request('/api/boards/departments', z.array(z.object({
       id: z.string(), name: z.string(), isActive: z.boolean(),
     }))),
+  // Who a ticket on a board can be for: the PSA's clients and the ones the desk added by hand.
+  boardClients: () => request('/api/boards/clients', z.array(ClientChoiceSchema)) as Promise<ClientChoice[]>,
+  localClients: () => request('/api/boards/clients/local', z.array(LocalClientSchema)) as Promise<LocalClient[]>,
+  addLocalClient: (name: string) =>
+    request('/api/boards/clients/local', LocalClientSchema, { method: 'POST', body: JSON.stringify({ name, isActive: true }) }) as Promise<LocalClient>,
+  updateLocalClient: (id: string, name: string, isActive: boolean) =>
+    request(`/api/boards/clients/local/${id}`, LocalClientSchema, { method: 'PUT', body: JSON.stringify({ name, isActive }) }) as Promise<LocalClient>,
   createInternalTicket: (input: InternalTicketInput) =>
     request('/api/boards/tickets', z.object({
       ticketId: z.string(), number: z.string(), title: z.string(), boardId: z.string(),
@@ -2231,6 +2238,14 @@ export type BoardInput = {
   /** Resolved work here is reviewed by a board lead before it closes. Sent on every save. */
   requireReview?: boolean;
 };
+/** A client a board ticket can name. `local`: added by hand, in no PSA. */
+export const ClientChoiceSchema = z.object({ id: z.string(), name: z.string(), local: z.boolean() });
+export type ClientChoice = z.infer<typeof ClientChoiceSchema>;
+export const LocalClientSchema = z.object({
+  id: z.string(), name: z.string(), isActive: z.boolean(), tickets: z.number(), addedAt: z.string(),
+});
+export type LocalClient = z.infer<typeof LocalClientSchema>;
+
 export type InternalTicketInput = {
   boardId: string; title: string; description: string | null;
   priority?: string | null; category?: string | null;

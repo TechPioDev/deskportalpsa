@@ -55,13 +55,15 @@ public sealed partial class ConnectionAdminService(
                 .Select(g => new { g.Key, Count = g.Count() })
                 .ToListAsync(ct))
             .ToDictionary(x => x.Key, x => x.Count);
+        // A company added by hand is in no PSA and is no connection's customer.
         var customers = (await db.ClientCompanies.AsNoTracking()
-                .GroupBy(o => o.PsaConnectionId)
+                .Where(o => o.PsaConnectionId != null)
+                .GroupBy(o => o.PsaConnectionId!.Value)
                 .Select(g => new { g.Key, Count = g.Count() })
                 .ToListAsync(ct))
             .ToDictionary(x => x.Key, x => x.Count);
         var contacts = (await db.ClientUsers.AsNoTracking()
-                .Join(db.ClientCompanies, u => u.ClientCompanyId, o => o.Id, (u, o) => o.PsaConnectionId)
+                .Join(db.ClientCompanies.Where(o => o.PsaConnectionId != null), u => u.ClientCompanyId, o => o.Id, (u, o) => o.PsaConnectionId!.Value)
                 .GroupBy(connection => connection)
                 .Select(g => new { g.Key, Count = g.Count() })
                 .ToListAsync(ct))
