@@ -66,9 +66,12 @@ function StaffApprovals({ ticketId, canUpdate }: { ticketId: string; canUpdate: 
   const [recording, setRecording] = useState(false);
 
   if (!view || !view.applies) return null;
-  // Nothing asked and nothing askable - a finished ticket, say - is not worth a panel on every
-  // ticket. The one reason kept is the actionable one: the client has nobody on their list yet.
-  if (view.approvals.length === 0 && !view.canAsk && !view.missingApprovers) return null;
+  // Nothing asked and nothing askable is not worth a panel on every ticket: a finished ticket,
+  // and a client with nobody on their approver list. The second used to be kept, as a prompt to
+  // set approvers up. On a desk that does not use approvals yet (no client had an approver on
+  // 13 October 2026) that prompt sat above the reply box of every client ticket, and the owner
+  // asked for it to go. The panel returns by itself the day a client has an approver.
+  if (view.approvals.length === 0 && !view.canAsk) return null;
   const pending = view.approvals.find((a) => a.state === 'Pending');
   const settled = view.approvals.filter((a) => a.state !== 'Pending');
 
