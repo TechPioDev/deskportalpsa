@@ -489,7 +489,11 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const [replyTimeNotes, setReplyTimeNotes] = useState('');
   // The day the work was done, for a board ticket only (a PSA dates its own). Blank is today.
   const [replyWorkedOn, setReplyWorkedOn] = useState('');
-  const [replySideError, setReplySideError] = useState<string | null>(null);
+  // What did not go through with a reply that itself was sent: a file, the hours, the status.
+  // Shown on the page, not in the reply window: the window closes the moment the reply is sent,
+  // so a message inside it was never read (13 October 2026: a status that ConnectWise refused,
+  // and nothing on screen to say so).
+  const [replySideErrors, setReplySideErrors] = useState<string[]>([]);
   // Staff-only composer powers (mirrors the old help desk: note + time + status in ONE post).
   // Gated on a staff ticket view — the same signal the API's staff branch keys on.
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000, retry: false });
@@ -563,7 +567,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       }
       if (replyStatus) {
         try { await api.updateTicketStatus(id, replyStatus); }
-        catch (e) { sideErrors.push(`the status change failed${e instanceof Error && e.message ? ` — ${e.message}` : ''} (use the status buttons to retry)`); }
+        catch (e) { sideErrors.push(`the status was not changed to ${replyStatus.replace(/_/g, ' ')}${e instanceof Error && e.message ? ` — ${e.message.replace(/\.$/, '')}` : ''} (choose it again from the status menu to retry)`); }
       }
       return { note, sideErrors };
     },
@@ -575,7 +579,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       // Close on success only. A failed send keeps the dialog — and the text — open, because
       // dropping someone back to a closed launcher with an error elsewhere loses the reply.
       setReplyOpen(false);
-      setReplySideError(sideErrors.length > 0 ? `Reply sent, but ${sideErrors.join('; ')}.` : null);
+      setReplySideErrors(sideErrors);
       qc.invalidateQueries({ queryKey: ['ticket', id] });
       if (parseFloat(replyHours) > 0) refreshTime();
       if (replyStatus) [['tickets'], ['team'], ['trend']].forEach((k) => qc.invalidateQueries({ queryKey: k }));
@@ -1034,6 +1038,24 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 The icon square and that cue switch to brand-mid on dark: the deep forest green is
                 nearly the value of a dark surface, so the marks carrying the emphasis would lose
                 it exactly where they are needed. */}
+            {replySideErrors.length > 0 && (
+              <div role="alert" aria-label="Not everything went through"
+                className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="flex items-start gap-2 font-semibold">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden="true" />
+                    Your reply was sent, but {replySideErrors.length === 1 ? 'one thing' : `${replySideErrors.length} things`} did not go through
+                  </p>
+                  <button type="button" onClick={() => setReplySideErrors([])}
+                    className="shrink-0 rounded-lg border border-amber-300 px-2 py-0.5 text-xs font-medium hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/40">
+                    Dismiss
+                  </button>
+                </div>
+                <ul className="mt-2 list-disc space-y-1 pl-7">
+                  {replySideErrors.map((e, i) => <li key={i} className="break-words">{e.charAt(0).toUpperCase() + e.slice(1)}.</li>)}
+                </ul>
+              </div>
+            )}
             {canReply && (
               <button type="button" onClick={() => setReplyOpen(true)}
                 className="flex w-full items-center gap-3 rounded-xl border-2 border-brand/40 bg-brand-tint px-4 py-3.5 text-left text-sm font-medium text-[var(--fg)] shadow-sm transition-colors hover:border-brand hover:bg-brand/10 dark:border-brand/35 dark:bg-brand/10 dark:hover:bg-brand/20">
@@ -1724,9 +1746,6 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   <p className="px-4 pb-3 text-xs text-red-600 dark:text-red-400">
                     Couldn&apos;t send{addComment.error instanceof Error && addComment.error.message ? ` — ${addComment.error.message}` : ' — is the API reachable?'}
                   </p>
-                )}
-                {replySideError && !addComment.isPending && (
-                  <p className="px-4 pb-3 text-xs text-amber-700 dark:text-amber-300">{replySideError}</p>
                 )}
                 </form>
                   </div>

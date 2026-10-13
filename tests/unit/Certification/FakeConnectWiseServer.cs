@@ -61,6 +61,26 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
     private readonly List<Dictionary<string, object?>> _tickets = [];
     private readonly List<Dictionary<string, object?>> _notes = [];
 
+    /// <summary>One status of a board, as the board's own list returns it.</summary>
+    public sealed record BoardStatus(long Id, string Name, bool? Closes = null, bool? Inactive = null);
+
+    private readonly Dictionary<long, (string Name, BoardStatus[] Statuses)> _boards = [];
+
+    /// <summary>
+    /// Gives the server a board of the test's choosing. Once any is given, the boards are exactly
+    /// the ones given: status ids differ from board to board, as they do on a real instance, and a
+    /// ticket on a given board refuses a status id its board does not have.
+    /// </summary>
+    public void SetBoard(long id, string name, params BoardStatus[] statuses) => _boards[id] = (name, statuses);
+
+    /// <summary>Every path asked for, in order: what a test reads to see which calls were made.</summary>
+    public List<string> Paths { get; } = [];
+
+    /// <summary>The id of the status a ticket now holds.</summary>
+    public long? StatusIdOf(long ticketId)
+        => _tickets.FirstOrDefault(t => (long)t["id"]! == ticketId)?.GetValueOrDefault("status") is Dictionary<string, object?> st
+           && st.GetValueOrDefault("id") is { } id ? Convert.ToInt64(id) : null;
+
     /// <summary>Notes as the server stored them, for assertions on what the connector actually sent.</summary>
     public IReadOnlyList<IReadOnlyDictionary<string, object?>> Notes => _notes;
 
@@ -76,6 +96,7 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
             return Resp(HttpStatusCode.Unauthorized, "{}");
 
         var path = request.RequestUri!.AbsolutePath.TrimStart('/');
+        Paths.Add($"{request.Method} {path[(path.IndexOf("apis/3.0/", StringComparison.Ordinal) + 9)..]}");
         var conditions = QueryValue(request.RequestUri.Query, "conditions");
         var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
 
@@ -89,6 +110,21 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
             return Arr("[{\"id\":50,\"name\":\"Christmas Day\",\"date\":\"2026-12-25T00:00:00Z\"},{\"id\":51,\"name\":\"Christmas Day\",\"date\":\"2026-12-25T00:00:00Z\"}]");
         if (path.EndsWith("finance/agreements"))
             return Arr("[{\"id\":40,\"name\":\"Managed Services\",\"type\":{\"id\":2,\"name\":\"Managed\"},\"agreementStatus\":\"Active\",\"startDate\":\"2026-01-01T00:00:00Z\",\"noEndingDateFlag\":true}]");
+        if (_boards.Count > 0 && path.EndsWith("service/boards"))
+            return Arr(JsonSerializer.Serialize(_boards.Select(b => new { id = b.Key, name = b.Value.Name })));
+        if (_boards.Count > 0 && path.Contains("service/boards/") && path.EndsWith("/statuses"))
+        {
+            var boardId = long.Parse(path.Split('/')[^2]);
+            if (!_boards.TryGetValue(boardId, out var board)) return Resp(HttpStatusCode.NotFound, "{}");
+            return Arr(JsonSerializer.Serialize(board.Statuses.Select(st =>
+            {
+                // The flags are sent only where the test set them: a server that leaves them out is a case too.
+                var o = new Dictionary<string, object?> { ["id"] = st.Id, ["name"] = st.Name };
+                if (st.Closes is { } closes) o["closedStatus"] = closes;
+                if (st.Inactive is { } inactive) o["inactive"] = inactive;
+                return o;
+            })));
+        }
         if (path.EndsWith("service/boards")) return Arr("[{\"id\":1,\"name\":\"Service Desk\"},{\"id\":2,\"name\":\"Dispatch\"}]");
         if (path.EndsWith("service/priorities")) return Arr("[{\"id\":3,\"name\":\"High\"}]");
         // Board-scoped, and deliberately DIFFERENT per board: the second board carries a status the
@@ -299,6 +335,14 @@ public sealed class FakeConnectWiseServer(TimeProvider clock) : HttpMessageHandl
         foreach (var op in doc.RootElement.EnumerateArray())
         {
             var path = op.GetProperty("path").GetString()!.TrimStart('/');
+            // As the live API: a status is checked against the TICKET'S board, and one from another
+            // board is refused however real it is.
+            if (path == "status" && _boards.Count > 0
+                && ticket.GetValueOrDefault("board") is Dictionary<string, object?> onBoard && onBoard.GetValueOrDefault("id") is { } boardRef
+                && _boards.TryGetValue(Convert.ToInt64(boardRef), out var board)
+                && op.GetProperty("value").TryGetProperty("id", out var statusId) && !board.Statuses.Any(st => st.Id == statusId.GetInt64()))
+                return Resp(HttpStatusCode.BadRequest,
+                    $"{{\"code\":\"InvalidObject\",\"message\":\"Service Status not found for Service Board {boardRef}\"}}");
             ticket[path] = JsonToObject(op.GetProperty("value"));
         }
         ticket["lastUpdated"] = clock.GetUtcNow().ToString("o");

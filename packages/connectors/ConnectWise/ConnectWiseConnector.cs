@@ -322,7 +322,7 @@ public sealed class ConnectWiseConnector(
         // updates do. With no board given CW picks its default board — whose statuses we cannot know
         // in advance — so the status is left for CW to default too, rather than sent blind.
         if (ticket.Status is not null && ticket.QueueOrBoard is not null && long.TryParse(ticket.QueueOrBoard, out var boardId))
-            body["status"] = await ResolveBoardStatusAsync(boardId, ticket.Status, ct);
+            body["status"] = (await ResolveBoardStatusAsync(boardId, ticket.Status, ct)).Reference;
         if (ticket.Priority is not null) body["priority"] = Ref(ticket.Priority);
         // CW's classification trio maps to the portal's ticket/issue/sub-issue types.
         if (ticket.TicketType is not null) body["type"] = Ref(ticket.TicketType);
@@ -349,8 +349,13 @@ public sealed class ConnectWiseConnector(
 
         // ConnectWise updates are JSON-Patch operations replacing whole reference objects.
         var ops = new List<object>();
+        string? appliedStatus = null;
         if (update.Status is not null)
-            ops.Add(new { op = "replace", path = "status", value = await ResolveBoardStatusAsync(ticket.Board?.Id, update.Status, ct) });
+        {
+            var (reference, name) = await ResolveBoardStatusAsync(ticket.Board?.Id, update.Status, ct);
+            ops.Add(new { op = "replace", path = "status", value = reference });
+            appliedStatus = name;
+        }
         if (update.Priority is not null) ops.Add(new { op = "replace", path = "priority", value = Ref(update.Priority) });
         if (update.QueueOrBoard is not null) ops.Add(new { op = "replace", path = "board", value = Ref(update.QueueOrBoard) });
         if (update.AssignedTechnicianExternalId is not null)
@@ -359,7 +364,7 @@ public sealed class ConnectWiseConnector(
         if (update.DueDate is { } due) ops.Add(new { op = "replace", path = "requiredDate", value = due.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") });
 
         await SendAsync<CwTicket>(HttpMethod.Patch, $"service/tickets/{ticketId}", ops, ct);
-        return new UpdateTicketResult(true, null);
+        return new UpdateTicketResult(true, null) { AppliedStatus = appliedStatus };
     }
 
     public async Task<IReadOnlyList<UnifiedTicketNote>> GetNotesAsync(string ticketId, CancellationToken ct = default)
@@ -736,23 +741,39 @@ public sealed class ConnectWiseConnector(
     /// value against the ticket's own board with normalized matching (exact → prefix → contains) so
     /// portal-neutral values like IN_PROGRESS find "In Progress (plan of action)". Fails with the
     /// board's actual options so the caller can correct the mapping.
+    ///
+    /// An id that is not on this board is not refused outright. A mapping made by id says "status
+    /// 17" for every ticket of the connection, and 17 exists on one board only; refusing it meant a
+    /// ticket on any other board could not be closed from the portal at all (ticket 563, board
+    /// "Techpio", 13 October 2026). The id is looked up on the board it belongs to, and what it is
+    /// there - its name, and whether it closes a ticket - is what is looked for on this board.
     /// </summary>
-    private async Task<object> ResolveBoardStatusAsync(long? boardId, string desired, CancellationToken ct)
+    private async Task<(object Reference, string Name)> ResolveBoardStatusAsync(long? boardId, string desired, CancellationToken ct)
     {
-        if (boardId is null) return Ref(desired); // no board on the ticket — let CW validate
+        if (boardId is null) return (Ref(desired), desired); // no board on the ticket — let CW validate
 
-        var statuses = await GetListAsync<CwRef>($"service/boards/{boardId}/statuses", new() { ["pageSize"] = "1000" }, ct);
+        var all = await GetListAsync<CwBoardStatus>($"service/boards/{boardId}/statuses", new() { ["pageSize"] = "1000" }, ct);
+        // A status switched off on the board cannot be given to a ticket. Where the board says
+        // nothing about that (or every status is off, which is not a board anyone uses) all stand.
+        var statuses = all.Where(s => s.Inactive != true).ToList();
+        if (statuses.Count == 0) statuses = [.. all];
+        string Available() => string.Join(", ", statuses.Select(s => s.Name));
+
+        var closes = false;
         if (long.TryParse(desired, out var id))
         {
-            if (statuses.Any(s => s.Id == id)) return new { id };
-            // An id from a different board — fall through to name matching below is pointless; report clearly.
-            throw new ConnectorException(ConnectorFailureKind.InvalidRequest,
-                $"Status id {id} does not exist on this ticket's board. Available: {string.Join(", ", statuses.Select(s => s.Name))}.");
+            if (statuses.FirstOrDefault(s => s.Id == id) is { } own) return (new { id }, own.Name ?? desired);
+            var elsewhere = await FindStatusOnAnotherBoardAsync(id, boardId.Value, ct)
+                ?? throw new ConnectorException(ConnectorFailureKind.InvalidRequest,
+                    $"Status id {id} does not exist on this ticket's board, or on any other. Available here: {Available()}.");
+            desired = elsewhere.Name ?? "";
+            closes = elsewhere.ClosedStatus == true;
         }
 
         static string Norm(string s) => new([.. s.ToLowerInvariant().Where(char.IsLetterOrDigit)]);
         var want = Norm(desired);
-        var match = statuses.FirstOrDefault(s => Norm(s.Name ?? "") == want)
+        var match = want.Length == 0 ? null
+                 : statuses.FirstOrDefault(s => Norm(s.Name ?? "") == want)
                  ?? statuses.FirstOrDefault(s => Norm(s.Name ?? "").StartsWith(want))
                  ?? statuses.FirstOrDefault(s => Norm(s.Name ?? "").Contains(want))
                  // The reverse direction: a verbose mapped value ("New (not responded)") against a
@@ -761,14 +782,31 @@ public sealed class ConnectWiseConnector(
                  ?? statuses.FirstOrDefault(s => Norm(s.Name ?? "") is { Length: >= 3 } n && want.StartsWith(n));
 
         // Boards name their terminal state differently ("Completed", "Closed (resolved)", "Done").
-        // For closed-family requests, fall back to closed-family synonyms before giving up.
-        if (match is null && ClosedFamily.Contains(want))
-            match = statuses.FirstOrDefault(s => ClosedFamily.Any(syn => Norm(s.Name ?? "").StartsWith(syn)));
+        // For a request to close, first the status this board itself marks as closing a ticket,
+        // which is ConnectWise's own answer and needs no guess at a name; then the names.
+        if (match is null && (closes || ClosedFamily.Contains(want)))
+            match = statuses.FirstOrDefault(s => s.ClosedStatus == true)
+                 ?? statuses.FirstOrDefault(s => ClosedFamily.Any(syn => Norm(s.Name ?? "").StartsWith(syn)));
 
         if (match is null)
             throw new ConnectorException(ConnectorFailureKind.InvalidRequest,
-                $"No status matching '{desired}' on this ticket's board. Available: {string.Join(", ", statuses.Select(s => s.Name))}.");
-        return new { id = match.Id };
+                $"No status matching '{desired}' on this ticket's board. Available: {Available()}.");
+        return (new { id = match.Id }, match.Name ?? desired);
+    }
+
+    /// <summary>
+    /// The status with this id on whichever other board has it. Asked only when a mapping names an
+    /// id the ticket's own board does not have, so the extra reads are paid by that case alone.
+    /// </summary>
+    private async Task<CwBoardStatus?> FindStatusOnAnotherBoardAsync(long statusId, long notBoardId, CancellationToken ct)
+    {
+        var boards = await GetListAsync<CwRef>("service/boards", new() { ["pageSize"] = "1000" }, ct);
+        foreach (var board in boards.Where(b => b.Id != notBoardId))
+        {
+            var statuses = await GetListAsync<CwBoardStatus>($"service/boards/{board.Id}/statuses", new() { ["pageSize"] = "1000" }, ct);
+            if (statuses.FirstOrDefault(x => x.Id == statusId) is { } found) return found;
+        }
+        return null;
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];

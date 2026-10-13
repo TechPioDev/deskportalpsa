@@ -116,7 +116,9 @@ public sealed class TicketStatusWriter(
             throw new ValidationFailedException(result.Error ?? "The PSA rejected the status change.");
 
         ticket.PortalStatus = portalStatus;
-        ticket.PsaStatus = mappedName;
+        // What the PSA calls it now. A mapping by id would otherwise leave a number here ("17")
+        // until the next sync brought the name.
+        ticket.PsaStatus = result.AppliedStatus ?? mappedName;
         // The provider owns a PSA ticket's dates; sync brings them. The reopen is still counted here.
         return await FinishAsync(ticket, from, portalStatus, resolving, reopening, resolution, reviewed, countReopen, actorUserId, ct);
     }
